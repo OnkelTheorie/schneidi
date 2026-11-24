@@ -257,6 +257,13 @@ void testDropAndPaste()
                             "A1: a[0-100|0-99] x[100-300|0-199] b[300-360|0-59] c[360-440|0-79]  A2:"));
     CHECK_ONE_STEP(f, before, steps, "drop onto V1");
     f.project.undoStack()->undo();
+    // Review 7: a picture and a sound-only file dropped together: the room on V1 is the picture's length only
+    f.project.addMedia(MediaInfo{"/x/w.wav", "w.wav", 50, false, true, false});
+    f.editor.addMediaAt({"/x/x.mp4", "/x/w.wav"}, 0, 0);
+    CHECK_EQ(f.tl().video[0].clips.size(), 4);
+    CHECK(f.tl().video[0].clips[0].length() == 200 && f.tl().video[0].clips[1].start == 200);
+    CHECK_EQ(MainTrack::insertPoint(f.tl().video[0], 10000), 440); // (no gap on V1)
+    f.project.undoStack()->undo();
     // Past the end: at the end of V1
     f.editor.addMediaAt({"/x/x.mp4"}, 600, 0);
     CHECK_EQ(TimelineOps::findClip(f.tl(), f.tl().video[0].clips.last().id)->start, 240);

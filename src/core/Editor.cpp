@@ -172,7 +172,8 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track, PlacePar
     // The magnetic main track: onto V1 the later clips make room (at the nearest cut) instead of being overwritten
     bool room = false;
     int total = 0;
-    for (const MediaInfo& m : infos) total += m.length;
+    for (const MediaInfo& m : infos)
+        if (m.hasVideo) total += m.length; // (only what lands on V1 needs room there)
     const bool ontoMain = idx0 == 0 && videoOk && std::any_of(infos.begin(), infos.end(), [](const MediaInfo& m) { return m.hasVideo; });
     if (ontoMain && !mainInsert(frame, total, &room)) return;
     p->edit(text, [&](Timeline& tl) {
@@ -217,7 +218,8 @@ void Editor::addMediaAt(const QStringList& paths, int frame, int track, PlacePar
                 sound << a.id;
             }
             muteRepeatedSound(tl, sound);
-            start += info->length;
+            // Inserted onto the magnetic V1: a sound-only file goes under the pictures, the room is theirs
+            if (!room || video) start += info->length;
         }
     });
 }
