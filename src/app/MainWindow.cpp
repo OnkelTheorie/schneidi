@@ -1282,14 +1282,6 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
     return true; // also swallow release/double-click of the bound key
 }
 
-void MainWindow::shuttle(int direction)
-{
-    // Pressing J/L repeatedly = faster, like in DaVinci
-    const double s = m_engine->speed();
-    if (direction > 0) m_engine->setSpeed(s <= 0 ? 1.0 : std::min(s * 2, 16.0));
-    else m_engine->setSpeed(s >= 0 ? -1.0 : std::max(s * 2, -16.0));
-}
-
 void MainWindow::stepFrames(int frames)
 {
     m_engine->pause();

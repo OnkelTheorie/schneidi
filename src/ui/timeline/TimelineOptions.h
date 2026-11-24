@@ -46,6 +46,15 @@ void setTrimOverwrites(bool on);
 bool spaceReturns();
 void setSpaceReturns(bool on);
 
+// The speeds J/L step through when pressed again (Settings › Timeline › Playback): doubling 1-2-4-8-16 (default, as
+// before; DaVinci) or gentle 1-2-3-5-8 (Avid; Premiere 1-2-3-4). shuttleSpeed: the speed after a press of J
+// (direction -1) or L (+1) at the current speed - the other direction (or paused) starts at 1x, a slower one (half
+// speed of K+J/L) goes to 1x, the top speed stays. Read at every press.
+enum class ShuttleSteps { Double, Gentle };
+ShuttleSteps shuttleSteps();
+void setShuttleSteps(ShuttleSteps steps);
+double shuttleSpeed(double current, int direction, ShuttleSteps steps);
+
 // Snapping on or off (the magnet button, N): remembered across starts (default on, as every editor). Stored by the
 // main window when the user switches it (not in test runs).
 bool snapping();

@@ -60,6 +60,21 @@ void setClipFormat(ClipFormat choice)
     store("timeline/firstClipFormat", choice == ClipFormat::Adapt ? "adapt" : "keep", choice == ClipFormat::Ask);
 }
 
+ShuttleSteps shuttleSteps() { return stored("timeline/shuttleSteps") == "gentle" ? ShuttleSteps::Gentle : ShuttleSteps::Double; }
+
+void setShuttleSteps(ShuttleSteps steps) { store("timeline/shuttleSteps", "gentle", steps == ShuttleSteps::Double); }
+
+double shuttleSpeed(double current, int direction, ShuttleSteps steps)
+{
+    const int dir = direction < 0 ? -1 : 1;
+    const double s = current * dir; // the speed in the pressed direction
+    if (s < 1.0) return dir;        // paused, the other way or slower: 1x
+    if (steps == ShuttleSteps::Double) return dir * std::min(s * 2, 16.0);
+    for (double level : {2.0, 3.0, 5.0, 8.0})
+        if (level > s + 1e-9) return dir * level;
+    return dir * 8.0;
+}
+
 bool spaceReturns() { return stored("timeline/spaceStops") == "return"; }
 
 void setSpaceReturns(bool on) { store("timeline/spaceStops", "return", !on); }

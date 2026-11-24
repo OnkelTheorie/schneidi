@@ -407,6 +407,9 @@ void testTimelineTab()
                         [] { return int(TimelineOptions::clipFormat()); });
     // A clip's edge onto its neighbour: overwrites (default) or stops
     checkTimelineChoice("timeline_edge_meets_clip", 2, 1, [] { return int(TimelineOptions::trimOverwrites()); });
+    // J/L steps: doubling (default) or gentle
+    checkTimelineChoice("timeline_shuttle_steps", 2, int(TimelineOptions::ShuttleSteps::Double),
+                        [] { return int(TimelineOptions::shuttleSteps()); });
     // Middle button drag: pans the view (default) or nothing
     checkTimelineChoice("timeline_middle_drag", 2, 1, [] { return int(TimelineOptions::middleDragPans()); });
     // A click into the tracks: only select (default) or set the playhead too

@@ -203,6 +203,14 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
     play->addRow(hint(T("Zurück zur Startposition: die Abspielmarke springt dorthin, wo du das Abspielen gestartet hast "
                         "(wie in Vegas), gut zum wiederholten Anhören eines Schnitts. K hält immer an der Stelle an; "
                         "„Stopp und zurück zur Startposition“ gibt es auch als eigene Taste (Tastenbelegung).")));
+    using SS = TimelineOptions::ShuttleSteps;
+    m_shuttle = combo("timeline_shuttle_steps",
+                      {{T("Verdoppeln (1–2–4–8–16×)"), int(SS::Double)}, {T("Sanft (1–2–3–5–8×)"), int(SS::Gentle)}},
+                      int(TimelineOptions::shuttleSteps()));
+    play->addRow(T("J/L-Stufen"), m_shuttle);
+    play->addRow(hint(T("Wie schnell J und L bei jedem weiteren Druck werden. Sanft (wie Avid) lässt mehr Zwischenstufen. "
+                        "K halten und J oder L tippen geht einen Frame, K und J oder L halten spielt mit halber "
+                        "Geschwindigkeit.")));
     m_afterSeek = combo("timeline_after_playhead_move",
                         {{T("Standard"), int(PlayheadMove::Mode::Standard)},
                          {T("Weiter wie vorher"), int(PlayheadMove::Mode::Continue)},
@@ -280,6 +288,11 @@ TimelineOptions::SnapReach TimelineSettingsPage::snapReach() const
     return TimelineOptions::SnapReach(m_snapReach->currentData().toInt());
 }
 
+TimelineOptions::ShuttleSteps TimelineSettingsPage::shuttleSteps() const
+{
+    return TimelineOptions::ShuttleSteps(m_shuttle->currentData().toInt());
+}
+
 bool TimelineSettingsPage::spaceReturns() const { return m_space->currentData().toInt() == 1; }
 
 double TimelineSettingsPage::stillSeconds() const { return m_stillSeconds->value(); }
@@ -321,6 +334,7 @@ void TimelineSettingsPage::store() const
     if (std::abs(stillSeconds() - TimelineOptions::stillSeconds()) > 1e-9) TimelineOptions::setStillSeconds(stillSeconds());
     if (std::abs(transitionSeconds() - TimelineOptions::transitionSeconds()) > 1e-9)
         TimelineOptions::setTransitionSeconds(transitionSeconds());
+    if (shuttleSteps() != TimelineOptions::shuttleSteps()) TimelineOptions::setShuttleSteps(shuttleSteps());
     if (spaceReturns() != TimelineOptions::spaceReturns()) TimelineOptions::setSpaceReturns(spaceReturns());
     if (snapTargets() != TimelineOptions::snapTargets()) TimelineOptions::setSnapTargets(snapTargets());
     if (snapReach() != TimelineOptions::snapReach()) TimelineOptions::setSnapReach(snapReach());
