@@ -844,7 +844,10 @@ void MainWindow::offerClipFormat(const QStringList& paths, bool ask)
         want.height = fixedSize ? cur.height : cf.height;
         want.rate = m_project->fixedFrameRate() ? cur.rate : cf.suggested;
         if (want == cur) return;
-        if (ask) {
+        // The user's choice (Settings › Timeline): ask (default), always adapt, never change
+        const TimelineOptions::ClipFormat choice = ask ? TimelineOptions::clipFormat() : TimelineOptions::ClipFormat::Adapt;
+        if (choice == TimelineOptions::ClipFormat::Keep) return;
+        if (choice == TimelineOptions::ClipFormat::Ask) {
             // Like DaVinci "Change project frame rate?", here including resolution
             QString clipRate = cf.rate.label();
             if (cf.variable)

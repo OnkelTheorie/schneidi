@@ -64,6 +64,14 @@ void setSnapReach(SnapReach reach);
 int snapPixels(SnapReach reach);
 inline int snapPixels() { return snapPixels(snapReach()); }
 
+// The first video clip in an empty timeline whose format (size, frame rate) differs from the project's (Settings ›
+// Timeline › New clips): ask (default, as before; DaVinci, Kdenlive), always adapt the project without asking
+// (Premiere, Final Cut, CapCut) or never change it. Fixed values (start template, Project Settings) stay either way.
+// Read at every such clip.
+enum class ClipFormat { Ask, Adapt, Keep };
+ClipFormat clipFormat();
+void setClipFormat(ClipFormat choice);
+
 // Default lengths (Settings › Timeline › New clips): stills imported from now on (5 s) and transitions added without
 // a length (1 s). applyEditDefaults() hands the stored choice to the core (EditDefaults): at the start and after OK.
 double stillSeconds();

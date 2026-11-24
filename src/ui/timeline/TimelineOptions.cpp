@@ -49,6 +49,17 @@ bool trimOverwrites() { return stored("timeline/edgeMeetsClip") != "stop"; }
 
 void setTrimOverwrites(bool on) { store("timeline/edgeMeetsClip", "stop", on); }
 
+ClipFormat clipFormat()
+{
+    const QString v = stored("timeline/firstClipFormat");
+    return v == "adapt" ? ClipFormat::Adapt : v == "keep" ? ClipFormat::Keep : ClipFormat::Ask;
+}
+
+void setClipFormat(ClipFormat choice)
+{
+    store("timeline/firstClipFormat", choice == ClipFormat::Adapt ? "adapt" : "keep", choice == ClipFormat::Ask);
+}
+
 bool spaceReturns() { return stored("timeline/spaceStops") == "return"; }
 
 void setSpaceReturns(bool on) { store("timeline/spaceStops", "return", !on); }

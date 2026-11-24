@@ -122,6 +122,14 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
     fresh->addRow(T("Standbilder"), m_stillSeconds);
     m_transitionSeconds = secondsBox("timeline_transition_seconds", 0.04, 30, TimelineOptions::transitionSeconds());
     fresh->addRow(T("Übergänge"), m_transitionSeconds);
+    using CF = TimelineOptions::ClipFormat;
+    m_clipFormat = combo("timeline_first_clip_format",
+                         {{T("Fragen"), int(CF::Ask)}, {T("Projekt immer anpassen"), int(CF::Adapt)}, {T("Nie ändern"), int(CF::Keep)}},
+                         int(TimelineOptions::clipFormat()));
+    fresh->addRow(T("Erster Clip mit anderem Format"), m_clipFormat);
+    fresh->addRow(hint(T("Wenn der erste Videoclip in einer leeren Timeline eine andere Größe oder Bildrate hat als das "
+                         "Projekt. Projekt immer anpassen: übernimmt das Format des Clips ohne Frage (wie Premiere, "
+                         "Final Cut, CapCut). Feste Werte aus Startvorlage oder Projekteinstellungen bleiben immer.")));
     fresh->addRow(hint(T("So lang werden Bilder, die du ab jetzt importierst, und Übergänge ohne eigene Länge "
                          "(Strg+T, aus den Effekten gezogen). Schon importierte Bilder behalten ihre Länge.")));
 
@@ -245,6 +253,11 @@ TimelineOptions::Follow TimelineSettingsPage::follow() const
 
 bool TimelineSettingsPage::clickSetsPlayhead() const { return m_click->currentData().toInt() == 1; }
 
+TimelineOptions::ClipFormat TimelineSettingsPage::clipFormat() const
+{
+    return TimelineOptions::ClipFormat(m_clipFormat->currentData().toInt());
+}
+
 bool TimelineSettingsPage::trimOverwrites() const { return m_trimOver->currentData().toInt() == 1; }
 
 bool TimelineSettingsPage::middleDragPans() const { return m_middle->currentData().toInt() == 1; }
@@ -312,6 +325,7 @@ void TimelineSettingsPage::store() const
     if (snapTargets() != TimelineOptions::snapTargets()) TimelineOptions::setSnapTargets(snapTargets());
     if (snapReach() != TimelineOptions::snapReach()) TimelineOptions::setSnapReach(snapReach());
     if (timeFormat() != TimelineOptions::timeFormat()) TimelineOptions::setTimeFormat(timeFormat());
+    if (clipFormat() != TimelineOptions::clipFormat()) TimelineOptions::setClipFormat(clipFormat());
     if (trimOverwrites() != TimelineOptions::trimOverwrites()) TimelineOptions::setTrimOverwrites(trimOverwrites());
     if (middleDragPans() != TimelineOptions::middleDragPans()) TimelineOptions::setMiddleDragPans(middleDragPans());
     if (clickSetsPlayhead() != TimelineOptions::clickSetsPlayhead()) TimelineOptions::setClickSetsPlayhead(clickSetsPlayhead());

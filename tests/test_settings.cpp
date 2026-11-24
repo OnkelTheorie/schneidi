@@ -402,6 +402,9 @@ void testTimelineTab()
     }
     // Space while playing: stop where it is (default) or go back to the start position
     checkTimelineChoice("timeline_space_stops", 2, 0, [] { return int(TimelineOptions::spaceReturns()); });
+    // The first clip with another format: ask (default), always adapt, never change
+    checkTimelineChoice("timeline_first_clip_format", 3, int(TimelineOptions::ClipFormat::Ask),
+                        [] { return int(TimelineOptions::clipFormat()); });
     // A clip's edge onto its neighbour: overwrites (default) or stops
     checkTimelineChoice("timeline_edge_meets_clip", 2, 1, [] { return int(TimelineOptions::trimOverwrites()); });
     // Middle button drag: pans the view (default) or nothing
