@@ -646,18 +646,20 @@ std::optional<double> speechLevelDb(const QString& file, int stream, const QVect
     return 10 * std::log10(power / blocks);
 }
 
-// The voices placed brought to one level: each up to the loudest one (at most kVoiceRaiseMaxDb; under 1 dB left as it
-// is), only voices with words in the moments. *said: what was raised by how much
+// The voices placed brought to one level, per recording (its microphone and its voice chat, recorded together): each
+// up to the loudest of them (at most kVoiceRaiseMaxDb; under 1 dB left as it is), only voices with words in the
+// moments. Not across recordings: one shout in another clip would set every voice there. *said: what was raised
 constexpr double kVoiceRaiseMaxDb = 12;
 void levelVoices(QJsonArray& voiceRefs, QStringList* said)
 {
-    double loudest = -200;
+    QHash<QString, double> loudest; // per recording
     for (const QJsonValue& v : voiceRefs)
-        if (v["level_db"].isDouble()) loudest = std::max(loudest, v["level_db"].toDouble());
+        if (v["level_db"].isDouble())
+            loudest[v["media"].toString()] = std::max(loudest.value(v["media"].toString(), -200.0), v["level_db"].toDouble());
     for (int i = 0; i < voiceRefs.size(); ++i) {
         QJsonObject v = voiceRefs[i].toObject();
         if (!v["level_db"].isDouble()) continue;
-        const double gain = std::min(kVoiceRaiseMaxDb, loudest - v["level_db"].toDouble());
+        const double gain = std::min(kVoiceRaiseMaxDb, loudest.value(v["media"].toString()) - v["level_db"].toDouble());
         if (gain < 1) continue;
         v["gain_db"] = std::round(gain * 10) / 10;
         voiceRefs[i] = v;
