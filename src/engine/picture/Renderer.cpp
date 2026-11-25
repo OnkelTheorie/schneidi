@@ -2442,14 +2442,19 @@ struct Renderer::Impl {
             const Captions::Pop pop = Captions::popIn((f - cue.start - times[active].from) * 1000.0 / ctx.fps, cs.popMs);
             p.lines = {{Text::Word{words[active], t.color, pop.scale, pop.opacity}}};
         } else {
-            const QFontMetricsF fm(font);
+            // Lines broken with the font at project size against the project's line width, then drawn scaled (as the
+            // Lines mode): the preview at another size breaks a cue where the export does (the font measured at
+            // output size rounds and hints differently, a cue near the limit broke elsewhere)
+            QFont projectFont = font;
+            projectFont.setPixelSize(std::max(1, int(std::lround(std::max(1.0, t.size)))));
+            const QFontMetricsF fm(projectFont);
             QVector<double> widths;
             p.reserve = std::max(1.0, cs.highlightScale);
             double widest = 0;
             for (const QString& w : words) widths << fm.horizontalAdvance(w), widest = std::max(widest, widths.last());
             // Room on every line for the widest word grown (Text::drawWords): the lines do not change as it moves
             const QVector<int> starts = Captions::lineStarts(widths, fm.horizontalAdvance(QLatin1Char(' ')),
-                                                             lineWidth * sx - widest * (p.reserve - 1), cs.maxWordsPerLine);
+                                                             lineWidth - widest * (p.reserve - 1), cs.maxWordsPerLine);
             for (int i = 0; i < words.size(); ++i) {
                 if (starts.contains(i)) p.lines.append(QVector<Text::Word>());
                 const bool now = i == active;
