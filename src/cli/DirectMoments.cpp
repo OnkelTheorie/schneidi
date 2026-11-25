@@ -620,7 +620,10 @@ QString gameInPicture(const QStringList& files, Context& ctx, int upTo)
             continue;
         }
         if (!m.info.hasVideo || m.info.isImage) continue;
-        const AnalysisCache::Key key = AnalysisCache::key("game-in-picture", m.info.path, {}, 1);
+        // The detector's version in the key: a better one looks again (the pictures are read at 1080 lines as the
+        // kill feed is measured; smaller ones lose its thin lines)
+        const AnalysisCache::Key key = AnalysisCache::key("game-in-picture", m.info.path,
+                                                          {{"detector", KillFeedLines::version()}}, 1);
         if (const auto hit = AnalysisCache::get(key)) {
             id = (*hit)["game"].toString();
         } else {

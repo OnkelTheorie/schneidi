@@ -50,6 +50,8 @@ bool canMeasure(const GameHud::Game& game);
 Sample detect(const QImage& picture, const GameHud::Game& game);
 
 QString cacheDir();
+// The measurement's version (kVersion): results kept elsewhere name it in their cache key
+int version();
 
 // A recording whose game is not named (a clip tool's "Desktop_clip_…"): is it a known game? Its kill feed lines are
 // looked for in pictures `step` seconds apart (at most `maxCount`, spread over the whole length; pictureAt(seconds),

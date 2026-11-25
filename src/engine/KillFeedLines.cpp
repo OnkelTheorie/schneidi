@@ -357,6 +357,8 @@ const GameHud::Game* recognise(const std::function<QImage(double)>& pictureAt, d
     return nullptr;
 }
 
+int version() { return kVersion; }
+
 QString cacheDir() { return AppPaths::writable(QStandardPaths::CacheLocation) + "/killfeed"; }
 
 std::optional<Samples> measure(const QString& file, double from, double to, const QRectF& contentIn,

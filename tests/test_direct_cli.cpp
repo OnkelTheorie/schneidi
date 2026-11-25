@@ -1433,6 +1433,15 @@ int main(int argc, char** argv)
         Q_UNUSED(target);
     }
 
+    // ---- The game seen in the picture: cached with the detector's version (a result of an older detector is not
+    // taken: here one that "saw" cs2 in a holiday clip)
+    {
+        const QString h = holiday(dir.path(), "seen", 8, 77);
+        AnalysisCache::put(AnalysisCache::key("game-in-picture", h, {}, 1), QJsonObject{{"game", "cs2"}});
+        Cli::Context gctx;
+        CHECK_EQ(Cli::detail::gameInPicture({h}, gctx), QString());
+    }
+
     // ---- Tempo: suggestions for 10 clips, cold and warm
     {
         const double len = qEnvironmentVariableIntValue("DIRECT_MEASURE") ? 30 : 12;
