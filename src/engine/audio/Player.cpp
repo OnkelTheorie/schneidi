@@ -160,6 +160,10 @@ struct Player::Impl {
     // watchdog holds while the driver takes its time (100 ms to seconds when headphones are plugged in or out)
     std::atomic<bool> deviceOpened{false};
     bool forcedSilence = false; // the sound card kept failing: silence until available() says it is back
+    bool suspended = false;     // stopped while paused (Options::idleSuspendMs), started again by resumeDevice()
+    std::atomic<bool> suspendedNow{false}; // the same for stats() (no deviceMutex there)
+    std::atomic<int64_t> lastActive{0};    // the last play()/pause()/scrub() (ns): idle since then
+    std::atomic<int> suspends{0}, resumes{0};
     int64_t openedAt = 0;       // lastCallback when it was opened: later = it has called back since
     int opened = 0;             // devices opened so far
     QString deviceName, deviceError;
@@ -219,6 +223,9 @@ struct Player::Impl {
     Device::Config deviceConfig();
     void openDevice(bool silent = false); // under deviceMutex
     void closeDevice();                   // under deviceMutex
+    void resumeDevice();                  // under deviceMutex: a suspended device calls back again
+    // play()/scrub(): the device is wanted - started at once when deviceMutex is free, else by the watchdog
+    void wakeDevice();
     bool deviceSilent() const;
     void watch();
 
@@ -870,6 +877,8 @@ void Player::Impl::openDevice(bool silent)
     if (silent) c.backend = "null";
     forcedSilence = silent;
     closeDevice(); // the old callback stops first
+    suspended = false; // (a new device starts running)
+    suspendedNow = false;
     cb.prevNow = 0; // the gap to the old device's last callback is no late callback (reopens are logged apart)
     // Until the new device's own values are known its callbacks are not judged (the old latency would be compared)
     steady = false;
@@ -896,7 +905,7 @@ bool Player::Impl::deviceSilent() const
 void Player::Impl::closeDevice()
 {
     if (!device) return;
-    if (!deviceSilent()) {
+    if (suspended || !deviceSilent()) { // (a suspended one is silent on purpose and closes at once)
         device.reset();
         return;
     }
@@ -904,6 +913,33 @@ void Player::Impl::closeDevice()
     // never calls us again and is closed aside
     device->detach();
     std::thread([old = std::move(device)]() mutable { old.reset(); }).detach();
+}
+
+void Player::Impl::resumeDevice()
+{
+    if (!device || !suspended) return;
+    // Its last callback was before the pause: no late callback, and the watchdog waits for it as for a new device
+    cb.prevNow = 0; // (the device thread is stopped)
+    openedAt = nowNs();
+    lastCallback.store(openedAt, std::memory_order_relaxed);
+    suspended = false;
+    suspendedNow = false;
+    device->resume();
+    resumes.fetch_add(1, std::memory_order_relaxed);
+}
+
+void Player::Impl::wakeDevice()
+{
+    lastActive.store(nowNs(), std::memory_order_relaxed);
+    if (opt.idleSuspendMs <= 0 || !suspendedNow.load()) return;
+    // The watchdog may hold deviceMutex while a driver takes its time: then it starts the device itself (also when
+    // it was suspending just now, having read the pause before this play: its next round, <= 50 ms)
+    std::unique_lock<std::mutex> dl(deviceMutex, std::try_to_lock);
+    if (dl.owns_lock()) {
+        resumeDevice();
+        return;
+    }
+    watchWake.notify_all();
 }
 
 void Player::Impl::watch()
@@ -932,6 +968,25 @@ void Player::Impl::watch()
                     dirty = deviceDirty;
                 }
                 const int64_t now = nowNs();
+                if (opt.idleSuspendMs > 0 && !dirty) {
+                    bool playing;
+                    {
+                        std::lock_guard<std::mutex> lock(mutex);
+                        playing = cmd.playing;
+                    }
+                    const bool idle = !playing
+                                      && now - lastActive.load(std::memory_order_relaxed)
+                                             > int64_t(opt.idleSuspendMs) * 1'000'000;
+                    if (suspended && !idle) {
+                        resumeDevice();
+                    } else if (!suspended && idle && !forcedSilence) {
+                        device->suspend();
+                        suspended = true;
+                        suspendedNow = true;
+                        suspends.fetch_add(1, std::memory_order_relaxed);
+                        qInfo("Audio: paused, output stopped until play");
+                    }
+                }
                 const int64_t silent = now - lastCallback.load(std::memory_order_relaxed);
                 if (const int r = device->reroutes(); r != seenReroutes) {
                     qInfo("Audio: das System hat die Ausgabe verlegt");
@@ -941,6 +996,8 @@ void Player::Impl::watch()
                 if (dirty) {
                     openDevice();
                     tries = 0;
+                } else if (suspended) {
+                    // silent on purpose: no reopen, no look for the asked output
                 } else if (deviceSilent()) {
                     ++tries;
                     reopens.fetch_add(1, std::memory_order_relaxed);
@@ -1063,6 +1120,7 @@ void Player::play(double position, double speed)
         d->gen.store(d->cmd.gen, std::memory_order_release);
     }
     d->wake.notify_all();
+    d->wakeDevice();
 }
 
 void Player::pause()
@@ -1071,6 +1129,7 @@ void Player::pause()
     {
         std::lock_guard<std::mutex> lock(d->mutex);
         if (!d->cmd.playing) return;
+        d->lastActive.store(nowNs(), std::memory_order_relaxed); // (idle from here: Options::idleSuspendMs)
         d->pausedAt = d->positionLocked();
         d->cmd.playing = false;
         ++d->cmd.gen;
@@ -1156,6 +1215,7 @@ void Player::scrub(double position)
         }
     }
     d->wake.notify_all();
+    d->wakeDevice();
 }
 
 double Player::position() const
@@ -1228,6 +1288,9 @@ Player::Stats Player::stats() const
     s.scrubJoins = d->scrubJoins.load();
     s.scrubReplaced = d->scrubReplaced.load();
     s.scrubCuts = d->scrubCuts.load();
+    s.suspends = d->suspends.load();
+    s.resumes = d->resumes.load();
+    s.suspended = d->suspendedNow.load();
     {
         std::lock_guard<std::mutex> lock(d->mutex);
         s.buffer = d->opt.buffer;

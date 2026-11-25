@@ -53,6 +53,8 @@ public:
     int latency() const override { return m_period; }
     QString name() const override { return m_file.isOpen() ? "Datei " + m_file.fileName() : QString("Stille"); }
     bool fallback() const override { return m_fallback; }
+    void suspend() override { m_suspended = true; }
+    void resume() override { m_suspended = false; }
 
 private:
     void run()
@@ -63,6 +65,11 @@ private:
         const auto begin = std::chrono::steady_clock::now();
         auto due = begin;
         while (!m_stop) {
+            if (m_suspended) { // no callbacks (a stopped stream); the deadlines start anew at resume()
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                due = std::chrono::steady_clock::now();
+                continue;
+            }
             if (m_stallMs <= 0 || due - begin < std::chrono::milliseconds(m_stallMs)) {
                 m_callback(block.data(), m_period);
                 if (m_file.isOpen()) {
@@ -80,7 +87,7 @@ private:
     bool m_fallback;
     Callback m_callback;
     QFile m_file;
-    std::atomic<bool> m_stop{false};
+    std::atomic<bool> m_stop{false}, m_suspended{false};
     std::thread m_thread;
 };
 
@@ -258,6 +265,15 @@ public:
         return m_device && m_maContext.backend != ma_backend_dsound && m_maContext.backend != ma_backend_winmm;
     }
     void setFallback() { m_fallback = true; }
+    void suspend() override
+    {
+        if (m_device) ma_device_stop(&m_maDevice);
+    }
+    void resume() override
+    {
+        if (m_device && ma_device_start(&m_maDevice) != MA_SUCCESS)
+            qWarning("Audio: %s startet nicht wieder", qPrintable(m_name)); // (the watchdog sees it silent, reopens)
+    }
     int reroutes() const override { return m_reroutes.load(std::memory_order_relaxed); }
     void detach() override
     {

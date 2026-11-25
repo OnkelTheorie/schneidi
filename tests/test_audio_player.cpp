@@ -470,5 +470,60 @@ int main(int argc, char** argv)
         CHECK(grown == (std::vector<int>{2048, 4096}));
         std::printf("Puffer nach Aussetzern: %d Samples\n", grow.stats().buffer);
     }
+
+    // 15. Paused for Options::idleSuspendMs (Android: a started stream keeps the phone's audio server busy), the device
+    // is stopped - nothing reaches the speaker, the watchdog does not take it for vanished - and play() starts it
+    // again: the clock runs, no reopen. 0 (the desktop's default) never stops it.
+    {
+        CHECK_EQ(Audio::Player::Options{}.idleSuspendMs,
+#ifdef Q_OS_ANDROID
+                 2000
+#else
+                 0
+#endif
+        );
+        const QString restPath = tmp.filePath("rest.raw");
+        qputenv("SCHNEIDI_AUDIO_DEVICE", ("file:" + QDir::toNativeSeparators(restPath)).toLocal8Bit());
+        Audio::Player::Options o;
+        o.idleSuspendMs = 200;
+        Audio::Player rest(o);
+        rest.setTimeline(tl, kFps);
+        rest.play(double(frameStart(10)), 1.0);
+        rest.release();
+        sleepMs(300);
+        CHECK(!rest.stats().suspended); // playing: never
+        rest.pause();
+        sleepMs(100);
+        CHECK(!rest.stats().suspended); // not idle long enough yet
+        sleepMs(400);
+        const Audio::Player::Stats paused = rest.stats();
+        CHECK(paused.suspended);
+        CHECK_EQ(paused.suspends, 1);
+        const qint64 sizeStopped = QFileInfo(restPath).size();
+        sleepMs(600); // longer than the watchdog's limit for a vanished device (250 ms)
+        CHECK_EQ(QFileInfo(restPath).size(), sizeStopped);
+        CHECK_EQ(rest.stats().reopens, 0);
+        const double at = rest.position();
+        rest.play(at, 1.0);
+        rest.release();
+        sleepMs(400);
+        const Audio::Player::Stats resumed = rest.stats();
+        std::printf("Ruhe: %d× angehalten, %d× wieder gestartet, Uhr nach dem Start %.2f s weiter, Lautsprecher %lld -> "
+                    "%lld Bytes\n",
+                    resumed.suspends, resumed.resumes, (rest.position() - at) / kRate, (long long)sizeStopped,
+                    (long long)QFileInfo(restPath).size());
+        CHECK(!resumed.suspended);
+        CHECK_EQ(resumed.resumes, 1);
+        CHECK_EQ(resumed.reopens, 0);
+        CHECK(QFileInfo(restPath).size() > sizeStopped);
+        CHECK(rest.position() - at > 0.2 * kRate);
+        // Scrubbing while suspended starts it too
+        rest.pause();
+        sleepMs(500);
+        CHECK(rest.stats().suspended);
+        rest.scrub(double(frameStart(60)));
+        sleepMs(30);
+        CHECK(!rest.stats().suspended);
+    }
     return Check::result();
 }
