@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 
 namespace Subtitles {
 
@@ -75,25 +76,57 @@ QString stripFormatting(QString text)
 
 QVector<SrtFile> srtFiles(const Timeline& tl, const QString& path)
 {
-    int main = -1;
+    QVector<int> visible;
     for (int i = 0; i < tl.subtitles.size(); ++i)
-        if (tl.subtitles[i].enabled && !tl.subtitles[i].cues.isEmpty()) main = i;
+        if (tl.subtitles[i].enabled && !tl.subtitles[i].cues.isEmpty()) visible << i;
+    int main = visible.isEmpty() ? -1 : visible.first();
     for (int i = 0; i < tl.subtitles.size() && main < 0; ++i)
         if (!tl.subtitles[i].cues.isEmpty()) main = i;
     if (main < 0) return {};
-    QVector<SrtFile> out{{path, main}};
+    QVector<SrtFile> out{{path, main, visible.mid(1)}};
     const QFileInfo fi(path);
     const QString suffix = fi.suffix().isEmpty() ? QString("srt") : fi.suffix();
     QSet<QString> taken; // lower case: Windows and macOS do not tell "En" from "en"
     static const QRegularExpression bad(R"([\\/:*?"<>|\x00-\x1f])");
     for (int i = 0; i < tl.subtitles.size(); ++i) {
-        if (i == main || tl.subtitles[i].cues.isEmpty()) continue;
+        if (i == main || out.first().also.contains(i) || tl.subtitles[i].cues.isEmpty()) continue;
         QString name = QString(tl.subtitles[i].name).replace(bad, "_").trimmed();
         while (name.endsWith('.')) name.chop(1); // Windows drops trailing dots
         // a clash with another name (also a track named like a number): the track number, then counted up
         for (int n = i + 1; name.isEmpty() || taken.contains(name.toLower()); ++n) name = QString::number(n);
         taken.insert(name.toLower());
         out << SrtFile{fi.dir().filePath(QString("%1.%2.%3").arg(fi.completeBaseName(), name, suffix)), i};
+    }
+    return out;
+}
+
+QVector<SubtitleCue> cuesOf(const Timeline& tl, const SrtFile& file)
+{
+    if (file.also.isEmpty()) return tl.subtitles[file.track].cues;
+    // Higher tracks first (they are shown above)
+    QVector<int> tracks = file.also;
+    tracks << file.track;
+    std::sort(tracks.begin(), tracks.end(), std::greater<int>());
+    QVector<int> edges;
+    for (int t : tracks)
+        for (const SubtitleCue& c : tl.subtitles[t].cues)
+            if (!c.text.trimmed().isEmpty()) edges << c.start << c.end;
+    std::sort(edges.begin(), edges.end());
+    edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
+    QVector<SubtitleCue> out;
+    for (int e = 0; e + 1 < edges.size(); ++e) {
+        const int from = edges[e], to = edges[e + 1];
+        QStringList texts;
+        for (int t : tracks)
+            for (const SubtitleCue& c : tl.subtitles[t].cues)
+                if (c.start <= from && c.end >= to && !c.text.trimmed().isEmpty()) texts << c.text.trimmed();
+        if (texts.isEmpty()) continue;
+        if (texts.size() > 1)
+            for (QString& t : texts) t = QStringLiteral("- ") + t;
+        const QString text = texts.join('\n');
+        // One entry while the same texts are shown
+        if (!out.isEmpty() && out.last().end == from && out.last().text == text) out.last().end = to;
+        else out << SubtitleCue{0, from, to, text, {}};
     }
     return out;
 }
@@ -280,9 +313,12 @@ QVector<TextTrack> textTracks(const Timeline& tl, double fps, int offset, int un
     for (int i = 0; i < files.size(); ++i) {
         const SubtitleTrack& st = tl.subtitles[files[i].track];
         TextTrack t;
-        t.name = st.name;
+        QStringList names{st.name};
+        for (int k : files[i].also) names << tl.subtitles[k].name;
+        names.removeAll(QString());
+        t.name = files[i].also.isEmpty() ? st.name : names.join(QStringLiteral(" + "));
         t.main = i == 0;
-        forCues(st.cues, offset, until, [&](int from, int to, const QStringList& lines) {
+        forCues(cuesOf(tl, files[i]), offset, until, [&](int from, int to, const QStringList& lines) {
             t.cues << TextCue{frameToMs(from, fps), frameToMs(to, fps), lines.join('\n')};
         });
         if (!t.cues.isEmpty()) out << t;

@@ -99,7 +99,7 @@ bool writeSubtitleFiles(const Timeline& tl, double fps, int from, int to, const 
     }
     for (const Subtitles::SrtFile& srt : list) {
         auto f = std::make_unique<QSaveFile>(srt.path);
-        if (!f->open(QIODevice::WriteOnly) || f->write(Subtitles::toFile(srt.path, tl.subtitles[srt.track].cues, fps, from, to)) < 0) {
+        if (!f->open(QIODevice::WriteOnly) || f->write(Subtitles::toFile(srt.path, Subtitles::cuesOf(tl, srt), fps, from, to)) < 0) {
             if (error) *error = T("Untertiteldatei kann nicht geschrieben werden: %1").arg(srt.path);
             return false;
         }

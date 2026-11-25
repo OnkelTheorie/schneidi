@@ -42,12 +42,18 @@ QVector<TextTrack> textTracks(const Timeline& tl, double fps, int offset = 0, in
 
 // The SRT files a subtitle export writes, one per track with entries: the visible track (otherwise the first with
 // entries) into `path`, every other one next to it as "<name>.<track name>.srt" (players offer such files as further
-// subtitles; an unnamed or clashing track gets its number). Main file first; empty = no track has entries.
+// subtitles; an unnamed or clashing track gets its number). Several visible tracks (two speakers' captions shown at
+// once) all go into `path` (cuesOf). Main file first; empty = no track has entries.
 struct SrtFile {
     QString path;
-    int track = 0; // index in Timeline::subtitles
+    int track = 0;     // index in Timeline::subtitles
+    QVector<int> also; // further visible tracks in the same file
 };
 QVector<SrtFile> srtFiles(const Timeline& tl, const QString& path);
+// The cues of a file: its track's, or with `also` the tracks' cues as one list without overlap - while two are shown
+// at once one entry has both texts, each line starting with "- " (the usual mark of two speakers), the higher track's
+// (shown above) first
+QVector<SubtitleCue> cuesOf(const Timeline& tl, const SrtFile& file);
 
 // ---- Readable cues (0.19) ----
 // Regroups short cues (whisper's one-line pieces, a word list) into cues people can read (the cheapest split of each

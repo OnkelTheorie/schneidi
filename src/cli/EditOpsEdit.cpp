@@ -6,6 +6,7 @@
 
 #include "core/Captions.h"
 #include "core/EffectFolders.h"
+#include "core/ExportCheck.h"
 #include "core/Generators.h"
 #include "core/Retime.h"
 #include "core/Subtitles.h"
@@ -701,6 +702,44 @@ void opCaptions(Session& s, const QJsonObject& op)
     o.cuts = Transcript::cutFrames(s.project.timeline(), -1, INT_MAX, track >= 0 ? QVector<int>{track} : QVector<int>{});
     if (style == "beat" && o.beats.isEmpty())
         fail("BAD_ARGUMENT", "style 'beat' needs beats ([times] from `beats` with beats:true) or bpm (+ first_beat)");
+    // A cue the next cut leaves under 0.25 s: joined to the one before when heard 0.12 s, else dropped
+    o.minAtCutFrames = int(std::lround(0.25 * fps));
+    o.heardFrames = int(std::lround(0.12 * fps));
+    QVector<int> speakers;
+    for (const TranscriptCut::Word& w : std::as_const(words))
+        if (!speakers.contains(w.track)) speakers << w.track;
+    std::sort(speakers.begin(), speakers.end());
+    if (speakers.size() > 1) {
+        // Several speakers: a track each, all shown at once - everyone's words at their own time, a speaker above the
+        // lines they talk over, each in their own colour
+        const QJsonArray names = op.value("speakers").toArray();
+        const QSize size = s.project.timelineFormat().size();
+        TitleStyle text = Captions::defaultStyle(size, captions.mode);
+        applyStyle(text, op, s.project.effectiveBrand());
+        QVector<SubtitleTrack> lanes;
+        for (const int k : std::as_const(speakers)) {
+            QVector<TranscriptCut::Word> own;
+            for (const TranscriptCut::Word& w : std::as_const(words))
+                if (w.track == k) own << w;
+            SubtitleTrack t;
+            const QString name = k >= 0 && k < names.size() ? names[k].toString().simplified() : QString();
+            t.name = name.isEmpty() ? T("Sprecher %1").arg(k + 1) : name;
+            t.style = text;
+            t.captions = captions;
+            const QColor colour = Captions::speakerColor(int(lanes.size()), captions.highlight);
+            t.captions.highlight = colour;
+            // Without a highlighted word (word by word, lines) the text itself tells the speakers apart
+            if (captions.mode != CaptionMode::Karaoke && !lanes.isEmpty()) t.style.color = colour;
+            t.cues = Captions::fromWords(own, o);
+            if (!t.cues.isEmpty()) lanes << t;
+        }
+        if (lanes.isEmpty()) fail("NO_SPEECH", "no words to make captions of");
+        Captions::stackLanes(lanes, [&](const SubtitleTrack& st, const SubtitleCue& cue) {
+            return ExportCheck::subtitleCueBlock(st, cue.text, size.width(), size.height()).height();
+        });
+        s.editor.addCaptionTracks(lanes);
+        return;
+    }
     const QVector<SubtitleCue> cues = Captions::fromWords(words, o);
     if (cues.isEmpty()) fail("NO_SPEECH", "no words to make captions of");
     const int index = s.editor.addCaptions(cues, op.value("name").toString(), captions);
@@ -1130,16 +1169,17 @@ void addEditOps(QVector<OpDef>& ops)
                  opTrack, QStringList{"enabled", "captions"} + kStyleKeys + kCaptionKeys}
         << OpDef{"add_subtitle_track", "{op:'add_subtitle_track', name?}", {}, {}, opAddSubtitleTrack}
         << OpDef{"captions",
-                 "{op:'captions', style?:'karaoke'|'word'|'beat'|'lines', words?:[{from, to, text, speaker?}], track?:'A1', "
-                 "from?, to?, max_words?, beats?:[times], bpm?, first_beat?, name?}",
+                 "{op:'captions', style?:'karaoke'|'word'|'beat'|'lines', words?:[{from, to, text, speaker?}], speakers?:[names], "
+                 "track?:'A1', from?, to?, max_words?, beats?:[times], bpm?, first_beat?, name?}",
                  "word-by-word captions (shorts/reels style) from the transcript as a new, visible subtitle track",
                  "style: karaoke = the phrase stays, the spoken word lights up (highlight colour, slightly bigger); "
                  "word = one word at a time that pops in; beat = word by word, each word on the next beat (beats: "
                  "the times from `beats` with beats:true, or bpm + first_beat for a regular grid); lines = plain "
                  "subtitles with word times. Words: the media transcripts (Transcript panel; they follow trims and "
                  "speed changes, track = only that audio track's clips) or words = the 'words' list of `transcribe` "
-                 "on the project with words:true (timeline frames; speaker: a number per voice, a caption never mixes "
-                 "two) - `transcribe` with apply:true and captions:'<style>' "
+                 "on the project with words:true (timeline frames; speaker: a number per voice - several speakers get a "
+                 "visible track each, named by speakers[n], all at their own times: one talking over another is shown "
+                 "above, each in its own colour) - `transcribe` with apply:true and captions:'<style>' "
                  "does both in one call. max_words = words per caption (default 4, word/beat 3). Text style keys as for "
                  "'track' (" + kStyleFields + "; y = bottom of the text above the picture's bottom) and " + kCaptionFields
                      + ". The default style is big bold text with an outline, on 9:16 above the part phone apps cover. "

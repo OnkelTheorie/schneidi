@@ -911,6 +911,12 @@ int warnings(const QVector<Issue>& issues)
 }
 
 QRectF overlayBlock(const Clip& c, double W, double H) { return titleBlock(c, 0, W, H); }
+
+QRectF subtitleCueBlock(const SubtitleTrack& st, const QString& text, double W, double H)
+{
+    return st.captions.mode == CaptionMode::Lines ? subtitleBlock(st.style, text, W, H)
+                                                  : captionBlock(st.style, st.captions, text, W, H);
+}
 QRectF overlayBlockAt(const Clip& c, double t, double W, double H) { return titleBlock(c, t, W, H); }
 
 } // namespace ExportCheck

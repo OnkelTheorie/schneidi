@@ -13,6 +13,7 @@
 #include <QVector>
 
 #include <functional>
+#include <vector>
 
 namespace Captions {
 
@@ -80,6 +81,11 @@ struct Options {
     QVector<int> beats;      // timeline frames: each word starts on the next beat (one word per beat), empty = as spoken
     QVector<int> cuts;       // timeline frames of cuts between clips (Transcript::cutFrames): no cue spans one or
                              // lasts past it
+    // A cue the next cut leaves shorter than this (frames; 0 = no rule): when its first word began at least `heardFrames`
+    // before the cut, it joins the cue before it (same speaker, right before, no cut between) or stays as it is;
+    // otherwise (a word the cut cuts off before it is heard: "nee," for 0.03 s) it is dropped
+    int minAtCutFrames = 0;
+    int heardFrames = 0;
 };
 // Words placed on beats: each word moves to the nearest beat after the beat of the word before (a word never shares
 // a beat), and lasts until the next word's beat
@@ -88,11 +94,38 @@ QVector<TranscriptCut::Word> onBeats(const QVector<TranscriptCut::Word>& words, 
 // pause, when it has maxWords or where the next word is another track's (another speaker); a comma after half of them
 // is a good place too. ids stay 0.
 QVector<SubtitleCue> fromWords(const QVector<TranscriptCut::Word>& words, const Options& options);
-// The words of several speakers (one voice track each, transcribed on its own) as one list for fromWords: each
-// speaker's words in phrases (a sentence end or a pause over `pauseFrames` closes one), the phrases in the order they
-// begin. A phrase that begins while another speaker's is still spoken follows right after it: moved back as a whole
-// (its own pace kept), never dropped - two people talking at once are read one after the other. Every word keeps its
-// speaker (index into `speakers`) in `track`, so a cue never mixes two of them.
-QVector<TranscriptCut::Word> mergeSpeakers(const QVector<QVector<TranscriptCut::Word>>& speakers, int pauseFrames);
+// The words of several speakers (one voice track each, transcribed on its own) as one list in time order: every word
+// at its own time (two people talking at once overlap - op 'captions' gives each speaker a track of their own), its
+// speaker (index into `speakers`) in `track`, so a cue never mixes two of them
+QVector<TranscriptCut::Word> mergeSpeakers(const QVector<QVector<TranscriptCut::Word>>& speakers);
+
+// A speaker's phrases: index ranges [first, last] of `words` (one speaker, in time order); a sentence end or a pause
+// over `pauseFrames` (from the end of a spoken word to the next one) closes one
+QVector<QPair<int, int>> phrases(const QVector<TranscriptCut::Word>& words, int pauseFrames);
+
+// Word times moved onto the sound of the speaker's own stream: whisper's times are loose (mostly for short
+// interjections), a voice chat or a gated microphone is (near) silent between words. `framePeaks`: the sample peak
+// (linear) of each timeline frame of only this speaker's track. For each phrase the speech onset/offset within
+// +-`windowS` of whisper's start/end (the level over the stream's noise floor) becomes its first word's start and its
+// last word's spoken end - only at a clear edge (quiet on the other side; a stream without at least 20 dB between its
+// quiet and its speech keeps whisper's times). Inner words stay when they still fit, else they are spread in
+// proportion; words keep their order, none gets shorter than `minWordS` (or its old length), a phrase never moves over
+// the speaker's phrase before or after it. Returns the number of phrases moved.
+struct SnapOptions {
+    double windowS = 0.4;
+    double minWordS = 0.08;
+    double minContrastDb = 20;
+};
+int snapToSound(QVector<TranscriptCut::Word>& words, const std::vector<float>& framePeaks, double fps, int pauseFrames,
+                const SnapOptions& options = {});
+
+// Colour of speaker `k` (0 = the first; it keeps `first`, the others a small palette of clearly different bright
+// colours, cycling): their highlighted word, in the word and lines modes their text
+QColor speakerColor(int k, const QColor& first);
+// Several speakers' caption tracks (lanes[0] = the first speaker) placed apart: each one's posY above every lower lane
+// whose cues are shown at the same time as one of its own, by the tallest of those cues (`height`: the block a cue
+// covers, pixels of the project format) and a small gap; a lane that is never shown together with a lower one keeps
+// the base position
+void stackLanes(QVector<SubtitleTrack>& lanes, const std::function<double(const SubtitleTrack&, const SubtitleCue&)>& height);
 
 } // namespace Captions

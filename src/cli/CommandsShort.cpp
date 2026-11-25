@@ -18,6 +18,7 @@
 #include "core/ShortPick.h"
 #include "core/StreamPresets.h"
 #include "core/TranscriptCut.h"
+#include "engine/AudioAnalysis.h"
 #include "engine/Extensions.h"
 
 #include <QDir>
@@ -112,11 +113,18 @@ QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, co
                 t.words << TranscriptWord{qint64(w[0].toDouble()), qint64(w[1].toDouble()), w[2].toString()};
             m->transcripts << t;
         }
-    // Per track on the timeline (trims and speed followed), then one list in time order, a speaker's phrase whole
+    // Per track on the timeline (trims and speed followed), each phrase moved onto its stream's sound (whisper's
+    // times are loose; a voice stream is quiet between words), then one list in time order
     const double fps = view.project.frameRate();
+    const int pause = int(std::lround(0.7 * fps));
     QVector<QVector<TranscriptCut::Word>> perTrack;
     for (const int i : tracks) {
-        perTrack << TranscriptCut::timelineWords(tl, media, fps, i, true);
+        failIfCanceled();
+        QVector<TranscriptCut::Word> words = TranscriptCut::timelineWords(tl, media, fps, i, true);
+        if (!words.isEmpty())
+            if (const auto peaks = AudioAnalysis::tracksFramePeaks(view.project.timelineFormat(), tl, {i}))
+                Captions::snapToSound(words, *peaks, fps, pause);
+        perTrack << words;
         QString name = tl.audio[i].name;
         if (name.isEmpty())
             for (const Clip& c : tl.audio[i].clips)
@@ -124,7 +132,7 @@ QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, co
         *voices << (name.isEmpty() ? QString("A%1").arg(i + 1) : name);
     }
     QJsonArray out;
-    for (const TranscriptCut::Word& w : Captions::mergeSpeakers(perTrack, int(std::lround(0.7 * fps))))
+    for (const TranscriptCut::Word& w : Captions::mergeSpeakers(perTrack))
         out << QJsonObject{{"from", w.from}, {"to", std::max(w.from + 1, w.spokenTo)}, {"text", w.text}, {"speaker", w.track}};
     return out;
 }
@@ -171,7 +179,9 @@ QJsonArray shortFinishOps(const QString& project, const QString& timeline, const
             if (words.isEmpty()) {
                 note("no_captions_speech");
             } else {
-                ops << QJsonObject{{"op", "captions"}, {"style", f.captions}, {"words", words}};
+                QJsonObject op{{"op", "captions"}, {"style", f.captions}, {"words", words}};
+                if (voices.size() > 1) op["speakers"] = QJsonArray::fromStringList(voices);
+                ops << op;
                 *done << (voices.isEmpty() ? QString("%1 captions (%2 segments)").arg(f.captions).arg(segments)
                                            : QString("%1 captions (%2 words) of %3, each voice transcribed on its own")
                                                  .arg(f.captions)

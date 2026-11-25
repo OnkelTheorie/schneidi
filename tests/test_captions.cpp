@@ -11,6 +11,7 @@
 #include "cli/CommandsDetail.h"
 #include "core/Captions.h"
 #include "core/Editor.h"
+#include "core/ExportCheck.h"
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -111,9 +112,9 @@ TranscriptCut::Word word(int from, int to, const QString& text)
 }
 
 // ---- Two speakers transcribed on their own (the microphone and the voice chat of a game recording, 25.11.: the quiet
-// chat partner was missing from the captions of the mix): one list a phrase at a time in the order they begin; a phrase
-// that begins while the other one's runs follows right after it (its pace kept), no word dropped, short lines kept;
-// a caption never mixes the two ----
+// chat partner was missing from the captions of the mix): one list in time order, every word at its own time (a phrase
+// spoken over another one is not moved after it any more: "the texts are not exactly on time"), a speaker per word,
+// so a caption never mixes the two ----
 void testMergeSpeakers()
 {
     std::printf("merge speakers\n");
@@ -123,27 +124,152 @@ void testMergeSpeakers()
                                             word(322, 340, "Headshot"), word(342, 354, "kassiert."), word(498, 510, "Auch"),
                                             word(512, 524, "da?")};
     const QVector<TranscriptCut::Word> mic{word(330, 345, "Einer"), word(347, 362, "soll?")};
-    const QVector<TranscriptCut::Word> all = Captions::mergeSpeakers({chat, mic}, 42);
+    const QVector<TranscriptCut::Word> all = Captions::mergeSpeakers({chat, mic});
     QStringList got;
     for (const TranscriptCut::Word& w : all) got << QString("%1:%2@%3-%4").arg(w.track).arg(w.text).arg(w.from).arg(w.spokenTo);
     CHECK_EQ(got.join(" "), QString("0:Heilige@234-260 0:Scheiße.@262-300 0:Direkt@300-320 0:Headshot@322-340 "
-                                    "0:kassiert.@342-354 1:Einer@354-369 1:soll?@371-386 0:Auch@498-510 0:da?@512-524"));
-    // In time order (what op 'captions' sorts by), every word there
-    for (int i = 1; i < all.size(); ++i) CHECK(all[i].from >= all[i - 1].from);
+                                    "1:Einer@330-345 0:kassiert.@342-354 1:soll?@347-362 0:Auch@498-510 0:da?@512-524"));
     CHECK_EQ(all.size(), chat.size() + mic.size());
     // Captions: the speakers never in one cue, even without a sentence end between them
-    QVector<TranscriptCut::Word> noStop = all;
+    QVector<TranscriptCut::Word> noStop = chat;
     for (TranscriptCut::Word& w : noStop) w.text.remove('.').remove('?');
+    QVector<TranscriptCut::Word> both = noStop;
+    for (TranscriptCut::Word w : mic) w.track = 1, w.text.remove('?'), both << w;
+    std::stable_sort(both.begin(), both.end(), [](const auto& a, const auto& b) { return a.from < b.from; });
     Captions::Options o;
     o.maxWords = 6;
     o.maxGapFrames = 36;
     QStringList cues;
-    for (const SubtitleCue& c : Captions::fromWords(noStop, o)) cues << c.text;
-    CHECK_EQ(cues.join(" | "), QString("Heilige Scheiße Direkt Headshot kassiert | Einer soll | Auch da"));
-    // One speaker alone: unchanged
-    const QVector<TranscriptCut::Word> one = Captions::mergeSpeakers({chat}, 42);
-    CHECK_EQ(one.size(), chat.size());
-    CHECK(one.first().from == 234 && one.last().spokenTo == 524);
+    for (const SubtitleCue& c : Captions::fromWords(both, o)) cues << c.text;
+    for (const QString& c : cues) CHECK(!(c.contains("Einer") && c.contains("Headshot")));
+    // Phrases of one speaker: a sentence end or a long pause closes one
+    CHECK_EQ(Captions::phrases(chat, 42), (QVector<QPair<int, int>>{{0, 1}, {2, 4}, {5, 6}}));
+}
+
+// ---- Word times onto the sound (25.11.: "the texts are not exactly on time"; whisper's times are loose, mostly for
+// short interjections; a voice chat is gated - digital silence between words) ----
+
+// The sample peak of each frame (fps) of `seconds` of sound: `floor` noise everywhere, noise of `level` in the bursts
+// (seconds), a deterministic noise
+std::vector<float> framePeaks(double fps, double seconds, const QVector<QPair<double, double>>& bursts, double level,
+                              double floor)
+{
+    constexpr int rate = 48000;
+    const int per = int(rate / fps);
+    const int frames = int(seconds * fps);
+    std::vector<float> out(size_t(frames), 0.f);
+    quint32 seed = 12345;
+    for (int f = 0; f < frames; ++f)
+        for (int i = 0; i < per; ++i) {
+            seed = seed * 1664525u + 1013904223u;
+            const double noise = (seed >> 8) / double(1 << 24) * 2 - 1;
+            const double t = (f * per + i) / double(rate);
+            bool in = false;
+            for (const auto& [a, b] : bursts) in |= t >= a && t < b;
+            out[size_t(f)] = std::max(out[size_t(f)], float(std::abs(noise * (in ? level : floor))));
+        }
+    return out;
+}
+
+void testSnapToSound()
+{
+    std::printf("snap to sound\n");
+    const double fps = 60;
+    // Speech at 2.00-2.60 s, an interjection "Ja." at 3.50-3.62 s, a sentence at 5.00-6.20 s; silence between
+    const QVector<QPair<double, double>> bursts{{2.0, 2.6}, {3.5, 3.62}, {5.0, 6.2}};
+    const std::vector<float> gated = framePeaks(fps, 8, bursts, 0.4, 0);
+    // whisper: the first phrase starts 0.2 s early and ends 0.15 s early, "Ja." 0.2 s early, the last one about right
+    const QVector<TranscriptCut::Word> whisper{word(108, 126, "Ich"), word(126, 138, "war"), word(138, 147, "da."),
+                                               word(198, 204, "Ja."), word(302, 330, "Dann"), word(330, 371, "los.")};
+    QVector<TranscriptCut::Word> w = whisper;
+    CHECK_EQ(Captions::snapToSound(w, gated, fps, 42), 3);
+    QStringList got;
+    for (const TranscriptCut::Word& x : w) got << QString("%1@%2-%3").arg(x.text).arg(x.from).arg(x.spokenTo);
+    // The edges on the sound (2.00 s = 120, 2.60 s = 156, 3.50 s = 210, 3.62 s = 218 (217.2 -> its frame), 5.00 s = 300,
+    // 6.20 s = 372); the inner words kept where they still fit
+    CHECK_EQ(got.join(' '), QString("Ich@120-126 war@126-138 da.@138-156 Ja.@210-218 Dann@300-330 los.@330-372"));
+    for (int i = 1; i < w.size(); ++i) CHECK(w[i].from >= w[i - 1].spokenTo && w[i].from > w[i - 1].from);
+    for (const TranscriptCut::Word& x : w) CHECK(x.to >= x.spokenTo);
+    // A stream with constant noise (no clear edge): whisper's times stay
+    QVector<TranscriptCut::Word> noisy = whisper;
+    CHECK_EQ(Captions::snapToSound(noisy, framePeaks(fps, 8, bursts, 0.4, 0.15), fps, 42), 0);
+    CHECK(noisy == whisper);
+    // A gated stream with a little noise between the words: still found
+    QVector<TranscriptCut::Word> hiss = whisper;
+    Captions::snapToSound(hiss, framePeaks(fps, 8, bursts, 0.4, 0.002), fps, 42);
+    CHECK_EQ(hiss[3].from, 210);
+    CHECK_EQ(hiss[3].spokenTo, 218);
+    // Too far away (more than 0.4 s): kept
+    QVector<TranscriptCut::Word> far{word(170, 176, "Ja."), word(362, 410, "Weiter.")};
+    const std::vector<float> one = framePeaks(fps, 8, {{3.5, 3.62}, {6, 7}}, 0.4, 0);
+    Captions::snapToSound(far, one, fps, 42);
+    CHECK_EQ(far[0].from, 170);
+    // The onset moves past the first word's end: the words are spread over the speech, none under 80 ms (5 frames)
+    QVector<TranscriptCut::Word> late{word(100, 106, "Na"), word(106, 112, "und"), word(112, 140, "jetzt?")};
+    Captions::snapToSound(late, framePeaks(fps, 8, {{1.85, 2.4}, {6, 7}}, 0.4, 0), fps, 42);
+    QStringList spread;
+    for (const TranscriptCut::Word& x : late) spread << QString("%1@%2-%3").arg(x.text).arg(x.from).arg(x.spokenTo);
+    CHECK_EQ(late.first().from, 111);
+    CHECK_EQ(late.last().spokenTo, 144);
+    for (int i = 0; i < late.size(); ++i) {
+        CHECK(late[i].spokenTo - late[i].from >= 5);
+        if (i) CHECK(late[i].from >= late[i - 1].spokenTo);
+    }
+    if (!CHECK(late[1].from > 111)) std::printf("       %s\n", qPrintable(spread.join(' ')));
+    // Never over the speaker's phrase before: two sentences in one stretch of speech, the second one's start is not
+    // moved back into the first (no clear edge in between)
+    QVector<TranscriptCut::Word> joined{word(120, 140, "Eins."), word(150, 170, "Zwei.")};
+    Captions::snapToSound(joined, framePeaks(fps, 8, {{2.0, 3.0}, {6, 7}}, 0.4, 0), fps, 42);
+    CHECK_EQ(joined[0].from, 120);
+    CHECK_EQ(joined[1].from, 150);
+    CHECK(joined[0].spokenTo <= joined[1].from);
+}
+
+// A cue the moment's end cuts to almost nothing (25.11.: "nee," shown 0.03 s): a word heard joins the cue before it,
+// one cut off before it is heard goes
+void testCueAtCut()
+{
+    std::printf("cue at a cut\n");
+    Captions::Options o;
+    o.maxWords = 4;
+    o.maxGapFrames = 36;
+    o.minFrames = 24;
+    o.minAtCutFrames = 15; // 0.25 s at 60 fps
+    o.heardFrames = 7;
+    o.cuts = {1407};
+    QVector<TranscriptCut::Word> w{word(1388, 1395, "Nee,"), word(1396, 1404, "nee,"), word(1405, 1420, "nee,")};
+    QStringList got;
+    for (const SubtitleCue& c : Captions::fromWords(w, o)) got << wordsOf(c);
+    CHECK_EQ(got.join(" | "), QString("1388-1405:Nee,@0-7 nee,@8-16"));
+    // Started 0.17 s before the cut: heard, so it joins the cue before it
+    w = {word(1380, 1388, "Nee,"), word(1389, 1396, "nee,"), word(1397, 1420, "nee,")};
+    got.clear();
+    for (const SubtitleCue& c : Captions::fromWords(w, o)) got << wordsOf(c);
+    CHECK_EQ(got.join(" | "), QString("1380-1407:Nee,@0-8 nee,@9-16 nee,@17-27"));
+    // Without the rule (minAtCutFrames 0) the short cue stays as before
+    o.minAtCutFrames = 0;
+    CHECK_EQ(Captions::fromWords(w, o).size(), 2);
+}
+
+// Several speakers' tracks apart: a lane above the lower one only when they are shown at the same time
+void testStackLanes()
+{
+    std::printf("stack lanes\n");
+    SubtitleTrack a, b, c;
+    a.style.posY = b.style.posY = c.style.posY = 576;
+    a.style.size = 84;
+    a.cues = {cue(0, 60, "eins zwei"), cue(100, 160, "drei")};
+    b.cues = {cue(30, 90, "vier")};   // over a's first cue
+    c.cues = {cue(200, 260, "fünf")}; // alone
+    QVector<SubtitleTrack> lanes{a, b, c};
+    Captions::stackLanes(lanes, [](const SubtitleTrack&, const SubtitleCue& cue) { return cue.text == "eins zwei" ? 120.0 : 60.0; });
+    CHECK_EQ(lanes[0].style.posY, 576.0);
+    CHECK_EQ(lanes[1].style.posY, std::round(576 + 120 + 0.2 * 84));
+    CHECK_EQ(lanes[2].style.posY, 576.0);
+    // Colours: the first keeps its own, the others clearly different ones
+    CHECK_EQ(Captions::speakerColor(0, QColor(255, 214, 0)), QColor(255, 214, 0));
+    CHECK(Captions::speakerColor(1, QColor(255, 214, 0)) != Captions::speakerColor(2, QColor(255, 214, 0)));
+    CHECK_EQ(Captions::speakerColor(4, QColor(1, 2, 3)), Captions::speakerColor(1, QColor(9, 9, 9)));
 }
 
 void testFromWords()
@@ -500,6 +626,59 @@ void testCliOp(const QString& dir)
     if (!CHECK(!o.contains("error"))) std::fprintf(stderr, "       %s\n", qPrintable(o.value("error").toString()));
     o = run({QJsonObject{{"op", "track"}, {"track", "ST2"}, {"captions", "sparkle"}}});
     CHECK(o.value("error").toString().startsWith("BAD_ARGUMENT"));
+
+    // Two speakers talking over each other (25.11.: "the texts are not exactly on time"): a visible track each, named
+    // after the voice, every phrase at its own time, the second speaker above the first while both are shown and in
+    // another colour; the SRT carries both at once; check finds nothing wrong with it
+    const QJsonArray two{QJsonObject{{"from", 10}, {"to", 20}, {"text", "Heilige"}, {"speaker", 0}},
+                         QJsonObject{{"from", 20}, {"to", 40}, {"text", "Scheiße."}, {"speaker", 0}},
+                         QJsonObject{{"from", 30}, {"to", 45}, {"text", "Crazy."}, {"speaker", 1}},
+                         QJsonObject{{"from", 80}, {"to", 95}, {"text", "Ja."}, {"speaker", 1}}};
+    o = run({QJsonObject{{"op", "captions"}, {"style", "karaoke"}, {"words", two}, {"speakers", QJsonArray{"Mikrofon", "Discord"}}}});
+    if (!CHECK(!o.contains("error"))) std::printf("       %s\n", qPrintable(o.value("error").toString()));
+    QFile in3(path);
+    CHECK(in3.open(QIODevice::ReadOnly));
+    CHECK(ProjectFile::fromJson(in3.readAll(), path, &back, nullptr));
+    in3.close();
+    if (CHECK_EQ(back.timeline.subtitles.size(), 4)) {
+        const SubtitleTrack& mic = back.timeline.subtitles[2];
+        const SubtitleTrack& chat = back.timeline.subtitles[3];
+        CHECK_EQ(mic.name, QString("Mikrofon"));
+        CHECK_EQ(chat.name, QString("Discord"));
+        CHECK(mic.enabled && chat.enabled && !back.timeline.subtitles[0].enabled && !back.timeline.subtitles[1].enabled);
+        CHECK_EQ(mic.captions.highlight, CaptionStyle().highlight);
+        CHECK(chat.captions.highlight != mic.captions.highlight);
+        // Above the first one's text (one line of 84 px and more)
+        CHECK(chat.style.posY > mic.style.posY + 84);
+        QStringList a, b;
+        for (const SubtitleCue& c : mic.cues) a << wordsOf(c);
+        for (const SubtitleCue& c : chat.cues) b << wordsOf(c);
+        CHECK_EQ(a.join(" | "), QString("10-40:Heilige@0-10 Scheiße.@10-30"));
+        CHECK_EQ(b.join(" | "), QString("30-45:Crazy.@0-15 | 80-95:Ja.@0-15"));
+        // One SRT with both: while both are shown one entry, the upper (Discord) line first
+        const QVector<Subtitles::SrtFile> files = Subtitles::srtFiles(back.timeline, dir + "/two.srt");
+        if (CHECK_EQ(files.size(), 3)) { // + the two earlier, hidden tracks next to it
+            CHECK_EQ(files[0].track, 2);
+            CHECK_EQ(files[0].also, QVector<int>{3});
+            QStringList entries;
+            for (const SubtitleCue& c : Subtitles::cuesOf(back.timeline, files[0]))
+                entries << QString("%1-%2:%3").arg(c.start).arg(c.end).arg(QString(c.text).replace('\n', '/'));
+            CHECK_EQ(entries.join(" | "), QString("10-30:Heilige Scheiße. | 30-40:- Crazy./- Heilige Scheiße. | "
+                                                  "40-45:Crazy. | 80-95:Ja."));
+        }
+        const QVector<Subtitles::TextTrack> streams = Subtitles::textTracks(back.timeline, 25);
+        if (CHECK(!streams.isEmpty())) CHECK_EQ(streams[0].name, QString("Mikrofon + Discord"));
+    }
+    // check (its timeline and layout rules): nothing about the overlapping captions, no text where phone apps cover it
+    {
+        QVector<ExportCheck::Issue> issues = ExportCheck::timeline(back.timeline, 0, 100, back.format);
+        issues += ExportCheck::layout(back.timeline, 0, 100, back.format);
+        for (const ExportCheck::Issue& i : issues)
+            if (i.check.startsWith("subtitle")) {
+                std::printf("       %s %s\n", qPrintable(i.check), qPrintable(i.message));
+                CHECK(false);
+            }
+    }
 }
 
 // Pixels in the highlight colour (yellow) and in white in a region
@@ -684,6 +863,32 @@ void testRender(const QString& dir)
     tl.subtitles[0].captions.popMs = 200;
     CHECK(white(Check::renderFrame(tl, fmt, 35, {}, false, true)) < white(Check::renderFrame(tl, fmt, 45, {}, false, true)));
     CHECK_EQ(white(Check::renderFrame(tl, fmt, 30, {}, false, false)), 0); // export without burn-in
+
+    // Two speakers at once: two lines, the second one above in its own colour, apart from each other
+    tl.subtitles[0].captions = CaptionStyle{};
+    tl.subtitles[0].captions.mode = CaptionMode::Karaoke;
+    SubtitleTrack second = tl.subtitles[0];
+    second.captions.highlight = Captions::speakerColor(1, second.captions.highlight);
+    second.cues = {cue(15, 50, "drei vier", {{0, 10}, {10, 30}})};
+    second.cues[0].id = 3;
+    QVector<SubtitleTrack> lanes{tl.subtitles[0], second};
+    Captions::stackLanes(lanes, [&](const SubtitleTrack& st, const SubtitleCue& c) {
+        return ExportCheck::subtitleCueBlock(st, c.text, fmt.width, fmt.height).height();
+    });
+    tl.subtitles = lanes;
+    const QImage both = Check::renderFrame(tl, fmt, 30, {}, false, true);
+    if (qEnvironmentVariableIsSet("CAPTIONS_DUMP")) both.save(qEnvironmentVariable("CAPTIONS_DUMP") + ".two.png");
+    // Rows with yellow (first speaker) and with cyan (second): the cyan ones all above the yellow ones
+    int yellowTop = INT_MAX, cyanBottom = -1, cyan = 0;
+    for (int y = 0; y < both.height(); ++y)
+        for (int x = 0; x < both.width(); ++x) {
+            const QColor c = both.pixelColor(x, y);
+            if (c.red() > 200 && c.green() > 160 && c.blue() < 80) yellowTop = std::min(yellowTop, y);
+            if (c.red() < 120 && c.green() > 170 && c.blue() > 200) cyanBottom = std::max(cyanBottom, y), ++cyan;
+        }
+    CHECK(cyan > 50);
+    CHECK(yellowTop < INT_MAX);
+    if (!CHECK(cyanBottom < yellowTop)) std::printf("       cyan to %d, yellow from %d\n", cyanBottom, yellowTop);
 }
 
 // The subtitle streams of a file: codec name, title, default flag and the cues (ms) as libavformat reads them
@@ -951,6 +1156,9 @@ int main(int argc, char** argv)
     testLines();
     testFromWords();
     testMergeSpeakers();
+    testSnapToSound();
+    testCueAtCut();
+    testStackLanes();
     testEdits();
     testSpeed();
     testVtt();

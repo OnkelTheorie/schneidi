@@ -320,6 +320,26 @@ int Editor::addCaptions(const QVector<SubtitleCue>& cues, const QString& name, c
     return index;
 }
 
+int Editor::addCaptionTracks(const QVector<SubtitleTrack>& tracks)
+{
+    if (std::all_of(tracks.begin(), tracks.end(), [](const SubtitleTrack& t) { return t.cues.isEmpty(); })) return -1;
+    const int index = m_project->timeline().subtitles.size();
+    Project* p = m_project;
+    m_project->edit(T("Wort-Untertitel"), [&](Timeline& tl) {
+        for (SubtitleTrack& other : tl.subtitles) other.enabled = false; // the new ones are what is shown
+        for (const SubtitleTrack& given : tracks) {
+            if (given.cues.isEmpty()) continue;
+            SubtitleTrack t = given;
+            t.name = given.name.simplified();
+            t.enabled = true;
+            t.cues.clear();
+            placeAll(t, given.cues, p);
+            tl.subtitles << t;
+        }
+    });
+    return index;
+}
+
 bool Editor::setSubtitleCues(int index, const QVector<SubtitleCue>& cues, const QString& text)
 {
     const Timeline& cur = m_project->timeline();

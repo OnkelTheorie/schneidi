@@ -106,8 +106,9 @@ struct ShortFinish {
     QString language; // empty = detect
 };
 // Word captions of a timeline's voice tracks (audible tracks of microphone or voice chat streams), each (file, stream)
-// transcribed on its own (streamTranscript) and mapped onto the timeline, merged in time order a phrase at a time
-// (Captions::mergeSpeakers): [{from, to, text, speaker}] in timeline frames for op 'captions'. *voices: the tracks'
+// transcribed on its own (streamTranscript) and mapped onto the timeline, each phrase moved onto the sound of its
+// track (Captions::snapToSound), merged in time order, every word at its own time (Captions::mergeSpeakers):
+// [{from, to, text, speaker}] in timeline frames for op 'captions' (speaker n = voices[n]). *voices: the tracks'
 // names; empty (and no words) when the timeline has no voice track - then the timeline's sound is the source
 QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, const QString& language, Context& ctx,
                              QStringList* voices);
