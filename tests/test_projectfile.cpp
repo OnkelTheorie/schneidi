@@ -829,6 +829,15 @@ int main(int argc, char** argv)
                 {"id":2,"media":0,"start":50,"in":0,"out":99}]},{"clips":[]}],"audio":[{"clips":[]}]}})";
             CHECK(!opened(same, p).isEmpty());
             CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[0-100|0-99]  V2: a[50-150|0-99]  A1:"));
+            // ... but not one whose surround panner (depth, centre, LFE) differs
+            const QByteArray surround = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasVideo":true,
+                "hasAudio":true,"length":300}],"timeline":{"video":[{"clips":[]}],
+                "audio":[{"panDepth":50,"panCenter":30,"lfeDb":-6,"clips":[{"id":1,"media":0,"start":0,"in":0,"out":99},
+                                                 {"id":2,"media":0,"start":50,"in":0,"out":99}]},{"clips":[]}]}})";
+            CHECK(!opened(surround, p).isEmpty());
+            CHECK_EQ(Check::dump(p.timeline()), QString("V1:  A1: a[0-100|0-99]  A2:  A3: a[50-150|0-99]"));
+            if (CHECK_EQ(int(p.timeline().audio.size()), 3))
+                CHECK(p.timeline().audio[2].panDepth == 50 && p.timeline().audio[2].lfeDb == -6);
             // Multicam: V2 is the second camera - the clip goes to a new track
             const QByteArray multicam = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasVideo":true,
                 "hasAudio":true,"length":300}],"currentSequence":1,"sequences":[{"id":1,"name":"T"},
