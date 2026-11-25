@@ -840,6 +840,9 @@ struct SubtitleTrack {
     TitleStyle style = subtitleBaseStyle();
     CaptionStyle captions;     // word-by-word display (default: plain lines)
     QVector<SubtitleCue> cues; // sorted by start, without overlap
+    // Caption tracks made together, one speaker each (Editor::addCaptionTracks): the same number > 0; their SRT is one
+    // file. 0 = a track of its own (also every track of a project from before 25.11.)
+    int captionGroup = 0;
     bool operator==(const SubtitleTrack&) const = default;
 };
 

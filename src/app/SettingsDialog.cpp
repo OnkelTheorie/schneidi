@@ -225,8 +225,8 @@ QWidget* SettingsDialog::buildGeneral()
     checkRow->addWidget(m_checkNow);
     checkRow->addWidget(m_updateResult, 1);
     uform->addRow(checkRow);
-    uform->addRow(hint(T("Fragt GitHub nach der neuesten Version; mit geht nur die Versionsnummer, nichts über deine "
-                         "Projekte. Neue Versionen gibt es auf der Download-Seite.")));
+    uform->addRow(hint(T("Fragt GitHub nach der neuesten Version; mitgeschickt wird nur die Versionsnummer, nichts "
+                         "über deine Projekte. Neue Versionen gibt es auf der Download-Seite.")));
     lay->addWidget(updates);
     m_updates = new UpdateCheck(this);
     const QString current = UpdateCheck::runningVersion(QCoreApplication::applicationVersion());

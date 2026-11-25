@@ -646,6 +646,9 @@ void opCaptions(Session& s, const QJsonObject& op)
     applyCaptions(captions, op, "style");
     QVector<TranscriptCut::Word> words;
     int track = -1; // the words' audio track, if named
+    // Speakers only when told (speakers, or words with a speaker): the transcripts of two audio tracks are one track
+    // of captions as before 25.11.
+    bool bySpeaker = op.contains("speakers");
     if (op.contains("words")) {
         // Word times given (e.g. `transcribe` with words:true: timeline frames)
         for (const QJsonValue& v : op.value("words").toArray()) {
@@ -655,6 +658,7 @@ void opCaptions(Session& s, const QJsonObject& op)
             w.to = w.spokenTo = std::max(w.from + 1, timeOf(s, o, "to", w.from + 1));
             w.text = o.value("text").toString().trimmed();
             w.track = o.value("speaker").toInt(0); // (a caption never mixes two speakers' words)
+            bySpeaker = bySpeaker || o.contains("speaker");
             if (!w.text.isEmpty()) words << w;
         }
         std::stable_sort(words.begin(), words.end(), [](const auto& a, const auto& b) { return a.from < b.from; });
@@ -667,6 +671,8 @@ void opCaptions(Session& s, const QJsonObject& op)
         }
         const Timeline& tl = s.project.timeline();
         words = TranscriptCut::timelineWords(tl, s.project.media(), s.project.frameRate(), track, true);
+        if (!bySpeaker)
+            for (TranscriptCut::Word& w : words) w.track = 0; // (an audio track is no speaker)
         if (words.isEmpty()) {
             QStringList missing;
             for (const auto& [path, stream] : TranscriptCut::missingTranscripts(tl, s.project.media(), track))
@@ -705,11 +711,16 @@ void opCaptions(Session& s, const QJsonObject& op)
     // A cue the next cut leaves under 0.25 s: joined to the one before when heard 0.12 s, else dropped
     o.minAtCutFrames = int(std::lround(0.25 * fps));
     o.heardFrames = int(std::lround(0.12 * fps));
+    o.bySpeaker = bySpeaker;
     QVector<int> speakers;
     for (const TranscriptCut::Word& w : std::as_const(words))
         if (!speakers.contains(w.track)) speakers << w.track;
     std::sort(speakers.begin(), speakers.end());
-    if (speakers.size() > 1) {
+    const auto beatNote = [&] {
+        if (style == "beat" && words.size() > o.beats.size())
+            s.notes << QString("only %1 of %2 words got a beat (the beats ended)").arg(o.beats.size()).arg(words.size());
+    };
+    if (bySpeaker && speakers.size() > 1) {
         // Several speakers: a track each, all shown at once - everyone's words at their own time, a speaker above the
         // lines they talk over, each in their own colour
         const QJsonArray names = op.value("speakers").toArray();
@@ -722,8 +733,11 @@ void opCaptions(Session& s, const QJsonObject& op)
             for (const TranscriptCut::Word& w : std::as_const(words))
                 if (w.track == k) own << w;
             SubtitleTrack t;
-            const QString name = k >= 0 && k < names.size() ? names[k].toString().simplified() : QString();
-            t.name = name.isEmpty() ? T("Sprecher %1").arg(k + 1) : name;
+            QString name = k >= 0 && k < names.size() ? names[k].toString().simplified() : QString();
+            if (name.isEmpty()) name = T("Sprecher %1").arg(k + 1);
+            // The op's name before the speaker's
+            const QString given = op.value("name").toString().simplified();
+            t.name = given.isEmpty() ? name : QString("%1 – %2").arg(given, name);
             t.style = text;
             t.captions = captions;
             const QColor colour = Captions::speakerColor(int(lanes.size()), captions.highlight);
@@ -738,6 +752,7 @@ void opCaptions(Session& s, const QJsonObject& op)
             return ExportCheck::subtitleCueBlock(st, cue.text, size.width(), size.height()).height();
         });
         s.editor.addCaptionTracks(lanes);
+        beatNote();
         return;
     }
     const QVector<SubtitleCue> cues = Captions::fromWords(words, o);
@@ -745,8 +760,7 @@ void opCaptions(Session& s, const QJsonObject& op)
     const int index = s.editor.addCaptions(cues, op.value("name").toString(), captions);
     TitleStyle text = s.project.timeline().subtitles[index].style;
     if (applyStyle(text, op, s.project.effectiveBrand())) s.editor.setSubtitleStyle(index, "Subtitle style", [&](TitleStyle& x) { x = text; });
-    if (style == "beat" && words.size() > o.beats.size())
-        s.notes << QString("only %1 of %2 words got a beat (the beats ended)").arg(o.beats.size()).arg(words.size());
+    beatNote();
 }
 
 void opAddSubtitleTrack(Session& s, const QJsonObject& op)

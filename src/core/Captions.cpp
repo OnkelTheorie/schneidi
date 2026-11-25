@@ -504,7 +504,7 @@ QVector<SubtitleCue> fromWords(const QVector<TranscriptCut::Word>& input, const 
     QVector<int> speaker; // of each cue
     const auto add = [&](int a, int b) { // words [a, b]
         if (a > b) return;
-        speaker << list[a].track;
+        speaker << (o.bySpeaker ? list[a].track : 0);
         SubtitleCue c;
         c.start = list[a].from;
         if (!cues.isEmpty()) c.start = std::max(c.start, cues.last().end);
@@ -528,7 +528,7 @@ QVector<SubtitleCue> fromWords(const QVector<TranscriptCut::Word>& input, const 
     for (int i = 0; i < list.size(); ++i) {
         if (i > first && list[i].from - list[i - 1].spokenTo > o.maxGapFrames) add(first, i - 1), first = i;
         // Another speaker (another track's words): a cue of their own
-        if (i > first && list[i].track != list[i - 1].track) add(first, i - 1), first = i;
+        if (o.bySpeaker && i > first && list[i].track != list[i - 1].track) add(first, i - 1), first = i;
         // A cut between two clips: never one caption over it
         if (i > first && cutAfter(list[i - 1].from) <= list[i].from) add(first, i - 1), first = i;
         const QString t = list[i].text.trimmed();

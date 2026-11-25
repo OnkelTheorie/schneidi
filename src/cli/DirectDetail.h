@@ -5,6 +5,7 @@
 
 #include "cli/CommandsDetail.h"
 #include "core/Direction.h"
+#include "engine/AnalysisCache.h"
 
 #include <QJsonArray>
 #include <QImage>
@@ -37,6 +38,9 @@ struct DirectMoment {
 // The player's deaths in samples of the middle of a CS2 picture (mean R, G, B each, `rate` per second): the red
 // tint over everything that fades into a black screen -> [{s: the tint begins, end_s: where a moment ends}]
 QJsonArray deathScreensOf(const std::vector<std::array<double, 3>>& rgb, int rate);
+// How far each moment of a game recording may grow in a short (lo_s/hi_s: around its hits, never into a death screen,
+// nothing past `usable`, the end of the game picture); a moment that begins at or after `usable` is left out
+void boundMoments(QJsonArray& moments, const QJsonArray& deaths, double usable);
 
 // Where the game picture ends at the end of a recording (the recorder stopped from the task bar: its last seconds
 // show the desktop): pictures `rate` per second from `firstS` on; the end is a hard change of the whole picture after
@@ -88,11 +92,21 @@ QJsonObject applyTemplate(const Direction::Session& s, const QVector<const Direc
 QString timelineStamp(const QString& project, const QString& timeline);
 
 // The words of one audio stream of a file, transcribed alone (whisper through `transcribe`), cached per file, stream,
-// language, verbatim and word list (AnalysisCache "speech-words"): {stream, language, words:[[from_ms, to_ms, text]…]};
-// no speech = no words. nullopt = the file or stream cannot be read (not cached). vocabulary: words for whisper on top
-// of the settings' list (core/Vocabulary, e.g. a game's terms)
+// language, verbatim, word list, model (the default one by its file name too) and part (AnalysisCache "speech-words"):
+// {stream, language, model, words:[[from_ms, to_ms, text]…]} (ms of the file); no speech = no words. nullopt = the
+// file or stream cannot be read (not cached). vocabulary: words for whisper on top of the settings' list
+// (core/Vocabulary, e.g. a game's terms). [fromMs, toMs): only that part of the file (toMs < 0 = to its end)
 std::optional<QJsonObject> streamTranscript(const QString& file, int stream, const QString& language, bool verbatim,
-                                            Context& ctx, const QStringList& vocabulary = {}, const QString& model = {});
+                                            Context& ctx, const QStringList& vocabulary = {}, const QString& model = {},
+                                            qint64 fromMs = 0, qint64 toMs = -1);
+// The cache key of a voice stream's speech level over [from, to] (seconds of the file), measured while suggesting
+AnalysisCache::Key speechLevelKey(const QString& file, int stream, double from, double to);
+// Its cache key (to look whether a transcript is there without making it)
+AnalysisCache::Key streamTranscriptKey(const QString& file, int stream, const QString& language, bool verbatim,
+                                       const QStringList& vocabulary = {}, const QString& model = {}, qint64 fromMs = 0,
+                                       qint64 toMs = -1);
+// The model `transcribe` takes when none is chosen (whisper's default, else Parakeet); empty = none
+QString defaultTranscribeModel();
 // A stream of the player's microphone or of a voice chat (not the mix, not music), by its title
 bool voiceStream(const QString& title);
 
@@ -106,8 +120,8 @@ struct ShortFinish {
     QString game;     // empty = none
     QString language; // empty = detect
     bool gameTerms = false; // the game's terms go to whisper too (Vocabulary::useGameTerms: the call's or the setting)
-    // Captions only where two speech models agree: "auto" (when it is cheap: whisper on a GPU or under 60 s of
-    // sound to check), "on", "off" (Vocabulary::captionsCheck: the call's or the setting)
+    // Captions only where two speech models agree: "auto" (when it is cheap: cheapCheck), "on", "off"
+    // (Vocabulary::captionsCheck: the call's or the setting)
     QString captionsCheck = "auto";
     QJsonArray* leftOut = nullptr; // out: the caption lines left out, [{from_s, to_s, speaker, heard, other}]
 };
@@ -138,6 +152,12 @@ QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, Co
 // The other installed whisper model for the check: large-v3 -> turbo, turbo -> large-v3, else the best other one;
 // empty = none (never downloads)
 QString checkModelFor(const QString& mainModel);
+// captions_check as given (auto, on, off, a boolean or nothing): anything else is BAD_ARGUMENT ("<name> must be …")
+void checkCaptionsCheck(const QJsonValue& v, const char* name);
+// A model fast enough for the check on a CPU: not a large one, or turbo
+bool fastCheckModel(const QString& model);
+// Whether check "auto" runs: nothing to transcribe (all cached), whisper on a GPU, or a fast model under 60 s of sound
+bool cheapCheck(bool fastModel, double seconds);
 // noteKeys (optional): the notes' fixed keys (Direction::noteText), in the order of notes, for a page to translate
 QJsonArray shortFinishOps(const QString& project, const QString& timeline, const ShortFinish& f, Context& ctx,
                           QJsonArray* done, QJsonArray* notes, QJsonArray* noteKeys = nullptr);

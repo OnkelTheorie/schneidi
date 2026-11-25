@@ -225,7 +225,7 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent),
     connect(m_back, &QToolButton::clicked, this, &TimelinePanel::back);
     m_timelines = new QComboBox;
     m_timelines->setToolTip(T("Timeline wechseln"));
-    m_timelines->setMinimumWidth(160);
+    m_timelines->setMinimumWidth(110); // (a long name elides: the Export page beside the queue stays in a 1920 screen at 150 %)
     m_timelines->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     connect(m_timelines, QOverload<int>::of(&QComboBox::activated), this, [this](int i) {
         openSequence(m_timelines->itemData(i).toInt());

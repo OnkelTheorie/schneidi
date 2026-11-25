@@ -86,6 +86,9 @@ struct Options {
     // otherwise (a word the cut cuts off before it is heard: "nee," for 0.03 s) it is dropped
     int minAtCutFrames = 0;
     int heardFrames = 0;
+    // The words' `track` is a speaker (explicit speakers: op captions speakers/words with speaker): a cue never mixes
+    // two. Without (a timeline's words of several audio tracks) the track does not split cues
+    bool bySpeaker = false;
 };
 // Words placed on beats: each word moves to the nearest beat after the beat of the word before (a word never shares
 // a beat), and lasts until the next word's beat

@@ -32,6 +32,13 @@ QVector<Word> timelineWords(const Timeline& tl, const QVector<MediaInfo>& media,
 // Clips on the track(s) whose source has no transcript yet: (media path, audio stream), each once
 QVector<QPair<QString, int>> missingTranscripts(const Timeline& tl, const QVector<MediaInfo>& media, int audioTrack = -1);
 
+// The parts of a (file, stream) the clips of `audioTrack` play, in ms of the file [from, to): each clip's source range
+// (speed followed) padded by padMs, widened to whole gridMs steps (a cut moved a little asks for the same parts: the
+// transcripts of them stay in the cache), parts less than joinMs apart joined. In file order.
+QVector<QPair<qint64, qint64>> playedRangesMs(const Timeline& tl, double fps, int audioTrack, const QString& file,
+                                              int stream, qint64 padMs = 1000, qint64 gridMs = 5000,
+                                              qint64 joinMs = 10000);
+
 // Timeline ranges [from, to) that remove the words `first`..`last` (indices into `words`) together with the pause
 // after them (up to the next word when it follows within `maxPauseFrames`, otherwise a short tail)
 QPair<int, int> cutRange(const QVector<Word>& words, int first, int last, int maxPauseFrames);

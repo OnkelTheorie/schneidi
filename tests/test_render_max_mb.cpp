@@ -20,6 +20,7 @@
 #include "ui/RenderQueuePanel.h"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QEventLoop>
@@ -351,8 +352,23 @@ void testDeliver(const QTemporaryDir& dir)
     if (auto* folder = panel.findChild<QLineEdit*>("renderFolder")) folder->setText(dir.path());
     CHECK_EQ(maxMb->value(), 0.0); // off by default
     CHECK(quality->isEnabled());
+    auto* smart = panel.findChild<QCheckBox*>("renderSmart");
+    if (CHECK(smart)) CHECK(smart->isChecked());
     maxMb->setValue(1.5);
     CHECK(!quality->isEnabled()); // the limit sets the rate
+    // Smart render is off under a limit and shown so (greyed and checked read as "still applies"); the choice
+    // comes back with the limit at 0, also a choice of "off"
+    if (smart) {
+        CHECK(!smart->isEnabled() && !smart->isChecked());
+        maxMb->setValue(0);
+        CHECK(smart->isChecked());
+        smart->setChecked(false);
+        maxMb->setValue(2);
+        maxMb->setValue(0);
+        CHECK(!smart->isChecked());
+        smart->setChecked(true);
+        maxMb->setValue(1.5);
+    }
     RenderJob job = panel.makeJob();
     CHECK_EQ(job.settings.maxMb, 1.5);
     CHECK(job.settings.hasMaxMb());

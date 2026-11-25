@@ -159,6 +159,38 @@ void testSrt()
         for (const Subtitles::SrtFile& f : Subtitles::srtFiles(tl, "/a/film.srt")) got << QFileInfo(f.path).fileName();
         CHECK_EQ(got.mid(5).join(' '), QString("film.7.srt film.8.srt"));
     }
+    // Two visible tracks of an older project (two languages, both switched on): a file each as before 25.11., the
+    // last visible one the main file; only caption tracks made together (one speaker each) go into one file
+    {
+        Timeline tl;
+        for (const char* name : {"English", "Deutsch"}) {
+            SubtitleTrack t;
+            t.name = name;
+            t.cues = {{1, 0, 25, name}};
+            tl.subtitles << t;
+        }
+        QVector<Subtitles::SrtFile> files = Subtitles::srtFiles(tl, "/a/film.srt");
+        if (CHECK_EQ(files.size(), 2)) {
+            CHECK_EQ(files[0].track, 1);
+            CHECK(files[0].also.isEmpty());
+            CHECK_EQ(QFileInfo(files[1].path).fileName(), QString("film.English.srt"));
+        }
+        tl.subtitles[0].captionGroup = tl.subtitles[1].captionGroup = 1;
+        files = Subtitles::srtFiles(tl, "/a/film.srt");
+        if (CHECK_EQ(files.size(), 1)) CHECK(files[0].track == 0 && files[0].also == QVector<int>{1});
+        // The group is kept in the project file (none written for a track of its own)
+        ProjectData d;
+        d.format = {1920, 1080, {25, 1}};
+        d.timeline = tl;
+        d.timeline.subtitles[1].captionGroup = 0;
+        const QByteArray json = ProjectFile::toJson(d, "/a/p.schneidi");
+        ProjectData back;
+        if (CHECK(ProjectFile::fromJson(json, "/a/p.schneidi", &back, nullptr)) && CHECK_EQ(back.timeline.subtitles.size(), 2)) {
+            CHECK_EQ(back.timeline.subtitles[0].captionGroup, 1);
+            CHECK_EQ(back.timeline.subtitles[1].captionGroup, 0);
+        }
+        CHECK_EQ(json.count("caption_group"), 1);
+    }
 
     // Timecode input in the Inspector (like DaVinci)
     CHECK_EQ(Timecode::parse("00:00:10:05", 25), 255);

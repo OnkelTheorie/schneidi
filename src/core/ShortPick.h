@@ -16,6 +16,8 @@ struct Moment {
     // How far growing may reach (seconds in the file; < 0 = up to the recording's edge): a kill's lead-in is short
     // (lo = its start: padding goes after it, never before), its end where the player died (hi)
     double lo = -1, hi = -1;
+    // hi is where the player died (or the game picture ends): never joined across it to a later moment
+    bool died = false;
     bool operator==(const Moment&) const = default;
 };
 

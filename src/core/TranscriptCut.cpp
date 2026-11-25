@@ -87,6 +87,33 @@ QVector<QPair<QString, int>> missingTranscripts(const Timeline& tl, const QVecto
     return out;
 }
 
+QVector<QPair<qint64, qint64>> playedRangesMs(const Timeline& tl, double fps, int audioTrack, const QString& file,
+                                              int stream, qint64 padMs, qint64 gridMs, qint64 joinMs)
+{
+    QVector<QPair<qint64, qint64>> parts;
+    if (fps <= 0) return parts;
+    gridMs = std::max<qint64>(1, gridMs);
+    forClips(tl, audioTrack, [&](const Clip& c, int) {
+        if (c.mediaPath != file || c.audioStream != stream) return;
+        double first = c.in, last = c.out + 1;
+        if (c.isRetimed()) {
+            const RetimeMap map(c, 0);
+            first = map.sourceAt(c.in);
+            last = map.sourceAt(c.out + 1);
+            if (last < first) std::swap(first, last);
+        }
+        const qint64 from = std::max<qint64>(0, qint64(std::floor(first * 1000.0 / fps)) - padMs);
+        const qint64 to = qint64(std::ceil(last * 1000.0 / fps)) + padMs;
+        parts << qMakePair(from / gridMs * gridMs, (to + gridMs - 1) / gridMs * gridMs);
+    }, true);
+    std::sort(parts.begin(), parts.end());
+    QVector<QPair<qint64, qint64>> out;
+    for (const auto& p : parts)
+        if (!out.isEmpty() && p.first - out.last().second < joinMs) out.last().second = std::max(out.last().second, p.second);
+        else out << p;
+    return out;
+}
+
 QPair<int, int> cutRange(const QVector<Word>& words, int first, int last, int maxPauseFrames)
 {
     if (first < 0 || last >= words.size() || first > last) return {0, 0};

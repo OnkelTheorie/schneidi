@@ -263,14 +263,19 @@ bool RenderSettings::hasMaxMb() const
     return maxMb > 0 && f.kind == RenderKind::Video && f.hasQuality();
 }
 
-QString RenderSettings::summary(QSize output, int sourceBitrateK) const
+QString RenderSettings::sizeLimitLabel() const
+{
+    return hasMaxMb() ? T("max. %1 MB").arg(QLocale().toString(maxMb, 'g', 4)) : QString();
+}
+
+QString RenderSettings::summary(QSize output, int sourceBitrateK, bool withLimit) const
 {
     const RenderFormatInfo& f = renderFormat(format);
     QStringList parts{T(f.label)};
     if (!audioOnly()) parts << resolutionLabel(output.width(), output.height());
-    if (hasMaxMb())
-        parts << T("max. %1 MB").arg(QLocale().toString(maxMb, 'g', 4));
-    else if (sourceQuality())
+    if (hasMaxMb()) {
+        if (withLimit) parts << sizeLimitLabel();
+    } else if (sourceQuality())
         parts << (sourceBitrateK > 0 ? qualityLabel() + ' ' + SourceBitrate::label(sourceBitrateK) : qualityLabel());
     else if (f.hasQuality()) parts << (quality == kQualityWeb && !f.webQuality ? T("Hoch") : qualityLabel());
     if (hasEncoderChoice() && encoder != VideoEncoder::Auto && encoder != VideoEncoder::Software)

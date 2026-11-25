@@ -1401,7 +1401,7 @@
  "Frage": "Question",
  "Frage den Anbieter …": "Asking the provider …",
  "Fragen": "Ask",
- "Fragt GitHub nach der neuesten Version; mit geht nur die Versionsnummer, nichts über deine Projekte. Neue Versionen gibt es auf der Download-Seite.": "Asks GitHub for the latest version; only the version number is sent, nothing about your projects. New versions are on the release page.",
+ "Fragt GitHub nach der neuesten Version; mitgeschickt wird nur die Versionsnummer, nichts über deine Projekte. Neue Versionen gibt es auf der Download-Seite.": "Asks GitHub for the latest version; only the version number is sent, nothing about your projects. New versions are on the release page.",
  "Framerate": "Frame rate",
  "Frames": "Frames",
  "Frames (%1)": "Frames (%1)",
@@ -3948,5 +3948,6 @@
  "Für Shorts: eine Zeile kommt nur in die Untertitel, wenn Whisper large und turbo dasselbe hören (beide müssen installiert sein). Lieber keine Zeile als eine falsche. Ohne Grafikkarte nur bei kurzem Ton.": "For shorts: a line goes into the captions only when whisper large and turbo hear the same (both must be installed). Rather no line than a wrong one. Without a graphics card only for short sound.",
  "Untertitel: Zeilen weggelassen, die zwei Spracherkennungen verschieden gehört haben.": "Captions: lines left out that two speech recognitions heard differently.",
  "Untertitel nicht gegengeprüft: nur ein Whisper-Modell ist installiert.": "Captions not cross-checked: only one whisper model is installed.",
+ "Keine Untertitel: Die zwei Spracherkennungen haben jede Zeile verschieden gehört.": "No captions: the two speech recognitions heard every line differently.",
  "Untertitel nicht gegengeprüft: ohne Grafikkarte dauert die zweite Erkennung zu lange.": "Captions not cross-checked: without a graphics card the second recognition takes too long."
 }

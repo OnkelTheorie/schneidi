@@ -339,6 +339,22 @@ int main(int argc, char** argv)
         CHECK_EQ(cardRange(), T("In/Out: %1 – %2").arg("30", "119"));
         if (range) CHECK_EQ(range->toolTip(), QString("30 – 119"));
         QSettings().remove("timeline");
+        // A size limit leads the card's settings line (a narrow card cut "max. 9 MB" off at its end), the tooltip
+        // has the whole line
+        RenderJob sized = j;
+        sized.settings.format = "h264";
+        sized.settings.maxMb = 9;
+        sized.size = QSize(1080, 1920);
+        p.setRenderQueue({sized});
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        auto* summary = dynamic_cast<ElidedLabel*>(panel.findChild<QWidget*>("jobSummary"));
+        const QString limit = T("max. %1 MB").arg(QLocale().toString(9.0, 'g', 4));
+        if (CHECK(summary)) {
+            if (!CHECK(summary->fullText().startsWith(limit + " · "))) std::printf("       %s\n", qPrintable(summary->fullText()));
+            CHECK_EQ(summary->fullText().count(limit), 1);
+        }
+        auto* list = panel.findChild<QListWidget*>();
+        if (CHECK(list && list->count() == 1)) CHECK(list->item(0)->toolTip().contains(limit));
     }
 
     // --- Dropping dragged jobs (JobList::dropEvent): in front of the card under the mouse (its upper half), behind it

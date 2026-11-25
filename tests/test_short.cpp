@@ -149,11 +149,23 @@ int main(int argc, char** argv)
         // its from) - joined, the gap between them would show it
         Moment dead{0, 10, 12, 5}, next{0, 13.5, 15, 4};
         dead.hi = 12.3;
+        dead.died = true;
         CHECK_EQ(ShortPick::joined({dead, next}, 2).size(), 2);
         next.lo = 13.2;
         CHECK_EQ(ShortPick::joined({dead, next}, 2).size(), 2);
         next.lo = 12.1; // it may begin before the earlier one's end: one stretch of game
         CHECK_EQ(ShortPick::joined({dead, next}, 2).size(), 1);
+        // Two kills a little apart, no death between: one clip (each one's hi is only "a little after the last
+        // hit", the next one's lo "shortly before its first" - two clips gave a jump cut under 2 s)
+        Moment k1{0, 10, 12.5, 5}, k2{0, 13.5, 16, 4};
+        k1.hi = 12.5, k2.lo = 13.5;
+        const QVector<Moment> kills = ShortPick::joined({k1, k2}, 2);
+        if (CHECK_EQ(kills.size(), 1)) CHECK(near(kills[0].hi, k2.hi) && !kills[0].died);
+        // The died flag follows the hi of the moment reaching further
+        Moment k3 = k2;
+        k3.hi = 16, k3.died = true;
+        const QVector<Moment> j3 = ShortPick::joined({k1, k3}, 2);
+        if (CHECK_EQ(j3.size(), 1)) CHECK(j3[0].died && near(j3[0].hi, 16));
     }
 
     // ---- Presets for Shorts, Reels, TikTok

@@ -1362,9 +1362,10 @@ const QVector<Command>& commands()
           {"sfx", T::String, "off (default) or mild: a soft whoosh on hard cuts (the computed whoosh, about 0.9 s; "
                                  "op sfx length '0s' takes the short recorded one), hits on kills"},
           {"captions_check", T::String, "captions only where two whisper models (large-v3 and turbo, if both are "
-                                        "installed) hear the same words: auto (default: when whisper has a graphics "
-                                        "card or there is under 60 s of voice to check; the app's setting can turn it "
-                                        "off), on or off. Lines left out are in captions_left_out with both readings"},
+                                        "installed) hear the same words: auto (default: when it is quick - whisper on a "
+                                        "graphics card, or the check model is turbo and under 60 s of the short's voice "
+                                        "is left to hear; the app's setting can turn it off), on or off. Lines left out "
+                                        "are in captions_left_out with both readings"},
           {"game_terms", T::Boolean, "captions: also give whisper a few terms of the game (cs2: Headshot, AWP, Eco, "
                                      "Long …) - fixes their spelling, but may pull other words towards them. Default: "
                                      "the app's setting (File > Settings > Transcription), off"},
@@ -1442,7 +1443,8 @@ const QVector<Command>& commands()
           {"project_dir", T::Path, "apply: the folder for a new project it makes (default: the folder for projects of the settings, "
                                     "else <Videos>/schneidi - never the recordings' folder)"},
           {"finish", T::Object, "after a short's apply: {timeline, captions?, sfx?, game?, language?, game_terms?, captions_check?, words?} puts word "
-                                "captions (whisper) and mild effect sounds on it as one more edit"}},
+                                "captions (whisper) and mild effect sounds on it as one more edit; its answer's "
+                                "captions_left_out: the caption lines two whisper models heard differently, both readings"}},
          cmdDirect},
         {"probe", "Media file details: duration, frames, resolution, frame rate, audio streams (audio_channels: count "
                   "and layout per stream, e.g. 5.1(side) or '4 channels' of a camera with two microphones - op 'route' "
@@ -1654,8 +1656,8 @@ const QVector<Command>& commands()
                                       "`probe` lists them (\"Mikrofon\", \"Discord,Mikrofon\" = mixed). Default auto: "
                                       "the streams named like a microphone/voice (game recordings: no song lyrics "
                                       "from the music stream), else the first (the mix)"},
-          {"from", T::Time, "for a project: start of the range"},
-          {"to", T::Time, "for a project: end of the range"},
+          {"from", T::Time, "start of the range (a media file: in its own time)"},
+          {"to", T::Time, "end of the range"},
           {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},
           {"tracks", T::String, "for a project: only these audio tracks, e.g. \"A3\", \"A2,A3\" or by name \"Discord,Mikrofon\" "
                                 "(track or audio stream name; muted ones too). Default: the audible tracks named like "

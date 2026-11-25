@@ -136,9 +136,13 @@ const Text kNotes[] = {
      "installed, lines the two hear differently are left out)",
      nullptr, N_("Untertitel nicht gegengeprüft: nur ein Whisper-Modell ist installiert."), nullptr},
     {"captions_check_slow",
-     "captions not checked by a second speech model: whisper runs on the processor here and the sound is long "
-     "(captions_check:'on' checks anyway, it takes about as long again as the captions)",
+     "captions not checked by a second speech model: whisper runs on the processor here and the check would take long "
+     "(a minute of sound or more, or the large model; captions_check:'on' checks anyway)",
      nullptr, N_("Untertitel nicht gegengeprüft: ohne Grafikkarte dauert die zweite Erkennung zu lange."), nullptr},
+    {"captions_all_left_out",
+     "no captions: the two speech models heard every line differently (captions_left_out lists them with both "
+     "readings; op captions or subtitle puts one back, captions_check:'off' keeps them all)",
+     nullptr, N_("Keine Untertitel: Die zwei Spracherkennungen haben jede Zeile verschieden gehört."), nullptr},
 };
 
 QString number(const QJsonValue& v, Lang lang)

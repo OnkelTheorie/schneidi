@@ -105,7 +105,10 @@ struct RenderSettings {
     bool sourceQuality() const;
     // Short description for the queue, e.g. "H.264 (MP4) · 1920 × 1080 · High"; sourceBitrateK: the target of quality
     // "like source" when known ("Like source ≈ 30 Mbit/s")
-    QString summary(QSize output, int sourceBitrateK = 0) const;
+    // withLimit false: without the size limit (sizeLimitLabel, shown on its own)
+    QString summary(QSize output, int sourceBitrateK = 0, bool withLimit = true) const;
+    // "max. 9 MB" with a size limit, else empty
+    QString sizeLimitLabel() const;
 
     QJsonObject toJson() const;
     static RenderSettings fromJson(const QJsonObject& o);

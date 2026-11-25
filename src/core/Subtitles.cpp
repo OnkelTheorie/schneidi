@@ -76,14 +76,21 @@ QString stripFormatting(QString text)
 
 QVector<SrtFile> srtFiles(const Timeline& tl, const QString& path)
 {
-    QVector<int> visible;
+    // The main file: the last visible track (as before 25.11.: two languages both switched on stay two files) - or,
+    // when it is one of caption tracks made together (a speaker each), all visible ones of them in one file
+    int main = -1;
     for (int i = 0; i < tl.subtitles.size(); ++i)
-        if (tl.subtitles[i].enabled && !tl.subtitles[i].cues.isEmpty()) visible << i;
-    int main = visible.isEmpty() ? -1 : visible.first();
+        if (tl.subtitles[i].enabled && !tl.subtitles[i].cues.isEmpty()) main = i;
     for (int i = 0; i < tl.subtitles.size() && main < 0; ++i)
         if (!tl.subtitles[i].cues.isEmpty()) main = i;
     if (main < 0) return {};
-    QVector<SrtFile> out{{path, main, visible.mid(1)}};
+    QVector<int> together;
+    if (const int group = tl.subtitles[main].captionGroup; group > 0 && tl.subtitles[main].enabled)
+        for (int i = 0; i < tl.subtitles.size(); ++i)
+            if (tl.subtitles[i].captionGroup == group && tl.subtitles[i].enabled && !tl.subtitles[i].cues.isEmpty())
+                together << i;
+    if (!together.isEmpty()) main = together.takeFirst();
+    QVector<SrtFile> out{{path, main, together}};
     const QFileInfo fi(path);
     const QString suffix = fi.suffix().isEmpty() ? QString("srt") : fi.suffix();
     QSet<QString> taken; // lower case: Windows and macOS do not tell "En" from "en"

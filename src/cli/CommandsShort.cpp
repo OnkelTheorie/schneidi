@@ -89,6 +89,25 @@ QString checkModelFor(const QString& mainModel)
     return {};
 }
 
+void checkCaptionsCheck(const QJsonValue& v, const char* name)
+{
+    if (v.isUndefined() || v.isNull() || v.isBool()) return;
+    const QString t = v.toString().trimmed().toLower();
+    if (!v.isString() || !(t.isEmpty() || t == QLatin1String("auto") || t == QLatin1String("on") || t == QLatin1String("off")))
+        fail("BAD_ARGUMENT", QString("%1 must be auto, on or off").arg(QLatin1String(name)));
+}
+
+bool fastCheckModel(const QString& model)
+{
+    const QString name = QFileInfo(model).fileName();
+    return !name.contains(QLatin1String("large")) || name.contains(QLatin1String("turbo"));
+}
+
+bool cheapCheck(bool fastModel, double seconds)
+{
+    return seconds <= 0 || !Extensions::whisperGpuBackend().isEmpty() || (fastModel && seconds < 60);
+}
+
 QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, const QString& language, Context& ctx,
                              QStringList* voices, const QString& game)
 {
@@ -127,64 +146,121 @@ QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, Co
     }
     if (tracks.isEmpty()) return {};
     const QStringList terms = Vocabulary::gameTerms(v->game);
-    // Each (file, stream) transcribed alone, through the cache; a transcript the project has is kept
-    for (const int i : tracks)
-        for (const auto& [file, stream] : TranscriptCut::missingTranscripts(tl, media, i)) {
-            failIfCanceled();
-            const std::optional<QJsonObject> one = streamTranscript(file, stream, v->language, false, ctx, terms);
-            MediaInfo* m = info(file);
-            if (!one || !m) continue;
-            MediaTranscript t;
-            t.audioStream = stream;
-            t.language = (*one)["language"].toString();
-            for (const QJsonValue& w : (*one)["words"].toArray())
-                t.words << TranscriptWord{qint64(w[0].toDouble()), qint64(w[1].toDouble()), w[2].toString()};
-            m->transcripts << t;
-        }
-    // The check: the same streams heard by the other whisper model; a phrase stays only when both hear the same
-    // words (automatic captions nobody proofreads: rather no line than a wrong one)
-    QVector<QPair<QString, int>> streams; // (file, stream) of the voice tracks
+    const double fps = view.project.frameRate();
+    // The (file, stream)s of the voice tracks, each with the parts of it the timeline plays (a 45 s short of a 30 min
+    // recording hears those, not the whole file)
+    struct Voice {
+        QString file;
+        int stream = 0;
+        QVector<QPair<qint64, qint64>> parts;
+        QString model; // the model that made its transcript (file name)
+        QString checkModel;
+    };
+    QVector<Voice> streams;
     for (const int i : tracks)
         for (const Clip& c : tl.audio[i].clips)
-            if (!streams.contains(qMakePair(c.mediaPath, c.audioStream))) streams << qMakePair(c.mediaPath, c.audioStream);
+            if (std::none_of(streams.begin(), streams.end(), [&](const Voice& x) { return x.file == c.mediaPath && x.stream == c.audioStream; }))
+                streams << Voice{c.mediaPath, c.audioStream, TranscriptCut::playedRangesMs(tl, fps, -1, c.mediaPath, c.audioStream), {}, {}};
+    const auto transcriptOf = [&](const Voice& s) -> MediaTranscript* {
+        if (MediaInfo* m = info(s.file))
+            for (MediaTranscript& x : m->transcripts)
+                if (x.audioStream == s.stream) return &x;
+        return nullptr;
+    };
+    // Each (file, stream) transcribed alone, part by part through the cache; a transcript the project has is kept
+    int heard = 0;
+    for (Voice& s : streams) {
+        if (transcriptOf(s)) {
+            s.model = QFileInfo(defaultTranscribeModel()).fileName(); // (which one made it is not known)
+            ++heard;
+            continue;
+        }
+        MediaInfo* m = info(s.file);
+        if (!m) continue;
+        MediaTranscript t;
+        t.audioStream = s.stream;
+        // The longest part first: the language whisper hears there is the stream's, the other parts are heard in it
+        // (a part of only laughter came out as "en", and the check heard every part in that language)
+        QVector<QPair<qint64, qint64>> order = s.parts;
+        std::stable_sort(order.begin(), order.end(),
+                         [](const auto& a, const auto& b) { return a.second - a.first > b.second - b.first; });
+        QString language = v->language;
+        bool any = false;
+        for (const auto& [from, to] : std::as_const(order)) {
+            failIfCanceled();
+            const std::optional<QJsonObject> one = streamTranscript(s.file, s.stream, language, false, ctx, terms, {}, from, to);
+            if (!one) continue;
+            if (s.model.isEmpty()) s.model = (*one)["model"].toString();
+            any = true;
+            const QJsonArray words = (*one)["words"].toArray();
+            if (language.isEmpty() && !words.isEmpty()) language = (*one)["language"].toString();
+            for (const QJsonValue& w : words)
+                t.words << TranscriptWord{qint64(w[0].toDouble()), qint64(w[1].toDouble()), w[2].toString()};
+        }
+        if (!any) continue; // whisper could not hear it (not "no speech")
+        if (s.model.isEmpty()) s.model = QFileInfo(defaultTranscribeModel()).fileName(); // (an entry from before)
+        std::sort(t.words.begin(), t.words.end(), [](const TranscriptWord& a, const TranscriptWord& b) { return a.from < b.from; });
+        t.language = language;
+        m->transcripts << t;
+        ++heard;
+    }
+    // No voice stream could be transcribed (whisper failed on each, not "no speech"): the timeline's sound instead
+    if (heard == 0) {
+        v->voices.clear();
+        return {};
+    }
+    // The check: the same parts heard by another whisper model than the one that made the transcript; a phrase stays
+    // only when both hear the same words (automatic captions nobody proofreads: rather no line than a wrong one)
     QHash<QString, QVector<Captions::Disagreement>> disagreements; // "file\nstream"
     if (v->check != QLatin1String("off")) {
-        const QString checkModel = !v->checkModel.isEmpty() ? v->checkModel : checkModelFor(Extensions::whisperModelPath());
-        double seconds = 0; // the sound to check
-        for (const auto& [file, stream] : std::as_const(streams))
-            if (const MediaInfo* m = info(file)) seconds += m->length / std::max(1.0, view.project.frameRate());
-        const bool cheap = !Extensions::whisperGpuBackend().isEmpty() || seconds < 60;
-        if (checkModel.isEmpty()) {
+        double seconds = 0; // the sound the check must transcribe (its cached parts not)
+        bool fast = true;
+        QStringList models;
+        for (Voice& s : streams) {
+            const MediaTranscript* t = transcriptOf(s);
+            if (!t || t->words.isEmpty()) continue;
+            s.checkModel = !v->checkModel.isEmpty() ? v->checkModel : checkModelFor(s.model);
+            if (s.checkModel.isEmpty()) continue;
+            if (const QString name = QFileInfo(s.checkModel).fileName(); !models.contains(name)) models << name;
+            fast = fast && fastCheckModel(s.checkModel);
+            for (const auto& [from, to] : std::as_const(s.parts))
+                if (!AnalysisCache::get(streamTranscriptKey(s.file, s.stream, t->language, false, terms, s.checkModel, from, to)))
+                    seconds += (to - from) / 1000.0;
+        }
+        if (models.isEmpty()) {
             v->skipped = "no_model";
-        } else if (v->check == QLatin1String("auto") && !cheap && v->checkModel.isEmpty()) {
+        } else if (v->check == QLatin1String("auto") && v->checkModel.isEmpty() && !cheapCheck(fast, seconds)) {
             v->skipped = "slow";
         } else {
-            v->checkedWith = QFileInfo(checkModel).fileName();
+            v->checkedWith = models.join(", ");
             QElapsedTimer clock;
             clock.start();
-            for (const auto& [file, stream] : std::as_const(streams)) {
-                failIfCanceled();
-                MediaInfo* m = info(file);
-                MediaTranscript* t = nullptr;
-                if (m)
-                    for (MediaTranscript& x : m->transcripts)
-                        if (x.audioStream == stream) t = &x;
-                if (!t || t->words.isEmpty()) continue;
-                const std::optional<QJsonObject> two = streamTranscript(file, stream, t->language, false, ctx, terms, checkModel);
-                if (!two) continue; // the check could not run: the words stay as heard
+            for (const Voice& s : std::as_const(streams)) {
+                MediaTranscript* t = transcriptOf(s);
+                if (!t || t->words.isEmpty() || s.checkModel.isEmpty()) continue;
                 QVector<TranscriptWord> other;
-                for (const QJsonValue& w : (*two)["words"].toArray())
-                    other << TranscriptWord{qint64(w[0].toDouble()), qint64(w[1].toDouble()), w[2].toString()};
+                bool all = true;
+                for (const auto& [from, to] : std::as_const(s.parts)) {
+                    failIfCanceled();
+                    const std::optional<QJsonObject> two = streamTranscript(s.file, s.stream, t->language, false, ctx, terms,
+                                                                            s.checkModel, from, to);
+                    if (!two) {
+                        all = false;
+                        break;
+                    }
+                    for (const QJsonValue& w : (*two)["words"].toArray())
+                        other << TranscriptWord{qint64(w[0].toDouble()), qint64(w[1].toDouble()), w[2].toString()};
+                }
+                if (!all) continue; // the check could not run: the words stay as heard
                 QVector<Captions::Disagreement> left;
                 t->words = Captions::keepAgreed(t->words, other, 700, &left);
-                disagreements[file + '\n' + QString::number(stream)] = left;
+                disagreements[s.file + '\n' + QString::number(s.stream)] = left;
             }
             v->checkSeconds = clock.elapsed() / 1000.0;
         }
     }
     // Per track on the timeline (trims and speed followed), each phrase moved onto its stream's sound (whisper's
     // times are loose; a voice stream is quiet between words), then one list in time order
-    const double fps = view.project.frameRate();
     const int pause = int(std::lround(0.7 * fps));
     QVector<QVector<TranscriptCut::Word>> perTrack;
     for (const int i : tracks) {
@@ -254,19 +330,6 @@ QJsonArray shortFinishOps(const QString& project, const QString& timeline, const
             vc.check = f.captionsCheck;
             QJsonArray words = voiceCaptionWords(project, timeline, ctx, &vc);
             const QStringList voices = vc.voices;
-            if (!vc.checkedWith.isEmpty()) {
-                *done << QString("captions checked with a second model (%1, %2 s): %3 line(s) left out, the two models "
-                                 "heard them differently")
-                             .arg(vc.checkedWith)
-                             .arg(std::round(vc.checkSeconds * 10) / 10)
-                             .arg(vc.leftOut.size());
-                if (!vc.leftOut.isEmpty()) note("captions_left_out");
-                if (f.leftOut) *f.leftOut = vc.leftOut;
-            } else if (vc.skipped == QLatin1String("no_model")) {
-                note("captions_check_no_model");
-            } else if (vc.skipped == QLatin1String("slow")) {
-                note("captions_check_slow");
-            }
             int segments = 0;
             if (voices.isEmpty()) {
                 QJsonObject t{{"source", project}, {"timeline", timeline}, {"words", true}};
@@ -281,11 +344,76 @@ QJsonArray shortFinishOps(const QString& project, const QString& timeline, const
                                         .toObject()["length"].toInt();
                     for (const QJsonValue& w : tr["words"].toArray())
                         if (end <= 0 || w["from"].toInt() < end) words << w;
+                    // The check here too: the timeline's sound heard by the other model, the same rule
+                    if (vc.check != QLatin1String("off") && !words.isEmpty()) {
+                        const double fps = tr["fps"].toDouble(25);
+                        const QString checkModel = checkModelFor(tr["model"].toString());
+                        const double seconds = (end > 0 ? end : words.last()["to"].toInt()) / std::max(1.0, fps);
+                        if (checkModel.isEmpty()) {
+                            vc.skipped = "no_model";
+                        } else if (vc.check == QLatin1String("auto") && !cheapCheck(fastCheckModel(checkModel), seconds)) {
+                            vc.skipped = "slow";
+                        } else {
+                            QElapsedTimer clock;
+                            clock.start();
+                            QJsonObject t2 = t;
+                            t2["model"] = checkModel;
+                            if (!tr["language"].toString().isEmpty()) t2["language"] = tr["language"];
+                            std::optional<QJsonObject> two;
+                            try {
+                                two = run("transcribe", t2);
+                            } catch (const Error& e) {
+                                if (e.code == QLatin1String("CANCELED")) throw;
+                                if (e.code == QLatin1String("NO_SPEECH")) two = QJsonObject{};
+                                // else the check could not run: the words stay as heard
+                            }
+                            if (two) {
+                                const auto ms = [fps](const QJsonValue& v) { return qint64(std::llround(v.toDouble() / fps * 1000)); };
+                                QVector<TranscriptWord> heardWords, other;
+                                for (const QJsonValue& w : std::as_const(words))
+                                    heardWords << TranscriptWord{ms(w["from"]), ms(w["to"]), w["text"].toString()};
+                                for (const QJsonValue& w : (*two)["words"].toArray())
+                                    other << TranscriptWord{ms(w["from"]), ms(w["to"]), w["text"].toString()};
+                                QVector<Captions::Disagreement> left;
+                                const QVector<TranscriptWord> kept = Captions::keepAgreed(heardWords, other, 700, &left);
+                                // The kept words are a part of the heard ones, in their order
+                                QJsonArray agreed;
+                                qsizetype k = 0;
+                                for (qsizetype i = 0; i < heardWords.size() && k < kept.size(); ++i)
+                                    if (heardWords[i].from == kept[k].from && heardWords[i].text == kept[k].text) {
+                                        agreed << words[i];
+                                        ++k;
+                                    }
+                                words = agreed;
+                                for (const Captions::Disagreement& d : std::as_const(left))
+                                    vc.leftOut << QJsonObject{{"from_s", std::round(d.from / 10.0) / 100},
+                                                              {"to_s", std::round(d.to / 10.0) / 100},
+                                                              {"heard", d.heard}, {"other", d.other}};
+                                vc.checkedWith = QFileInfo(checkModel).fileName();
+                                vc.checkSeconds = clock.elapsed() / 1000.0;
+                            }
+                        }
+                    }
                 } catch (const Error& e) {
                     if (e.code != QLatin1String("NO_SPEECH")) throw;
                 }
             }
-            if (words.isEmpty()) {
+            if (!vc.checkedWith.isEmpty()) {
+                *done << QString("captions checked with a second model (%1, %2 s): %3 line(s) left out, the two models "
+                                 "heard them differently")
+                             .arg(vc.checkedWith)
+                             .arg(std::round(vc.checkSeconds * 10) / 10)
+                             .arg(vc.leftOut.size());
+                if (!vc.leftOut.isEmpty()) note("captions_left_out");
+                if (f.leftOut) *f.leftOut = vc.leftOut;
+            } else if (vc.skipped == QLatin1String("no_model")) {
+                note("captions_check_no_model");
+            } else if (vc.skipped == QLatin1String("slow")) {
+                note("captions_check_slow");
+            }
+            if (words.isEmpty() && !vc.leftOut.isEmpty()) {
+                note("captions_all_left_out"); // speech was there, the two models agreed on none of it
+            } else if (words.isEmpty()) {
                 note("no_captions_speech");
             } else {
                 QJsonObject op{{"op", "captions"}, {"style", f.captions}, {"words", words}};
@@ -391,6 +519,7 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
     // Effect sounds: none unless asked for (never by itself on every cut)
     const QString sfx = a.contains("sfx") ? a["sfx"].toString().trimmed().toLower() : QString("off");
     if (!QStringList{"off", "mild"}.contains(sfx)) fail("BAD_ARGUMENT", "sfx must be off or mild");
+    checkCaptionsCheck(a["captions_check"], "captions_check");
     const ShortPlatform* platform = shortPlatform(a.contains("for") ? a["for"].toString() : QString("shorts"));
     if (!platform) fail("BAD_ARGUMENT", "for must be shorts, reels or tiktok (the platform)");
     if (platform->maxSeconds < pick.maxS) pick.maxS = platform->maxSeconds;

@@ -23,6 +23,9 @@ struct TranscribeRequest {
     QString media;
     int audioStream = 0;
     QVector<int> audioStreams; // several streams of the media file mixed (e.g. two microphones); empty = audioStream
+    // A media file: only this part of it (ms of the file; mediaToMs < 0 = until its end). The words count from the
+    // part's start (the caller adds mediaFromMs)
+    qint64 mediaFromMs = 0, mediaToMs = -1;
     Timeline timeline;
     ProjectFormat format;
     int from = 0, to = -1; // timeline frames; to < 0 = until the end
@@ -158,7 +161,7 @@ private:
     bool m_cpuOnly = false; // whisper failed on the graphics card: this request runs on the CPU (-ng)
     Transcript::Result m_result;
     QString m_promptNote;
-    QString m_vocabularyText; // the word list's part of m_prompt (an echo of it alone is dropped too)
+    QString m_basePrompt; // m_prompt without the word list (an echo of the list alone is spoken words: kept)
     QString m_detected;
     double m_detectedP = 0;
     // Stage 1: whisper's own progress (0..1), what was shown, the time it runs and is expected to take

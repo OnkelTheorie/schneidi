@@ -233,8 +233,7 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
             m_result.dropped = Transcript::dropHallucinations(m_result.words, m_result.levels);
         }
         m_result.dropped += m_repeats;
-        if (!m_prompt.isEmpty() && !m_request.verbatim) m_result.dropped += Transcript::dropPromptEcho(m_result.words, m_prompt);
-        if (!m_vocabularyText.isEmpty()) m_result.dropped += Transcript::dropPromptEcho(m_result.words, m_vocabularyText);
+        if (!m_request.verbatim) m_result.dropped += Transcript::dropStartingTextEcho(m_result.words, m_basePrompt, m_prompt);
         Transcript::fitToSpeech(m_result.words, m_result.levels);
         const QString lang = m_request.language.isEmpty() ? QString("auto") : m_request.language;
         // A chosen language is what whisper wrote in; it reports "en" when it heard nothing. Parakeet reports none:
@@ -318,7 +317,12 @@ bool Transcriber::start(const TranscribeRequest& request, QString* error)
     const QString wav = m_tmp->filePath("audio.wav");
     if (!request.media.isEmpty()) {
         // 16 kHz mono like whisper wants it; only the chosen audio stream(s), several mixed at their own level
-        QStringList args{"-hide_banner", "-nostdin", "-loglevel", "error", "-i", request.media};
+        QStringList args{"-hide_banner", "-nostdin", "-loglevel", "error"};
+        // Only a part: seeked in the input (ffmpeg decodes from the keyframe before and drops up to the exact time)
+        if (request.mediaFromMs > 0) args << "-ss" << QString::number(request.mediaFromMs / 1000.0, 'f', 3);
+        if (request.mediaToMs > request.mediaFromMs)
+            args << "-t" << QString::number((request.mediaToMs - request.mediaFromMs) / 1000.0, 'f', 3);
+        args << "-i" << request.media;
         const QVector<int> streams = request.audioStreams.isEmpty() ? QVector<int>{request.audioStream} : request.audioStreams;
         if (streams.size() == 1) {
             args << "-map" << QString("0:a:%1").arg(streams.first());
@@ -526,7 +530,7 @@ void Transcriber::runWhisper()
     if (m_request.verbatim) m_prompt = verbatimPromptFor(m_language, fitsCodePage, &m_promptNote);
     else if (const QString p = punctuationPrompt(m_language); !p.isEmpty() && fitsCodePage(p)) m_prompt = p;
     // The word list after it, as much as whisper reads (words the code page cannot hold left out)
-    m_vocabularyText.clear();
+    m_basePrompt = m_prompt;
     if (!m_request.vocabulary.isEmpty()) {
         QStringList words, dropped;
         for (const QString& w : m_request.vocabulary)
@@ -535,7 +539,6 @@ void Transcriber::runWhisper()
         QStringList cut;
         const QString base = m_prompt;
         m_prompt = Vocabulary::prompt(base, words, Vocabulary::kMaxPromptTokens, &cut);
-        m_vocabularyText = m_prompt.mid(base.size()).trimmed();
         QStringList notes;
         if (!m_promptNote.isEmpty()) notes << m_promptNote;
         if (!cut.isEmpty())
@@ -643,7 +646,7 @@ void Transcriber::runParakeet()
     m_output.clear();
     m_prompt.clear(); // no starting text, no DTW: its own token times
     m_promptNote.clear();
-    m_vocabularyText.clear();
+    m_basePrompt.clear();
     if (!m_request.vocabulary.isEmpty())
         m_promptNote = QStringLiteral("Parakeet has no starting text: the word list was not used (whisper uses it)");
     m_usedDtw = false;

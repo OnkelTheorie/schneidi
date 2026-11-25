@@ -17,6 +17,7 @@
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/Selection.h"
+#include "core/TranscriptCut.h"
 
 #include "check.h"
 #include "synth_sounds.h"
@@ -564,6 +565,11 @@ int main(int argc, char** argv)
         }
         rgb.resize(150); // without the tint at the end: only the first
         CHECK_EQ(Cli::detail::deathScreensOf(rgb, 10).size(), 1);
+        // A kill read off the desktop after the game picture ended (usable end 50 s): left out, not a moment at 50 s
+        QJsonArray tail{QJsonObject{{"from_s", 30.0}, {"to_s", 34.0}, {"first_s", 31.0}},
+                        QJsonObject{{"from_s", 52.0}, {"to_s", 55.0}, {"first_s", 53.0}}};
+        Cli::detail::boundMoments(tail, {}, 50);
+        if (CHECK_EQ(tail.size(), 1)) CHECK(tail[0].toObject()["hi_s"].toDouble() <= 50);
     }
 
     // ---- Where the game picture ends (the recorder stopped from the task bar: the desktop in the last seconds), in
@@ -833,6 +839,14 @@ int main(int argc, char** argv)
              "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
         if (CHECK(!two.isEmpty())) {
             const QJsonObject r = run("direct", {{"recipe", "short"}, {"files", QJsonArray{two}}});
+            // The voices' levels are measured while suggesting (in the app a background job), the apply (on the app's
+            // UI thread) only reads them
+            int measured = 0;
+            for (const QJsonValue& x : r["session"]["suggestions"].toArray())
+                for (int stream : {1, 2})
+                    measured += AnalysisCache::get(Cli::detail::speechLevelKey(two, stream, x["from_s"].toDouble(),
+                                                                               x["to_s"].toDouble())).has_value();
+            CHECK(measured >= 2);
             const QJsonObject made = run("direct", {{"session", r["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}},
                                                     {"project_dir", dir.filePath("out/two-voices")}});
             const QString doneText = QJsonDocument(made["done"].toArray()).toJson();
@@ -853,10 +867,24 @@ int main(int argc, char** argv)
             CHECK(chatDb > 6 && chatDb < 12.01);
             // The captions of the short: each voice transcribed on its own (here the transcripts are in the cache
             // already, as whisper would have left them), both in one list in time order, a speaker per word
+            // (per part of the recording the short plays, keyed with the model that hears it: the default one)
+            Cli::detail::Session shortView(made["project"].toString());
+            shortView.selectTimeline(made["timeline"].toString());
+            const Timeline shortTl = shortView.project.timeline();
+            const double shortFps = shortView.project.frameRate();
+            const auto inParts = [&](int stream, const QJsonArray& words, const auto& putOne) {
+                for (const auto& [from, to] : TranscriptCut::playedRangesMs(shortTl, shortFps, -1, two, stream)) {
+                    QJsonArray part;
+                    for (const QJsonValue& w : words)
+                        if (w[0].toDouble() >= from && w[0].toDouble() < to) part << w;
+                    putOne(from, to, part);
+                }
+            };
             const auto put = [&](int stream, const QJsonArray& words) {
-                AnalysisCache::put(AnalysisCache::key("speech-words", two,
-                                                      QJsonObject{{"language", ""}, {"stream", stream}, {"verbatim", false}}, 1),
-                                   QJsonObject{{"stream", stream}, {"language", "de"}, {"words", words}});
+                inParts(stream, words, [&](qint64 from, qint64 to, const QJsonArray& part) {
+                    AnalysisCache::put(Cli::detail::streamTranscriptKey(two, stream, "", false, {}, {}, from, to),
+                                       QJsonObject{{"stream", stream}, {"language", "de"}, {"words", part}});
+                });
             };
             put(1, QJsonArray{QJsonArray{4100, 4400, "Einer"}, QJsonArray{4450, 4800, "soll?"}});
             put(2, QJsonArray{QJsonArray{5600, 6000, "Heilige"}, QJsonArray{6050, 6500, "Scheiße."},
@@ -880,10 +908,10 @@ int main(int argc, char** argv)
             const QString id = Vocabulary::cacheId(Vocabulary::gameTerms("cs2"));
             CHECK(!id.isEmpty());
             const auto putTerms = [&](int stream, const QJsonArray& w) {
-                AnalysisCache::put(AnalysisCache::key("speech-words", two,
-                                                      QJsonObject{{"language", ""}, {"stream", stream}, {"verbatim", false},
-                                                                  {"vocabulary", id}}, 1),
-                                   QJsonObject{{"stream", stream}, {"language", "de"}, {"words", w}});
+                inParts(stream, w, [&](qint64 from, qint64 to, const QJsonArray& part) {
+                    AnalysisCache::put(Cli::detail::streamTranscriptKey(two, stream, "", false, Vocabulary::gameTerms("cs2"), {}, from, to),
+                                       QJsonObject{{"stream", stream}, {"language", "de"}, {"words", part}});
+                });
             };
             putTerms(1, QJsonArray{QJsonArray{4100, 4400, "Einer"}, QJsonArray{4450, 4800, "Smoke?"}});
             putTerms(2, QJsonArray{QJsonArray{5600, 6000, "Headshot."}});
@@ -910,10 +938,10 @@ int main(int argc, char** argv)
             // language the first one heard); a phrase heard differently is left out, with both readings
             const QString checkModel = "/nonexistent/ggml-check.bin";
             const auto putCheck = [&](int stream, const QJsonArray& w) {
-                AnalysisCache::put(AnalysisCache::key("speech-words", two,
-                                                      QJsonObject{{"language", "de"}, {"stream", stream}, {"verbatim", false},
-                                                                  {"model", "ggml-check.bin"}}, 1),
-                                   QJsonObject{{"stream", stream}, {"language", "de"}, {"words", w}});
+                inParts(stream, w, [&](qint64 from, qint64 to, const QJsonArray& part) {
+                    AnalysisCache::put(Cli::detail::streamTranscriptKey(two, stream, "de", false, {}, checkModel, from, to),
+                                       QJsonObject{{"stream", stream}, {"language", "de"}, {"words", part}});
+                });
             };
             putCheck(1, QJsonArray{QJsonArray{4120, 4800, "einer soll"}});                       // the same
             putCheck(2, QJsonArray{QJsonArray{5610, 6000, "Heilige"}, QJsonArray{6040, 6500, "Scheisse."}, // spelt otherwise
@@ -1408,6 +1436,26 @@ int main(int argc, char** argv)
         CHECK_EQ(a["error"].toString(), QString("CANCELED"));
         CHECK(!QFileInfo::exists(AppPaths::projectFolder() + "/beach-short.schneidi"));
         Q_UNUSED(target);
+    }
+
+    // ---- captions_check: a wrong value is refused (it fell back to the setting without a word), the finish's answer
+    // field is in the help
+    {
+        CHECK_EQ(run("direct", {{"recipe", "short"}, {"files", QJsonArray{clip}}, {"options", QJsonObject{{"captions_check", "maybe"}}}})["error"].toString(),
+                 QString("BAD_ARGUMENT"));
+        CHECK_EQ(run("short", {{"files", QJsonArray{clip}}, {"captions_check", "maybe"}})["error"].toString(), QString("BAD_ARGUMENT"));
+        CHECK_EQ(run("direct", {{"project", dir.filePath("none.schneidi")}, {"finish", QJsonObject{{"timeline", "Short"}, {"captions_check", "ja"}}}})["error"].toString(),
+                 QString("BAD_ARGUMENT"));
+        CHECK(QJsonDocument(run("help", {{"command", "direct"}})).toJson().contains("captions_left_out"));
+    }
+
+    // ---- The game seen in the picture: cached with the detector's version (a result of an older detector is not
+    // taken: here one that "saw" cs2 in a holiday clip)
+    {
+        const QString h = holiday(dir.path(), "seen", 8, 77);
+        AnalysisCache::put(AnalysisCache::key("game-in-picture", h, {}, 1), QJsonObject{{"game", "cs2"}});
+        Cli::Context gctx;
+        CHECK_EQ(Cli::detail::gameInPicture({h}, gctx), QString());
     }
 
     // ---- Tempo: suggestions for 10 clips, cold and warm

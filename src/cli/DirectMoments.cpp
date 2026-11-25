@@ -32,7 +32,7 @@ namespace Cli::detail {
 
 namespace {
 
-constexpr int kMomentsVersion = 11; // raise when the moments of a file change for the same sources
+constexpr int kMomentsVersion = 12; // raise when the moments of a file change for the same sources
 
 constexpr double kHighlightsPreS = 2.0;  // highlights' default lead-in before the first kill or loud moment
 constexpr double kHighlightsPostS = 1.0; // ... and lead-out after the last one
@@ -620,7 +620,10 @@ QString gameInPicture(const QStringList& files, Context& ctx, int upTo)
             continue;
         }
         if (!m.info.hasVideo || m.info.isImage) continue;
-        const AnalysisCache::Key key = AnalysisCache::key("game-in-picture", m.info.path, {}, 1);
+        // The detector's version in the key: a better one looks again (the pictures are read at 1080 lines as the
+        // kill feed is measured; smaller ones lose its thin lines)
+        const AnalysisCache::Key key = AnalysisCache::key("game-in-picture", m.info.path,
+                                                          {{"detector", KillFeedLines::version()}}, 1);
         if (const auto hit = AnalysisCache::get(key)) {
             id = (*hit)["game"].toString();
         } else {
@@ -730,12 +733,8 @@ QJsonObject directMomentsFile(const QJsonObject& a, Context& ctx)
             }
             if (!found && length <= kClipEndMaxS) highlights << clipEndMoment(m, {}, usable, deaths);
         }
-        // How far each may grow in a short: around its hits (or loud peaks), not into a death
-        for (int i = 0; i < highlights.size(); ++i) {
-            QJsonObject x = highlights[i].toObject();
-            bound(x, deaths, usable);
-            highlights[i] = x;
-        }
+        // How far each may grow in a short: around its hits (or loud peaks), not into a death; none past the game
+        boundMoments(highlights, deaths, usable);
         if (ctx.progress) ctx.progress(1);
         mat.moments = int(highlights.size() + extra.size());
         mat.analysis = {{"sound", sound}, {"picture", picture}, {"events", events}, {"speech", "none"}};
@@ -764,6 +763,20 @@ QJsonObject directMomentsFile(const QJsonObject& a, Context& ctx)
             out[k] = list;
         }
     return out;
+}
+
+void boundMoments(QJsonArray& moments, const QJsonArray& deaths, double usable)
+{
+    QJsonArray kept;
+    for (const QJsonValue& v : std::as_const(moments)) {
+        // One that begins where the game picture has ended (a kill read off the desktop in the recording's tail):
+        // nothing of it can be shown
+        if (v["from_s"].toDouble() >= usable - 0.05) continue;
+        QJsonObject x = v.toObject();
+        bound(x, deaths, usable);
+        kept << x;
+    }
+    moments = kept;
 }
 
 CollectedMoments collectMoments(const QStringList& files, const QString& project, const QString& game, bool index,
