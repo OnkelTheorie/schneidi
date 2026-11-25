@@ -186,19 +186,15 @@ void MainWindow::toggleVoiceover()
     }
 #if defined(Q_OS_ANDROID) && QT_CONFIG(permissions)
     // Android: the microphone needs RECORD_AUDIO, granted at run time (declared in the manifest; without it the input
-    // opens silent or not at all). Asked at the first take; granted -> the take starts, refused -> said why.
+    // opens silent or not at all). Asked at every take until granted; granted -> the take starts, refused -> said why.
+    // Refused once, Qt says Denied for the rest of the process, but Android asks again (only after "don't ask again"
+    // or a second refusal it answers at once without a question): so Denied is asked too, like Undetermined.
     const QMicrophonePermission mic;
-    switch (qApp->checkPermission(mic)) {
-    case Qt::PermissionStatus::Granted:
-        break;
-    case Qt::PermissionStatus::Undetermined:
+    if (qApp->checkPermission(mic) != Qt::PermissionStatus::Granted) {
         qApp->requestPermission(mic, this, [this](const QPermission& p) {
             if (p.status() == Qt::PermissionStatus::Granted) toggleVoiceover();
             else micRefused();
         });
-        return;
-    case Qt::PermissionStatus::Denied:
-        micRefused();
         return;
     }
 #endif
