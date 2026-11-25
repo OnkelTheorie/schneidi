@@ -199,9 +199,8 @@ void MainWindow::buildActions()
         redoAct->setEnabled(u->canRedo());
     };
     followUndo();
+    // followUndo() already set both from the history: a rebuild (language/design) keeps it, so no reset to off here
     connect(m_project, &Project::undoStackChanged, m_ui, followUndo);
-    undoAct->setEnabled(false);
-    redoAct->setEnabled(false);
     edit->addSeparator();
     // The Regie page shows no timeline: the keys that edit it do nothing there (its lists take their own Delete)
     const auto notOnDirect = [this] { return m_page != Page::Direct; };

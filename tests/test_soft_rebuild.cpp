@@ -206,6 +206,8 @@ void testSwitch(Engine& engine)
         CHECK_EQ(project->undoStack()->index(), steps);
         CHECK_EQ(Check::dump(project->timeline()), clipsBefore);
         CHECK_EQ(w.liveSelection()->ids(), QSet<int>({ids.value(1)}));
+        // The menu's Undo follows the kept history at once (it was off until the next edit)
+        if (QAction* undo = InputBindings::instance().action("undo"); CHECK(undo)) CHECK(undo->isEnabled());
 
         // The window: page, panel, splitter, zoom/scroll exactly, playhead, the render queue still the same object
         CHECK(w.currentPage() == Page::Media);
