@@ -3,7 +3,8 @@
 // of a 16:9 clip in a 9:16 timeline show a blurred, enlarged copy of the same picture instead of the track below, on
 // one track. Checks the pixel functions, renders through the picture engine in preview and export
 // mode and at half size (crop limits the copy, zoom < 1 and rotation fill too, opacity makes the whole clip
-// see-through, the track below is covered), live value changes, the project file (old files unchanged) and the CLI.
+// see-through, the track below is covered; an anamorphic picture or one with its own shape takes the part of its
+// displayed shape, on the CPU and the card), live value changes, the project file (old files unchanged) and the CLI.
 
 #include "check.h"
 
@@ -29,6 +30,9 @@ namespace {
 const ProjectFormat kTall{180, 320, {25, 1}}; // 9:16
 const ProjectFormat kWide{320, 180, {25, 1}};
 QString g_red, g_banded, g_green, g_greenWide; // banded: red with blue bands at the top and bottom (30 of 180 rows)
+// 160x180 pixels with a pixel aspect of 2:1 (shown 320x180), red with blue bands at the left and right (40 of 160 columns)
+// g_squeezed: the same with square pixels
+QString g_anamorphic, g_squeezed;
 
 struct Rgb {
     int r = 0, g = 0, b = 0;
@@ -55,14 +59,17 @@ Pic picOf(const QImage& img)
     return pic;
 }
 
-Pic render(const Timeline& tl, const ProjectFormat& fmt, Mode mode, int frame, double scale = 1.0)
+Pic render(const Timeline& tl, const ProjectFormat& fmt, Mode mode, int frame, double scale = 1.0, bool gpu = true,
+           bool* usedGpu = nullptr)
 {
     ::Picture::Options o;
+    o.gpu = gpu;
     o.format = fmt;
     o.output = QSize(int(fmt.width * scale), int(fmt.height * scale));
     o.mode = mode == Preview ? ::Picture::Mode::Preview : ::Picture::Mode::Export;
     ::Picture::Renderer r(tl, o);
     const QImage img = r.render(frame).toImage();
+    if (usedGpu) *usedGpu = r.stats().framesGpu > 0;
     if (!CHECK(!img.isNull() && img.size() == o.output)) return {};
     return picOf(img);
 }
@@ -262,6 +269,32 @@ void testRender()
     }
 }
 
+// The background part follows the picture's displayed shape (pixel aspect, Clip::pictureAspect), not its pixel buffer's:
+// shown 16:9, a 9:16 frame takes the middle 32 % of the width - the blue side bands (25 % each) stay out of it (taken
+// as 160:180 the part was 63 % wide and the bars' edges blue)
+void testAnamorphic()
+{
+    const auto check = [&](const char* name, const QString& media, const std::function<void(Clip&)>& setup) {
+        for (const bool gpu : {false, true})
+            for (Mode m : {Preview, Export}) {
+                bool usedGpu = false;
+                const Pic p = render(overGreen(media, setup), kTall, m, 5, 1.0, gpu, &usedGpu);
+                if (p.img.isNull()) continue;
+                const Rgb l = p.at(2, 20), r = p.at(177, 20), mid = p.at(90, 20);
+                std::printf("%s, %s, %s: bar left %d %d %d, right %d %d %d, middle %d %d %d\n", name,
+                            usedGpu ? "GPU" : "CPU", m == Preview ? "preview" : "export", l.r, l.g, l.b, r.r, r.g, r.b,
+                            mid.r, mid.g, mid.b);
+                CHECK(reddish(l) && reddish(r) && reddish(mid));
+            }
+    };
+    check("SAR 2:1", g_anamorphic, [](Clip& c) { blurFill(c); });
+    // The same picture without the pixel aspect, shown 16:9 by the clip's own shape (a stretched recording put right)
+    check("pictureAspect 16:9", g_squeezed, [](Clip& c) {
+        blurFill(c);
+        c.pictureAspect = 16.0 / 9;
+    });
+}
+
 void testLiveUpdate()
 {
     // Blur and darkening are values: the running renderer takes them as a new snapshot, no new renderer
@@ -407,11 +440,21 @@ int main(int argc, char** argv)
     g_green = Check::makeMedia(tmp.filePath("green.mp4"), QStringList{"-f", "lavfi", "-i", "color=c=0x00ff00:s=180x320:r=25:d=2"} + h264);
     g_greenWide = Check::makeMedia(tmp.filePath("greenwide.mp4"),
                                    QStringList{"-f", "lavfi", "-i", "color=c=0x00ff00:s=320x180:r=25:d=2"} + h264);
-    if (!CHECK(!g_red.isEmpty() && !g_banded.isEmpty() && !g_green.isEmpty() && !g_greenWide.isEmpty()))
+    g_anamorphic = Check::makeMedia(tmp.filePath("anamorphic.mp4"),
+                                    QStringList{"-f", "lavfi", "-i",
+                                                "color=c=red:s=160x180:r=25:d=2,drawbox=x=0:y=0:w=40:h=180:color=blue:t=fill,"
+                                                "drawbox=x=120:y=0:w=40:h=180:color=blue:t=fill,setsar=2"} + h264);
+    g_squeezed = Check::makeMedia(tmp.filePath("squeezed.mp4"),
+                                  QStringList{"-f", "lavfi", "-i",
+                                              "color=c=red:s=160x180:r=25:d=2,drawbox=x=0:y=0:w=40:h=180:color=blue:t=fill,"
+                                              "drawbox=x=120:y=0:w=40:h=180:color=blue:t=fill"} + h264);
+    if (!CHECK(!g_red.isEmpty() && !g_banded.isEmpty() && !g_green.isEmpty() && !g_greenWide.isEmpty()
+               && !g_anamorphic.isEmpty() && !g_squeezed.isEmpty()))
         return Check::result();
     Check::initEngine();
     std::setlocale(LC_NUMERIC, "C");
     testRender();
+    testAnamorphic();
     testLiveUpdate();
     return Check::result();
 }
