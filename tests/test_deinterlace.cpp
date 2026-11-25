@@ -3,7 +3,8 @@
 // proxies use it), so the preview of the original, the export and the proxy show the same picture. A synthetic 1080i-like
 // clip (a bright bar moving 12 px per field, the two fields woven into each frame): no combing in the reader's picture
 // nor in the rendered frame, the same picture whether played to or seeked to (also onto a key frame, the file's first
-// and last frame), the export's frame = the preview's, progressive files untouched.
+// and last frame), the export's frame = the preview's, progressive files untouched; the filter works on the asked
+// picture only (not on the one before it as well).
 #include "check.h"
 
 #include "engine/picture/Renderer.h"
@@ -116,6 +117,10 @@ void testReader(const QString& clip)
     std::printf("combing: woven %.2f, deinterlaced %.2f\n", woven, clean);
     CHECK(woven > 4 * clean);
     CHECK(r->stats().deinterlaced >= 1);
+    // Only `cur` costs: the picture before it passes through the filter (it is decoded interlaced too - FFmpeg 6.1-7.1
+    // flag it so again from a deprecated field)
+    std::printf("pictures before deinterlaced in vain: %d\n", Video::neighboursFiltered());
+    CHECK_EQ(Video::neighboursFiltered(), 0);
     // The bar is still there, as wide as drawn (one field's moment, not a blend of two)
     for (const int y : {100, 101}) {
         int bright = 0;
