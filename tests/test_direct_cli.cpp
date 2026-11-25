@@ -808,6 +808,49 @@ int main(int argc, char** argv)
         }
     }
 
+    // ---- Two voices in a game recording, the voice chat partner 9 dB under the microphone: brought to one level (the
+    // quieter one raised, said in done) before the game sound is ducked under them
+    {
+        const int rate = 48000;
+        Synth::Builder mic(rate, 12.0, 21), chat(rate, 12.0, 22);
+        mic.floor();
+        chat.floor();
+        Synth::speech(mic, 3.0, 3.0);
+        Synth::speech(chat, 4.5, 3.0, 160);
+        for (float& v : chat.s) v *= 0.355f; // -9 dB
+        const QString micWav = dir.filePath("clips/level-mic.wav"), chatWav = dir.filePath("clips/level-chat.wav");
+        Synth::writeWav(micWav, mic.s, rate);
+        Synth::writeWav(chatWav, chat.s, rate);
+        const QString two = Check::makeMedia(
+            dir.filePath("clips/cs2/cs2_clip_two.mkv"),
+            {"-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=12", "-f", "lavfi", "-i",
+             "aevalsrc='0.02*sin(2*PI*220*t)+if(between(t,5,5.4),0.8*sin(2*PI*440*t),0)':d=12:s=48000", "-i", micWav, "-i",
+             chatWav, "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:a", "-metadata:s:a:0", "title=System Output",
+             "-metadata:s:a:1", "title=Mikrofon", "-metadata:s:a:2", "title=Discord", "-c:v", "libx264", "-preset",
+             "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
+        if (CHECK(!two.isEmpty())) {
+            const QJsonObject r = run("direct", {{"recipe", "short"}, {"files", QJsonArray{two}}});
+            const QJsonObject made = run("direct", {{"session", r["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}},
+                                                    {"project_dir", dir.filePath("out/two-voices")}});
+            const QString doneText = QJsonDocument(made["done"].toArray()).toJson();
+            if (!CHECK(doneText.contains("voices leveled") && doneText.contains("Discord +")))
+                std::printf("       %s\n", qPrintable(doneText));
+            ProjectData d;
+            QString error;
+            double micDb = -100, chatDb = -100;
+            if (CHECK(ProjectFile::load(made["project"].toString(), &d, &error)))
+                for (const Track& t : d.timeline.audio)
+                    for (const Clip& c : t.clips) {
+                        if (c.mediaPath != two) continue;
+                        if (c.audioStream == 1) micDb = c.volumeDb;
+                        if (c.audioStream == 2) chatDb = c.volumeDb;
+                    }
+            std::printf("       voices: microphone %+.1f dB, Discord %+.1f dB\n", micDb, chatDb);
+            CHECK(std::abs(micDb) < 0.01);
+            CHECK(chatDb > 6 && chatDb < 12.01);
+        }
+    }
+
     // ---- A voice getting loud in the voice chat (high and loud, not laughter): named as voices getting loud, not as
     // a scream - on a gated microphone (silence around every word) a loud exclamation and a scream look the same
     {

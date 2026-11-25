@@ -18,6 +18,7 @@
 #include "core/RenderJob.h"
 #include "core/ShortPick.h"
 #include "core/StreamPresets.h"
+#include "engine/AudioAnalysis.h"
 #include "engine/Extensions.h"
 
 #include <QDateTime>
@@ -33,6 +34,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 
 namespace Cli::detail {
 
@@ -623,6 +625,49 @@ bool sameProject(const QString& a, const QString& b)
     return key(a) == key(b);
 }
 
+// The speech level of a voice stream in the moments used (dB, the power of the 0.1 s blocks the voice detection hears
+// words in); nullopt = no words in them (a stream that only breathes or hums is never raised)
+std::optional<double> speechLevelDb(const QString& file, int stream, const QVector<const Direction::Suggestion*>& used)
+{
+    double power = 0;
+    int blocks = 0;
+    for (const Direction::Suggestion* x : used) {
+        failIfCanceled();
+        std::vector<bool> speech;
+        const auto levels = AudioAnalysis::fileBlockLevels(file, stream, x->from, x->to, 0.1, &speech);
+        if (!levels) continue;
+        for (size_t i = 0; i < levels->size() && i < speech.size(); ++i)
+            if (speech[i] && (*levels)[i] > -90) {
+                power += std::pow(10.0, (*levels)[i] / 10);
+                ++blocks;
+            }
+    }
+    if (blocks < 3) return std::nullopt; // (under 0.3 s of words: too little to tell)
+    return 10 * std::log10(power / blocks);
+}
+
+// The voices placed brought to one level: each up to the loudest one (at most kVoiceRaiseMaxDb; under 1 dB left as it
+// is), only voices with words in the moments. *said: what was raised by how much
+constexpr double kVoiceRaiseMaxDb = 12;
+void levelVoices(QJsonArray& voiceRefs, QStringList* said)
+{
+    double loudest = -200;
+    for (const QJsonValue& v : voiceRefs)
+        if (v["level_db"].isDouble()) loudest = std::max(loudest, v["level_db"].toDouble());
+    for (int i = 0; i < voiceRefs.size(); ++i) {
+        QJsonObject v = voiceRefs[i].toObject();
+        if (!v["level_db"].isDouble()) continue;
+        const double gain = std::min(kVoiceRaiseMaxDb, loudest - v["level_db"].toDouble());
+        if (gain < 1) continue;
+        v["gain_db"] = std::round(gain * 10) / 10;
+        voiceRefs[i] = v;
+        *said << QString("%1 +%2 dB (%3)")
+                     .arg(v["name"].toString().isEmpty() ? QString("stream %1").arg(v["stream"].toInt()) : v["name"].toString())
+                     .arg(v["gain_db"].toDouble())
+                     .arg(QFileInfo(v["media"].toString()).fileName());
+    }
+}
+
 // Sound of the recordings: audio_stream 'auto' (default: the game streams of game material with several streams,
 // plus each voice stream - microphone, voice chat - that is heard in a used moment of its recording), 'game' (only
 // the game streams, as before 0.26), 'all', or numbers/names - as `short` always chose (per file: undefined = all).
@@ -676,7 +721,11 @@ QVector<QJsonValue> soundStreams(const Direction::Session& s, const QString& gam
         // Only the recordings in the cut are named (not a switched-off one, not one without a moment)
         if (mine.isEmpty()) continue;
         for (int k : g) *gameRefs << QJsonObject{{"media", s.material[i].file}, {"stream", k}};
-        for (int k : voices) *voiceRefs << QJsonObject{{"media", s.material[i].file}, {"stream", k}};
+        for (int k : voices) {
+            QJsonObject ref{{"media", s.material[i].file}, {"stream", k}, {"name", names[k]}};
+            if (const std::optional<double> level = speechLevelDb(s.material[i].file, k, mine)) ref["level_db"] = *level;
+            *voiceRefs << ref;
+        }
         *said << QString("%1: %2").arg(QFileInfo(s.material[i].file).fileName(), kept.join(", "));
         if (!heardIn.isEmpty())
             *voiced << QString("%1: %2").arg(QFileInfo(s.material[i].file).fileName(), heardIn.join(", "));
@@ -985,6 +1034,10 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
     if (!voiced.isEmpty())
         done << QString("sound: voices heard in the moments placed too, the game sound ducked 6 dB under them (%1)")
                     .arg(voiced.join("; "));
+    // The quieter voices up to the loudest (a voice chat partner far under the microphone), before the duck
+    QStringList raised;
+    levelVoices(voiceRefs, &raised);
+    if (!raised.isEmpty()) done << QString("sound: voices leveled to the loudest one: %1").arg(raised.join("; "));
     // Said on its own, not only inside `done`: voice chat and the microphone are not in the video
     if (!soundDropped.isEmpty()) {
         soundDropped.removeDuplicates();
@@ -1056,8 +1109,8 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
     }
     // The voices placed: the game sound (the bed) a little under them while they speak - by the streams placed, not by
     // their names (an unplayable stream is not placed, an untitled one's name depends on the UI language)
-    if (!voiceRefs.isEmpty() && !gameRefs.isEmpty())
-        ops << QJsonObject{{"op", "_voice_duck"}, {"game", gameRefs}, {"voice", voiceRefs}, {"amount_db", -6}};
+    if (!voiceRefs.isEmpty() && (!gameRefs.isEmpty() || !raised.isEmpty()))
+        ops << QJsonObject{{"op", "_voice_mix"}, {"game", gameRefs}, {"voice", voiceRefs}, {"amount_db", -6}};
     QString result = cut;
     if (isShort) {
         // The vertical copy, every clip following its subject; game footage keeps its kill feed readable at the top
@@ -1294,10 +1347,10 @@ void addDirectOps(QVector<OpDef>& ops)
                      }
                  },
                  {"files"}};
-    // Hidden too: a short's game sound ducked under the voices placed with it ({game:[{media, stream}], voice:[…],
-    // amount_db}). The tracks are found by their clips' recording and stream; a duck that finds nothing or fails is
-    // left out with a note - it never fails the cut
-    ops << OpDef{"_voice_duck", {}, {}, {},
+    // Hidden too: the voices placed in a short brought to one level and the game sound ducked under them ({game:
+    // [{media, stream}], voice:[{media, stream, gain_db?}], amount_db}). The clips are found by their recording and
+    // stream; a duck that finds nothing or fails is left out with a note - it never fails the cut
+    ops << OpDef{"_voice_mix", {}, {}, {},
                  [](Session& s, const QJsonObject& op) {
                      const auto placed = [](const Clip& c, const QJsonArray& refs) {
                          return std::any_of(refs.begin(), refs.end(), [&](const QJsonValue& r) {
@@ -1305,6 +1358,17 @@ void addDirectOps(QVector<OpDef>& ops)
                          });
                      };
                      const QJsonArray gameRefs = op.value("game").toArray(), voiceRefs = op.value("voice").toArray();
+                     // The quieter voices up (clip volume), before the duck measures them
+                     for (const QJsonValue& r : voiceRefs) {
+                         if (!r["gain_db"].isDouble()) continue;
+                         QJsonArray ids;
+                         for (const Track& t : s.project.timeline().audio)
+                             for (const Clip& c : t.clips)
+                                 if (placed(c, QJsonArray{r})) ids << c.id;
+                         if (!ids.isEmpty())
+                             applyOp(s, QJsonObject{{"op", "volume"}, {"clips", ids}, {"db", r["gain_db"].toDouble()}});
+                     }
+                     if (gameRefs.isEmpty()) return;
                      const Timeline& tl = s.project.timeline();
                      QJsonArray game;
                      QStringList voice;
