@@ -46,6 +46,7 @@ struct Options {
     QString publicUrl;
     QStringList origins;
     bool verbose = false;
+    bool privateUrls = false; // --allow-private-urls: upload by URL may fetch from private networks
 };
 
 QByteArray json(const QJsonObject& o);
@@ -56,6 +57,12 @@ QJsonObject errorJson(const QString& code, const QString& message);
 QString hostOf(const QByteArray& hostHeader);
 // "localhost", "*.localhost" or a loopback address
 bool loopbackName(const QString& host);
+// An address `upload` by URL never fetches from on a server others reach: this computer (loopback, 0.0.0.0/8, any),
+// link-local (cloud metadata), multicast. IPv4-mapped IPv6 forms count as their IPv4 address.
+bool refusedAddress(const QHostAddress& a);
+// A private network's address: 10/8, 172.16/12, 192.168/16, 100.64/10 (carrier NAT), fc00::/7 (unique local) - the
+// router, NAS, internal services of the server's network; refused there too unless --allow-private-urls
+bool privateAddress(const QHostAddress& a);
 // "/files/<path>" -> the file in the work folder; throws Error (OUTSIDE_ROOT, HIDDEN)
 QString filePath(const QString& requestPath);
 // One byte range of a Range header for a file of `size` bytes: "bytes=a-b", "bytes=a-", "bytes=-n". No header or

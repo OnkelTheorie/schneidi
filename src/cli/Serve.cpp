@@ -660,7 +660,7 @@ Options parse(const QStringList& args)
     const auto o = parseOptions(args,
                                 {"listen", "port", "root", "map", "token", "token-file", "workers", "job-wait",
                                  "max-upload", "public-url", "allow-origin"},
-                                {"allow-extensions"});
+                                {"allow-extensions", "allow-private-urls"});
     const auto one = [&o](const char* name) { return o.value(name).isEmpty() ? QString() : o.value(name).last(); };
     const auto number = [&](const char* name, int lo, int hi, int fallback) {
         if (!o.contains(name)) return fallback;
@@ -689,6 +689,7 @@ Options parse(const QStringList& args)
     opt.jobWaitS = number("job-wait", 1, 3600, 50);
     opt.maxUpload = qint64(number("max-upload", 1, 100 * 1024 * 1024, 50 * 1024)) << 20;
     opt.extensions = o.contains("allow-extensions");
+    opt.privateUrls = o.contains("allow-private-urls");
     opt.publicUrl = one("public-url");
     while (opt.publicUrl.endsWith('/')) opt.publicUrl.chop(1);
     if (!opt.publicUrl.isEmpty() && !QUrl(opt.publicUrl).isValid()) fail("USAGE", "--public-url is not a URL");
@@ -813,7 +814,10 @@ QJsonObject help()
                   {"public-url", "address clients use (behind a reverse proxy), e.g. https://schneidi.example.org; "
                                  "then a token is required (everyone comes through the proxy)"},
                   {"allow-origin", "web page allowed to call the server, e.g. https://example.org (repeatable)"},
-                  {"allow-extensions", "offer the `extensions` tool (downloads programs onto the server)"}}}}},
+                  {"allow-extensions", "offer the `extensions` tool (downloads programs onto the server)"},
+                  {"allow-private-urls", "let upload by URL fetch from private networks (10.x, 192.168.x, …) also "
+                                         "when the server is reachable from elsewhere (off: clients from outside "
+                                         "could read the router, NAS or internal services through it)"}}}}},
     };
 }
 

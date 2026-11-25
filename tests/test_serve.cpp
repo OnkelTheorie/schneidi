@@ -10,6 +10,7 @@
 #include "cli/Mcp.h"
 #include "cli/Sandbox.h"
 #include "cli/Serve.h"
+#include "cli/ServeDetail.h"
 #include "cli/ServeJobs.h"
 #include "core/BrandKit.h"
 #include "core/CompGraph.h"
@@ -26,6 +27,7 @@
 #include <QEventLoop>
 #include <QImage>
 #include <QGuiApplication>
+#include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QNetworkAccessManager>
@@ -661,6 +663,21 @@ int main(int argc, char* argv[])
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg missing");
     QTemporaryDir tmp;
     sandboxRules(tmp.filePath("rules"));
+    // Addresses upload by URL refuses on a server others reach (cli/ServeFiles.cpp checkHost)
+    {
+        using Cli::Serve::privateAddress;
+        using Cli::Serve::refusedAddress;
+        for (const char* a : {"127.0.0.1", "::1", "0.0.0.0", "0.1.2.3", "169.254.169.254", "fe80::1", "224.0.0.1", "::",
+                              "::ffff:127.0.0.1", "::ffff:169.254.169.254"})
+            CHECK(refusedAddress(QHostAddress(QString(a))));
+        for (const char* a : {"10.0.0.1", "172.16.0.1", "172.31.255.255", "192.168.178.1", "100.64.0.1", "fc00::1",
+                              "fd12:3456::1", "::ffff:10.1.2.3", "::ffff:192.168.0.1"})
+            CHECK(privateAddress(QHostAddress(QString(a))));
+        for (const char* a : {"8.8.8.8", "172.32.0.1", "192.169.0.1", "100.128.0.1", "2a00:1450::1", "::ffff:8.8.8.8"}) {
+            CHECK(!privateAddress(QHostAddress(QString(a))));
+            CHECK(!refusedAddress(QHostAddress(QString(a))));
+        }
+    }
     sandboxLibraryKeys(tmp.filePath("library-keys"));
 
     // Replacing a file (the end of a long-name upload): a replace that fails keeps the old file; the old one is never
@@ -867,6 +884,12 @@ int main(int argc, char* argv[])
             const QJsonObject a = proxied.call("upload", {{"url", proxied.base + "/files/clip.mp4"}, {"path", "self.mp4"}});
             CHECK_EQ(errorCode(a), QString("BAD_URL"));
             CHECK(!QFileInfo::exists(root + "/self.mp4"));
+            // Nor from the private network it stands in (router, NAS, internal services)
+            for (const char* url : {"http://192.168.178.1/", "http://10.1.2.3/x.mp4", "http://[::ffff:172.16.0.9]/"}) {
+                const QJsonObject b = proxied.call("upload", {{"url", url}, {"path", "lan.html"}});
+                CHECK_EQ(errorCode(b), QString("BAD_URL"));
+            }
+            CHECK(!QFileInfo::exists(root + "/lan.html"));
         }
     }
 

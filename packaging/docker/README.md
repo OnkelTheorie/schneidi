@@ -45,7 +45,9 @@ read or written. Ways to get material in and results out:
   curl -H "Authorization: Bearer $SCHNEIDI_TOKEN" -T clip.mp4 http://SERVER:8642/files/clips/clip.mp4
   curl -H "Authorization: Bearer $SCHNEIDI_TOKEN" -O http://SERVER:8642/files/out/film.mp4
   ```
-- The `upload` tool lets the AI fetch a file from an http(s) URL into the work folder.
+- The `upload` tool lets the AI fetch a file from an http(s) URL into the work folder. Addresses of the server itself
+  and of private networks (10.x, 192.168.x, …) are refused when the server is reachable from elsewhere;
+  `--allow-private-urls` allows the private ones (a NAS in your network).
 - The `files` tool lists the material with type, size and a download link.
 - Answers of calls that write files (`render`, `frames` …) carry a `url` to download the result.
 - A folder of the host as work folder: `-v /srv/videos:/data`. It must be writable for user 1000 inside the container
