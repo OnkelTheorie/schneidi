@@ -12,6 +12,7 @@
 
 extern "C" {
 #include <libavutil/frame.h>
+#include <libswscale/swscale.h>
 }
 
 #include <QCoreApplication>
@@ -96,6 +97,59 @@ void testRange()
         }
 }
 
+// A 4:1:0 picture (old codecs: SVQ1, Indeo) converted in bands over threads: each band starts on a whole chroma row
+// (bands rounded to 4 lines, not 2: the colour of every band after the first was two lines off). Chroma changes every
+// chroma row; the banded result equals one conversion of the whole picture
+void testBands410()
+{
+    const int w = 320, h = 480;
+    Video::Picture p;
+    p.frame = av_frame_alloc();
+    p.frame->format = AV_PIX_FMT_YUV410P;
+    p.frame->width = w;
+    p.frame->height = h;
+    if (!CHECK(av_frame_get_buffer(p.frame, 0) >= 0)) return;
+    for (int plane = 0; plane < 3; ++plane) {
+        const int pw = plane ? (w + 3) / 4 : w, ph = plane ? (h + 3) / 4 : h;
+        for (int r = 0; r < ph; ++r) {
+            uint8_t* row = p.frame->data[plane] + size_t(r) * p.frame->linesize[plane];
+            for (int c = 0; c < pw; ++c) row[c] = uint8_t(plane == 0 ? 120 : plane == 1 ? 128 : (r % 2 ? 200 : 60));
+        }
+    }
+    Video::Info info;
+    info.colorspace = 601;
+    std::vector<uint8_t> banded(size_t(w) * h * 4), whole(size_t(w) * h * 4);
+    CHECK(Video::toRgba(p, info, banded.data(), w, h, false));
+    SwsContext* ctx = sws_getContext(w, h, AV_PIX_FMT_YUV410P, w, h, AV_PIX_FMT_RGBA,
+                                     SWS_POINT | SWS_ACCURATE_RND | SWS_FULL_CHR_H_INT, nullptr, nullptr, nullptr);
+    if (!CHECK(ctx)) return;
+    uint8_t* o[4] = {whole.data()};
+    const int os[4] = {w * 4};
+    sws_scale(ctx, p.frame->data, p.frame->linesize, 0, h, o, os);
+    sws_freeContext(ctx);
+    int wrongRows = 0;
+    for (int y = 0; y < h; ++y)
+        if (std::abs(int(banded[size_t(y) * w * 4]) - int(whole[size_t(y) * w * 4])) > 2) ++wrongRows;
+    if (!CHECK_EQ(wrongRows, 0)) std::printf("       4:1:0 bands: %d rows with another colour\n", wrongRows);
+}
+
+// Interlaced 4:2:0 converted field by field only at heights of whole chroma row pairs: an odd height (the last row was
+// never written) and 4k+2 lines (the second field read a chroma row past the plane) go the progressive way
+void testFieldHeights()
+{
+    for (const int h : {361, 362, 360}) {
+        Video::Picture p = flat(AV_PIX_FMT_YUV420P, 200, 640, h);
+        p.progressive = false;
+        Video::Info info;
+        info.colorspace = 709;
+        std::vector<uint8_t> out(size_t(640) * h * 4, 7);
+        CHECK(Video::toRgba(p, info, out.data(), 640, h, false));
+        int stale = 0;
+        for (int x = 0; x < 640; ++x) stale += out[(size_t(h - 1) * 640 + x) * 4] == 7;
+        if (!CHECK_EQ(stale, 0)) std::printf("       interlaced %d lines: last row not written\n", h);
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -104,6 +158,8 @@ int main(int argc, char** argv)
     QCoreApplication app(argc, argv);
     Check::initApp("video_convert");
     testRange();
+    testBands410();
+    testFieldHeights();
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
