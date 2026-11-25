@@ -267,6 +267,21 @@ int runTests(int argc, char** argv)
             }
         }
         CHECK_EQ(Cli::detail::parseTime(QJsonValue("6,95s"), ProjectFormat{}, "at"), int(std::lround(6.95 * ProjectFormat{}.rate.fps())));
+        // Audio tracks by plain number as documented ("2" = A2; was "no audio track 2"); V2 stays refused
+        {
+            Project tp;
+            Timeline tl;
+            tl.audio.resize(3);
+            CHECK(Cli::detail::audioTracksOf(tp, tl, "2") == (QVector<int>{1}));
+            CHECK(Cli::detail::audioTracksOf(tp, tl, "A3,1") == (QVector<int>{2, 0}));
+            QString code;
+            try {
+                Cli::detail::audioTracksOf(tp, tl, "V2");
+            } catch (const Cli::Error& e) {
+                code = e.code;
+            }
+            CHECK_EQ(code, QString("BAD_ARGUMENT"));
+        }
         // A file name with a comma stays one path in a comma-separated string; other pieces still split
         {
             const QString comma = dir.filePath("clip, take 2.mp4");
