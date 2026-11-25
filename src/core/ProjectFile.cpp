@@ -1127,6 +1127,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
             if (!t.name.isEmpty()) o["label"] = t.name;
             if (!t.enabled) o["enabled"] = false;
             if (t.locked) o["locked"] = true;
+            if (t.captionGroup > 0) o["caption_group"] = t.captionGroup;
             if (const QJsonObject captions = Captions::toJson(t.captions); !captions.isEmpty()) o["captions"] = captions;
             subtitles << o;
         }
@@ -1432,6 +1433,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             t.name = o.value("label").toString();
             t.enabled = o.value("enabled").toBool(true);
             t.locked = o.value("locked").toBool();
+            t.captionGroup = std::max(0, o.value("caption_group").toInt());
             t.captions = Captions::fromJson(o.value("captions").toObject());
             if (o.contains("style")) {
                 QJsonObject style = o.value("style").toObject();

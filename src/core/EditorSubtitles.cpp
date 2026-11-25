@@ -326,10 +326,14 @@ int Editor::addCaptionTracks(const QVector<SubtitleTrack>& tracks)
     const int index = m_project->timeline().subtitles.size();
     Project* p = m_project;
     m_project->edit(T("Wort-Untertitel"), [&](Timeline& tl) {
+        // Made together: one group (their SRT is one file); a number no track of the timeline has
+        int group = 1;
+        for (const SubtitleTrack& other : tl.subtitles) group = std::max(group, other.captionGroup + 1);
         for (SubtitleTrack& other : tl.subtitles) other.enabled = false; // the new ones are what is shown
         for (const SubtitleTrack& given : tracks) {
             if (given.cues.isEmpty()) continue;
             SubtitleTrack t = given;
+            t.captionGroup = group;
             t.name = given.name.simplified();
             t.enabled = true;
             t.cues.clear();
