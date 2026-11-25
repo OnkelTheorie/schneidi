@@ -142,8 +142,8 @@ int main(int argc, char** argv)
         std::printf("%-12s scenes  own %7.1f ms  ffmpeg %7.1f ms  cuts %s\n", qPrintable(name), ownMs, ffMs,
                     qPrintable(frames(own["cuts"].toArray())));
         // overview: the same windows (motion, cuts, brightness)
-        const QJsonObject ownOv = run("overview", {{"file", file}, {"window", "2s"}}, nullptr, &ownMs);
-        const QJsonObject ffOv = run("overview", {{"file", file}, {"window", "2s"}}, "ffmpeg", &ffMs);
+        const QJsonObject ownOv = run("overview", {{"file", file}, {"window", "2s"}, {"numbers", true}}, nullptr, &ownMs);
+        const QJsonObject ffOv = run("overview", {{"file", file}, {"window", "2s"}, {"numbers", true}}, "ffmpeg", &ffMs);
         CHECK_EQ(ownOv["windows"].toArray().size(), 16);
         Check::report(same(ownOv["windows"].toArray(), ffOv["windows"].toArray(), file == rotated ? 1 : 0),
                       "overview == ffmpeg", __FILE__, __LINE__, name);
