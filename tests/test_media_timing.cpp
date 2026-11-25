@@ -113,6 +113,10 @@ int main(int argc, char** argv)
         CHECK_EQ(Video::framePosition(126000 + 3600 * 10, AV_NOPTS_VALUE, start, ts, 25), int64_t(10));
         CHECK_EQ(Video::framePosition(126000 + 3600 * 10, 126000 - 3600, start, ts, 25), int64_t(11)); // key frame wins
         CHECK_EQ(Video::framePosition(3600 * 4, AV_NOPTS_VALUE, AV_NOPTS_VALUE, ts, 25), int64_t(4));
+        // Before the first key frame (leading pictures of an open GOP): negative, never frame 0 (the key frame's)
+        CHECK_EQ(Video::framePosition(126000 - 3600, 126000, start, ts, 25), int64_t(-1));
+        CHECK_EQ(Video::framePosition(126000 - 7200, 126000, start, ts, 25), int64_t(-2));
+        CHECK_EQ(Video::framePosition(126000 - 1000, 126000, start, ts, 25), int64_t(0)); // a timestamp jitter: still 0
         // Seeking aims at the timestamp of the position, the position of that timestamp is the position again
         for (const int64_t pos : {int64_t(0), int64_t(1), int64_t(17), int64_t(250)}) {
             const int64_t t = Video::frameTimestamp(pos, AV_NOPTS_VALUE, start, ts, 25);

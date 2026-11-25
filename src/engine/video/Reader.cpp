@@ -1420,7 +1420,9 @@ int64_t zeroOf(int64_t firstPts, int64_t startTime, AVRational timeBase)
 int64_t framePosition(int64_t pts, int64_t firstPts, int64_t startTime, AVRational timeBase, double fps)
 {
     pts -= zeroOf(firstPts, startTime, timeBase);
-    return int64_t(av_q2d(timeBase) * double(pts) * fps + 0.5);
+    // Rounded both ways alike: a picture shown one frame before the first key frame (open GOP at the file's start) is
+    // -1, not 0 (truncating x + 0.5 toward zero put it on frame 0, and the key frame after it was dropped)
+    return std::llround(av_q2d(timeBase) * double(pts) * fps);
 }
 
 int64_t frameTimestamp(int64_t position, int64_t firstPts, int64_t startTime, AVRational timeBase, double fps)
