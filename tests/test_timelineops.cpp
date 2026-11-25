@@ -94,6 +94,39 @@ int main(int argc, char** argv)
         CHECK(removeClip(tl, 3) && !removeClip(tl, 3) && tl.video[0].clips.isEmpty());
     }
 
+    // --- Review 2026-11-25 (F3): two pieces cut out of one linked clip in the same edit (a paste or move of two clips
+    // over it) - each piece gets its own link, picture and sound of a piece share one; no two clips of a track share one
+    {
+        const auto linkOf = [](const Timeline& tl, TrackKind k, int i) { return tl.tracks(k)[0].clips.value(i).linkId; };
+        // Both tracks cut twice (the pasted clips have sound)
+        for (bool withSound : {true, false}) {
+            Ids ids;
+            Timeline tl = tracks(1, 1);
+            tl.video[0].clips << mk(1, "x", 0, 300, 0, 7);
+            tl.audio[0].clips << mk(2, "x", 0, 300, 0, 7);
+            placeClip(tl.video[0], mk(3, "b", 50, 20), ids.gen(), 25);
+            if (withSound) placeClip(tl.audio[0], mk(4, "b", 50, 20), ids.gen(), 25);
+            placeClip(tl.video[0], mk(5, "c", 150, 20), ids.gen(), 25);
+            if (withSound) placeClip(tl.audio[0], mk(6, "c", 150, 20), ids.gen(), 25);
+            int next = 20;
+            resolvePendingLinks(tl, [&] { return next++; });
+            CHECK_TIMELINE(tl);
+            // V1: x[0-50] b x[70-150] c x[170-300]
+            const int l0 = linkOf(tl, TrackKind::Video, 0), l2 = linkOf(tl, TrackKind::Video, 2),
+                      l4 = linkOf(tl, TrackKind::Video, 4);
+            CHECK_EQ(l0, 7);
+            CHECK(l2 > 0 && l4 > 0 && l2 != 7 && l4 != 7 && l2 != l4);
+            if (withSound) {
+                CHECK_EQ(linkOf(tl, TrackKind::Audio, 0), l0);
+                CHECK_EQ(linkOf(tl, TrackKind::Audio, 2), l2);
+                CHECK_EQ(linkOf(tl, TrackKind::Audio, 4), l4);
+            } else {
+                CHECK_EQ(tl.audio[0].clips.size(), 1); // (the uncut sound stays with the left piece)
+                CHECK_EQ(linkOf(tl, TrackKind::Audio, 0), 7);
+            }
+        }
+    }
+
     // --- splitAt: linked pairs stay linked (new common linkId on the right)
     {
         Ids ids;

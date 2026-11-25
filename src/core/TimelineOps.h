@@ -71,7 +71,9 @@ QVector<int> repeatedSound(const Timeline& tl, const QVector<int>& clipIds);
 // resolvePendingLinks (called by Project::edit) turns that into a new common link.
 // A clip cut off at its start keeps its comp graph's picture in place (Comp::followHead; fps = Timeline::frameRate).
 void clearRange(Track& track, int start, int end, const IdGen& newId, double fps);
-// Replace provisional (negative) linkIds from clearRange with new ones: same provisional id -> same new id. A partner
+// Replace provisional (negative) linkIds from clearRange with new ones: same provisional id -> same new id - except
+// where a track holds two pieces with it (a clip cut twice in one edit): then each piece gets its own link, and the
+// pieces of other tracks join the one they overlap most (two clips of a track never share a link). A partner
 // that was not cut (on a track without a right piece) goes with the right piece when it plays in sync with it (same
 // file and playback, same start - in, overlapping in time) and not with the left piece that kept the old link (a
 // delete range over a picture whose sound starts after the range); otherwise it keeps the old link. A partner of
