@@ -304,7 +304,7 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     m_scrubber->setObjectName("viewer_scrubber");
     // Playback after the move: the user's choice (PlayheadMove; Standard = stop, as the bar always did)
     m_scrubber->pressed = [this] { m_scrubMove.begin(m_engine, PlayheadMove::Source::ViewerBar); };
-    m_scrubber->seek = [this](int frame) { m_engine->seek(frame); };
+    m_scrubber->seek = [this](int frame) { m_engine->scrubTo(frame); }; // paused: the sound there too
     m_scrubber->released = [this] { m_scrubMove.end(m_engine); };
 
     m_timecode = new QLabel;

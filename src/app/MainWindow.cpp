@@ -185,6 +185,7 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     m_monitorRes = PreviewResolution::stored(PreviewResolution::Target::Monitor, m_engine->frameSize());
     m_aiLog = new AiLog(this);
     m_aiLog->setLimit(m_aiSettings.logLength);
+    m_engine->setScrubAudio(TimelineOptions::scrubAudio()); // sound while scrubbing (Settings › Timeline)
 
     m_project = new Project(this);
     m_selection = new Selection(this);
@@ -379,8 +380,11 @@ void MainWindow::buildUi()
     connect(m_engine, &Engine::speedChanged, tv, [this, tv](double speed) {
         tv->setPlaying(m_engine->timelinePositions() ? speed : 0.0);
     });
-    connect(tv, &TimelineView::seekRequested, this, [this](int f) {
+    connect(tv, &TimelineView::seekRequested, this, [this, tv](int f) {
         if (m_engine->mode() == Engine::Mode::Source) m_engine->showTimeline(f);
+        // The user moving the playhead (ruler, overview, Studio lanes, the phone's swipe under the centred line):
+        // paused, the sound there plays a moment (scrub audio); other panels' jumps stay silent
+        else if (m_playheadMove.active() || tv->scrubbing()) m_engine->scrubTo(f);
         else m_engine->seek(f);
     });
     // A playhead move by the user (ruler, overview strip, Studio lanes): playback after it as chosen in the settings
@@ -1285,7 +1289,7 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
 void MainWindow::stepFrames(int frames)
 {
     m_engine->pause();
-    m_engine->seek(m_engine->position() + frames);
+    m_engine->scrubTo(m_engine->position() + frames); // the frame's sound too (scrub audio)
 }
 
 void MainWindow::jumpToEdit(int direction)

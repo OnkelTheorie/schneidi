@@ -705,6 +705,14 @@ void MainWindow::buildActions()
     connect(tv, &TimelineView::loopInOutRequested, loop, &QAction::setChecked);
     connect(m_project, &Project::timelineChanged, m_ui, applyLoop);
     applyLoop();
+    // Sound while scrubbing (Settings › Timeline): Shift+S like DaVinci and Final Cut
+    m_scrubAudioAction = makeAction(play, "scrub_audio", T("Ton beim Scrubben"), QKeySequence("Shift+S"), [] {});
+    m_scrubAudioAction->setCheckable(true);
+    m_scrubAudioAction->setChecked(m_engine->scrubAudio());
+    connect(m_scrubAudioAction, &QAction::toggled, this, [this](bool on) {
+        m_engine->setScrubAudio(on);
+        if (!m_autosaveDisabled) TimelineOptions::setScrubAudio(on);
+    });
     makeAction(play, "show_timeline", T("Timeline in der Vorschau zeigen"), QKeySequence("Q"),
               [this, tv] { m_engine->showTimeline(tv->playhead()); });
     buildMulticamViewerAction(play);

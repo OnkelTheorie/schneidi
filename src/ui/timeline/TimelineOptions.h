@@ -51,6 +51,12 @@ void setMagneticMain(bool on);
 bool spaceReturns();
 void setSpaceReturns(bool on);
 
+// Sound while scrubbing (Settings › Timeline › Playback, Playback menu, Shift+S): dragging the playhead or stepping
+// frames while paused plays a short slice of the mix there, like Premiere, DaVinci, Final Cut. On by default (a
+// neutral default is never silent); MainWindow hands it to the engine (Engine::setScrubAudio).
+bool scrubAudio();
+void setScrubAudio(bool on);
+
 // The speeds J/L step through when pressed again (Settings › Timeline › Playback): doubling 1-2-4-8-16 (default, as
 // before; DaVinci) or gentle 1-2-3-5-8 (Avid; Premiere 1-2-3-4). shuttleSpeed: the speed after a press of J
 // (direction -1) or L (+1) at the current speed - the other direction (or paused) starts at 1x, a slower one (half

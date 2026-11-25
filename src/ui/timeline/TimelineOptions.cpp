@@ -83,6 +83,10 @@ bool spaceReturns() { return stored("timeline/spaceStops") == "return"; }
 
 void setSpaceReturns(bool on) { store("timeline/spaceStops", "return", !on); }
 
+bool scrubAudio() { return stored("timeline/scrubAudio") != "off"; }
+
+void setScrubAudio(bool on) { store("timeline/scrubAudio", "off", on); }
+
 bool snapping() { return QSettings().value("timeline/snapping", true).toBool(); }
 
 void setSnapping(bool on) { store("timeline/snapping", "false", on); }

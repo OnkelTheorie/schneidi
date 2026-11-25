@@ -29,6 +29,7 @@ public:
     TimelineOptions::Follow follow() const;       // follow the playhead while playing
     TimelineOptions::ShuttleSteps shuttleSteps() const; // the speeds J/L step through
     bool spaceReturns() const;                    // Space stops and goes back to the start position
+    bool scrubAudio() const;                      // sound while scrubbing
     bool clickSetsPlayhead() const;               // a click into the tracks sets the playhead too
     TimelineOptions::ClipFormat clipFormat() const; // the first clip with another format: ask, adapt, keep
     bool trimOverwrites() const;                  // a clip's edge overwrites the neighbour (else it stops there)
@@ -52,6 +53,7 @@ private:
     QComboBox* m_afterSeek = nullptr;
     QComboBox* m_follow = nullptr;
     QComboBox* m_space = nullptr;
+    QComboBox* m_scrubAudio = nullptr;
     QComboBox* m_shuttle = nullptr;
     QComboBox* m_click = nullptr;
     QComboBox* m_middle = nullptr;

@@ -789,7 +789,9 @@ void TimelineView::centreScrub(double dx)
     }
     if (snap >= 0 && snap != m_scrubSnap) Touch::tick();
     m_scrubSnap = snap;
+    m_centreScrubbing = true; // the seek it asks for is the user scrubbing (sound while scrubbing)
     setLeftFrame(snap >= 0 ? snap - half : m_scrubRaw);
+    m_centreScrubbing = false;
 }
 
 double TimelineView::centreLeft() const
