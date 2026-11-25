@@ -42,8 +42,14 @@ bool decideMode()
 #if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
     return true; // a phone or tablet (its platform may list a generic mouse device as well)
 #endif
+    // No input device at all (the offscreen platform: --screenshot, tests): off. Also the way around a wrong
+    // optimisation: GCC 14.2 at -O3 passed an empty list with its size never written to autoOn (the Release build
+    // of the .deb crashed here at start without a screen)
+    const QList<const QInputDevice*> devices = QInputDevice::devices();
+    if (devices.isEmpty()) return false;
     QList<int> types;
-    for (const QInputDevice* d : QInputDevice::devices()) types << int(d->type());
+    types.reserve(devices.size());
+    for (const QInputDevice* d : devices) types << int(d->type());
     return autoOn(types);
 }
 
