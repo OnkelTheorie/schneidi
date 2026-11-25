@@ -338,6 +338,58 @@ void testUnpositionedChannels(const QString& dir)
     CHECK(right < 0.001); // nothing on the odd channels
 }
 
+// A float file holding NaN and Inf samples (a plug-in chain that blew up): the reader hands on silence there and
+// counts them - one such sample otherwise sticks in filter states (LFE low pass, noise reduction, loudness meter)
+// to the clip's end and stops a float export ("Input contains NaN").
+void testNonFinite(const QString& dir)
+{
+    const int n = kRate / 2;
+    std::vector<float> samples(size_t(n) * 2);
+    for (int i = 0; i < n; ++i)
+        samples[size_t(i) * 2] = samples[size_t(i) * 2 + 1] = float(0.25 * std::sin(2.0 * M_PI * 440.0 * i / kRate));
+    samples[2 * 1000] = std::nanf("");
+    samples[2 * 2000 + 1] = INFINITY;
+    samples[2 * 3000] = -INFINITY;
+    samples[2 * 4000] = 1000.f; // finite, far out of range
+    QFile f(dir + "/nan.wav");
+    if (!CHECK(f.open(QIODevice::WriteOnly))) return;
+    const quint32 bytes = quint32(samples.size() * 4);
+    auto le32 = [&](quint32 v) { f.write(reinterpret_cast<const char*>(&v), 4); };
+    auto le16 = [&](quint16 v) { f.write(reinterpret_cast<const char*>(&v), 2); };
+    f.write("RIFF");
+    le32(36 + bytes);
+    f.write("WAVEfmt ");
+    le32(16);
+    le16(3); // IEEE float
+    le16(2);
+    le32(quint32(kRate));
+    le32(quint32(kRate) * 8);
+    le16(8);
+    le16(32);
+    f.write("data");
+    le32(bytes);
+    f.write(reinterpret_cast<const char*>(samples.data()), bytes);
+    f.close();
+    Audio::Reader::Options o;
+    o.rate = kRate;
+    o.channels = 2;
+    auto r = Audio::Reader::open(f.fileName(), 0, o);
+    if (!CHECK(r)) return;
+    const Planar a = readRange(*r, 0, n, 1920);
+    bool finite = true;
+    double top = 0;
+    for (const auto& ch : a)
+        for (const float v : ch) {
+            finite = finite && std::isfinite(v);
+            top = std::max(top, double(std::abs(v)));
+        }
+    std::printf("       NaN/Inf in a float file: %d samples replaced, peak %.2f\n", r->stats().nonFinite, top);
+    CHECK(finite);
+    CHECK(top <= 64.0);
+    CHECK_EQ(r->stats().nonFinite, 3);
+    CHECK(std::abs(a[0][500] - samples[1000]) < 1e-4f); // the rest is untouched
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -355,5 +407,6 @@ int main(int argc, char** argv)
     testNoDurationZeroTail(dir.path());
     testNoDurationBigLive(dir.path());
     testUnpositionedChannels(dir.path());
+    testNonFinite(dir.path());
     return Check::result();
 }

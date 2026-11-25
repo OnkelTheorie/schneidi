@@ -999,6 +999,25 @@ bool Reader::read(int64_t pos, int count, float* const* out)
     const int64_t from = std::max(a, d->bufStart), to = std::min(b, d->bufStart + int64_t(d->buf[0].size()));
     for (int c = 0; c < d->outChannels && from < to; ++c)
         std::copy(d->buf[size_t(c)].begin() + (from - d->bufStart), d->buf[size_t(c)].begin() + (to - d->bufStart), out[c] + (from - pos));
+    // The one gate for what a file may hold (float PCM passes NaN/Inf through bit by bit, damaged packets decode to
+    // Inf): one such sample would stay in every filter state behind (LFE low pass, noise reduction, voice cleaning,
+    // loudness meter) and stop a float export. Silence instead, and nothing beyond +36 dBFS.
+    constexpr float kMost = 64.f;
+    for (int c = 0; c < d->outChannels; ++c) {
+        float* const o = out[c];
+        bool odd = false;
+        for (int i = 0; i < count; ++i)
+            odd |= !(std::abs(o[i]) <= kMost); // true for NaN too
+        if (!odd) continue;
+        for (int i = 0; i < count; ++i) {
+            if (!std::isfinite(o[i])) {
+                o[i] = 0.f;
+                ++d->stats.nonFinite;
+            } else {
+                o[i] = std::clamp(o[i], -kMost, kMost);
+            }
+        }
+    }
     return !d->error;
 }
 

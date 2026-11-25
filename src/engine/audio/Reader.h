@@ -65,6 +65,7 @@ public:
         int decodeErrors = 0;
         int readErrors = 0;    // reading the file failed (not its end: a network share gone, a damaged file)
         int reopens = 0;       // jumps to the start that needed a fresh demuxer
+        int nonFinite = 0;     // NaN/Inf samples of the file handed on as silence
     };
     const Stats& stats() const;
 
