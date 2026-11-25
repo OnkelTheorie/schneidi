@@ -166,7 +166,8 @@ RenderQueuePanel::RenderQueuePanel(Project* project, RenderQueue* queue, QWidget
     : QWidget(parent), m_project(project), m_queue(queue)
 {
     setObjectName("Panel");
-    setMinimumWidth(280);
+    // Narrow enough for the Export page at 150 % in Russian on a 1920 screen (its texts wrap or elide)
+    setMinimumWidth(200);
     m_title = new QLabel;
     m_title->setObjectName("PanelTitle");
 
@@ -188,6 +189,9 @@ RenderQueuePanel::RenderQueuePanel(Project* project, RenderQueue* queue, QWidget
     m_empty = new QLabel(T("Keine Aufträge.\nLinks „Zur Render-Warteschlange hinzufügen“."));
     m_empty->setObjectName("renderQueueEmpty");
     m_empty->setAlignment(Qt::AlignCenter);
+    // Its width does not count for the panel's: on one line its Russian text made the Export page wider than a 1920
+    // screen at 150 % (wrapping made the panel wider on a phone instead)
+    m_empty->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     m_empty->setStyleSheet(QString("color: %1;").arg(Theme::textDim.name()));
 
     m_renderBtn = new QPushButton;
