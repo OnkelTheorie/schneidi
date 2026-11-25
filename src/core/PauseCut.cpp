@@ -170,8 +170,8 @@ QVector<Range> combined(const QVector<Range>& pauses, const QVector<Range>& fill
         }
         Range& m = out.last();
         m.to = std::max(m.to, r.to);
-        m.quiet = std::max({m.quiet, r.quiet, m.to - m.from}); // a filler touching a pause makes it longer
         if (r.kind == Kind::Pause || m.kind == Kind::Pause) {
+            m.quiet = std::max({m.quiet, r.quiet, m.to - m.from}); // a filler touching a pause makes it longer
             m.kind = Kind::Pause;
             m.text.clear();
         } else if (!r.text.isEmpty()) {
