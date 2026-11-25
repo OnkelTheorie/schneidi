@@ -198,8 +198,10 @@ void convert(const Picture& pic, uint8_t* buffer, int width, int height, const I
     int outStride[4] = {};
     const int flags = swsFlags(width, height, src, width, height, dst);
     av_image_fill_arrays(outData, outStride, buffer, dst, width, height, 1);
-    // Field by field (limited or full range: withRange makes full-range yuv420p yuvj420p)
-    if ((src == AV_PIX_FMT_YUV420P || src == AV_PIX_FMT_YUVJ420P) && interlaced) {
+    // Field by field (limited or full range: withRange makes full-range yuv420p yuvj420p). Only for heights of whole
+    // chroma row pairs: at 4k+2 lines the second field read one chroma row past the plane, an odd height left the
+    // last row unwritten - those go the progressive way
+    if ((src == AV_PIX_FMT_YUV420P || src == AV_PIX_FMT_YUVJ420P) && interlaced && height % 4 == 0) {
         const int fieldHeight = height / 2;
         SwsContext* ctx = cachedContext(width, fieldHeight, src, dst, flags);
         if (!ctx) return;
@@ -323,7 +325,9 @@ bool toRgba(const Picture& pic, const Info& info, uint8_t* out, int dw, int dh, 
         if (planarYuv && pic.progressive && !(fast && fastRgbSource(src)) && h >= 128) {
             const int flags = swsFlags(w, h, src, w, h, AV_PIX_FMT_RGBA);
             const int bands = std::min(8, h / 64);
-            const int step = ((h + bands - 1) / bands + 1) & ~1; // even: chroma rows stay whole
+            // A multiple of the chroma rows' height (2 for 4:2:0, 4 for 4:1:0): chroma rows stay whole
+            const int sub = desc->log2_chroma_h;
+            const int step = ((h + bands - 1) / bands + (1 << sub) - 1) & ~((1 << sub) - 1);
             std::atomic<bool> ok{true};
             Compose::forRows(bands, 1, [&](int first, int last) {
                 for (int b = first; b < last; ++b) {
@@ -338,8 +342,8 @@ bool toRgba(const Picture& pic, const Info& info, uint8_t* out, int dw, int dh, 
                     const uint8_t* in[4] = {};
                     int inStride[4] = {};
                     for (int i = 0; i < 3; ++i) {
-                        const int sub = i == 0 ? 0 : desc->log2_chroma_h;
-                        in[i] = pic.frame->data[i] + (y0 >> sub) * pic.frame->linesize[i];
+                        const int planeSub = i == 0 ? 0 : sub;
+                        in[i] = pic.frame->data[i] + (y0 >> planeSub) * pic.frame->linesize[i];
                         inStride[i] = pic.frame->linesize[i];
                     }
                     uint8_t* o[4] = {out + size_t(y0) * w * 4};

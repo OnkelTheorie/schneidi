@@ -63,6 +63,11 @@ void testSpans()
     CHECK(SmartRender::spans(fx, 0, 150, false).isEmpty());
     fx.video[0].clips[1].effects[0].enabled = false; // switched off counts as none
     CHECK(SmartRender::spans(fx, 0, 150, false) == (QVector<Span>{{50, 100, "b", 0}}));
+    // Picture shown at another shape (a stretched recording put right at 4:3): rendered; the file's shape is unknown
+    // here ("b" does not exist), so any own shape counts as another
+    Timeline shape = tl;
+    shape.video[0].clips[1].pictureAspect = 4.0 / 3.0;
+    CHECK(SmartRender::spans(shape, 0, 150, false) == (QVector<Span>{{0, 50, "a", 10}, {100, 150, "a", 60}}));
     // Transitions and fades: generously both sides of the cut, fades on their own clip
     Timeline tr = tl;
     tr.video[0].clips[0].transOut = 5;
@@ -312,6 +317,17 @@ void testExports(const QString& dir)
     compare("h264", dir, cuts(a, b, false), settings(dir + "/x.mp4"), 100, 120);
     compare("mkv", dir, cuts(a, b, false), settings(dir + "/x.mkv"), 100, 120);
     compare("effect", dir, cuts(a, b, true), settings(dir + "/x.mp4"), 70, 90);
+    // Own picture shape: 4:3 is drawn pillarboxed (never copied), the file's own 16:9 set explicitly still copies
+    {
+        Timeline tl = cuts(a, b, false);
+        for (Clip& c : tl.video[0].clips) c.pictureAspect = 4.0 / 3.0;
+        CHECK(SmartRender::spans(tl, 0, 150, false).isEmpty());
+        const Result r = render(tl, settings(dir + "/aspect.mp4"));
+        CHECK(r.ok);
+        CHECK_EQ(r.copiedPercent, 0);
+        for (Clip& c : tl.video[0].clips) c.pictureAspect = 16.0 / 9.0;
+        CHECK(!SmartRender::spans(tl, 0, 150, false).isEmpty());
+    }
     // Bit rate cap ("Web" quality): GOPs above it are encoded (a game recording would make the file 4x larger), below
     // it copied
     {

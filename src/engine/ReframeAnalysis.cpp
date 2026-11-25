@@ -286,10 +286,14 @@ std::optional<Samples> measure(const Need& n, QString* error, const std::atomic<
     int64_t lastCut = first - minShot, lastSample = first - step;
     // The file's end in positions (0 = unknown: a repeated picture ends the measuring)
     const int64_t endFrame = info.duration > 0 ? int64_t(std::ceil(double(info.duration) / AV_TIME_BASE * srcFps)) : 0;
+    bool complete = true; // false: a read failed on the way (not cached as the whole range), as KillFeedLines
     for (int64_t pos = first; pos <= last; ++pos) {
         if (cancel && cancel->load()) break;
         const auto pic = reader->picture(pos);
-        if (!pic || !pic->frame) break;
+        if (!pic || !pic->frame) {
+            complete = endFrame > 0 && pos >= endFrame; // past the file's end: all there is
+            break;
+        }
         if (pic->position < pos) {
             // The picture before again: past the end of the file, or a gap in its timestamps (variable frame rate:
             // the reader shows the held picture there) - measured already, go on after it
@@ -310,7 +314,10 @@ std::optional<Samples> measure(const Need& n, QString* error, const std::atomic<
         const std::unique_ptr<AVFrame, void (*)(AVFrame*)> keep(cropped, [](AVFrame* x) { av_frame_free(&x); });
         sws = sws_getCachedContext(sws, f->width, f->height, AVPixelFormat(f->format), aw, ah, AV_PIX_FMT_YUV420P,
                                    SWS_AREA, nullptr, nullptr, nullptr);
-        if (!sws) break;
+        if (!sws) {
+            complete = false;
+            break;
+        }
         sws_scale(sws, f->data, f->linesize, 0, f->height, planes, strides);
         const uint8_t* Y = planes[0];
         const size_t pixels = size_t(aw) * size_t(ah);
@@ -408,6 +415,7 @@ std::optional<Samples> measure(const Need& n, QString* error, const std::atomic<
         out << s;
     }
     if (progress) progress(1000);
+    if (!complete) return out; // a part only: not cached as the whole range
 
     QDir().mkpath(cacheDir());
     const QString target = QDir(cacheDir()).filePath(QString("%1_%2_%3%4")

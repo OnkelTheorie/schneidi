@@ -125,6 +125,28 @@ void filterOnPixels()
         }
         CHECK_EQ(lit, 0);
         CHECK_EQ(changed, 0);
+        // Back to the start after the fade was done (a seek): black again, not the picture (fade's state only goes
+        // forward in a cached graph); a fade-out after its end and back before it: the picture again
+        std::vector<uint8_t> back = src;
+        CHECK(PC::applyFilter("fade=t=in:st=0:d=1", back.data(), w, h, 0.0));
+        CHECK(back == a);
+        std::vector<uint8_t> out = src, before = src;
+        CHECK(PC::applyFilter("fade=t=out:st=1:d=1", out.data(), w, h, 3.0));
+        CHECK(PC::applyFilter("fade=t=out:st=1:d=1", before.data(), w, h, 0.5));
+        CHECK(before == src && out != src);
+    }
+    // Frame numbers in expressions count the cached graph's frames, not the clip's: refused (t is the time)
+    for (const char* chain : {"hue=h=n*5", "rotate=a=n/50", "geq=lum='N':cb=128:cr=128", "crop=w=iw/2:x=n",
+                              "hue=enable='gt(n,3)':s=0"}) {
+        QString why;
+        std::vector<uint8_t> px = gradient(w, h);
+        CHECK(!PC::applyFilter(chain, px.data(), w, h, 0.0, &why));
+        if (!CHECK(why.contains("frame number"))) std::printf("       %s: %s\n", chain, qPrintable(why));
+    }
+    for (const char* chain : {"hue=h=t*5", "rotate=a=t/2:c=none", "hue=enable='gt(t,3)':s=0"}) {
+        QString why;
+        std::vector<uint8_t> px = gradient(w, h);
+        if (!CHECK(PC::applyFilter(chain, px.data(), w, h, 0.0, &why))) std::printf("       %s: %s\n", chain, qPrintable(why));
     }
     // A chain that changes the size is scaled back: the picture keeps its size
     {

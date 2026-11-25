@@ -3,11 +3,13 @@
 
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
+#include "core/MediaAspect.h"
 #include "engine/video/Reader.h"
 
 #include <QHash>
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 extern "C" {
@@ -17,11 +19,16 @@ extern "C" {
 
 namespace {
 
-// Shows the file as it is: no video effect (grade, stabilizer … count too), no transform/crop/opacity, normal speed
+// Shows the file as it is: no video effect (grade, stabilizer … count too), no transform/crop/opacity, normal speed,
+// at the file's own shape (a stretched recording shown at 4:3 via Clip::pictureAspect is drawn reshaped)
 bool plain(const Clip& c)
 {
     if (c.kind != ClipKind::Media || c.mediaPath.isEmpty() || c.isRetimed()) return false;
     if (Keys::hasTransform(c) || Keys::hasCrop(c) || Keys::hasOpacity(c)) return false;
+    if (c.pictureAspect > 0) { // same as the file's shape (or the file's unknown: not plain)
+        const double file = MediaAspect::of(c.mediaPath);
+        if (file <= 0 || std::abs(c.pictureAspect - file) > 1e-3 * file) return false;
+    }
     for (const EffectInstance& e : c.effects) {
         if (!e.enabled) continue;
         const EffectDescriptor* d = EffectRegistry::find(e.effectId);

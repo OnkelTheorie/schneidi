@@ -51,6 +51,9 @@ public:
     static QString proxyPath(const QString& original);
     // … for a proxy of the given longer edge (maxSizeOf)
     static QString proxyPath(const QString& original, int maxSize);
+    // Both names the proxy of an original can have at the current size, as an SDR and as an HDR source: proxyPath
+    // knows which one only once engine/HdrScan probed the file (not for files of other projects); for the cleanup
+    static QStringList proxyPathsAnyTone(const QString& original);
     // Of `originals` the ones that have a proxy of that size on the disk (what to regenerate after a quality change)
     static QStringList withProxy(const QStringList& originals, int maxSize);
     bool hasProxy(const QString& original) const;

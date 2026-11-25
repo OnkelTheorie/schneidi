@@ -480,8 +480,8 @@ TrackRun trackNode(const ProjectFormat& format, const Clip& c, int node, int fro
         run.error = T("Tracking geht nur bei Video-Clips (nicht bei Titeln, Verbund- und Multicam-Clips)");
         return run;
     }
-    from = std::clamp(from, 0, c.length() - 1);
-    to = std::clamp(to, 0, c.length() - 1);
+    from = std::clamp(from, 0, std::max(0, c.length() - 1)); // max: a zero length clip would clamp to -1 (undefined)
+    to = std::clamp(to, 0, std::max(0, c.length() - 1));
     // The node's values at the start frame (start points may be keyframed: placed anew where tracking restarts)
     QVariantMap values;
     for (const EffectParam& p : k->params) {
@@ -502,7 +502,7 @@ TrackRun trackNode(const ProjectFormat& format, const Clip& c, int node, int fro
     const double picW = std::max(1.0, pic.width()), picLongest = std::max({1.0, pic.width(), pic.height()});
     const int edge = st.mode == TrackMode::Face
                          ? std::clamp(int(std::ceil(kFaceEdge * frameEdge / picLongest)), kFaceEdge, std::max(kFaceEdge, frameEdge))
-                         : std::clamp(int(std::ceil(kTemplateMax / st.size * frameEdge / picW)), 320, frameEdge);
+                         : std::clamp(int(std::ceil(kTemplateMax / st.size * frameEdge / picW)), 320, std::max(320, frameEdge));
     const auto source = Tracker::clipPictures(format, c);
     return trackFrames([&](int f) { return source(f, edge); }, st, from, to, progress, cancel, faces);
 }

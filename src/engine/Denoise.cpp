@@ -84,7 +84,7 @@ void Processor::hop()
     Fft::transform(m_re, m_im, false);
 
     const double gmin = std::pow(10.0, -m_reduction / 20.0);
-    const bool full = m_seen >= long(N); // the window holds real sound only (tracking starts then)
+    const bool full = m_seen >= int64_t(N); // the window holds real sound only (tracking starts then)
     const double up = std::pow(10.0, kNoiseRiseDbPerSec / 10.0 * double(H) / m_rate);
     double sumW2 = 0;
     for (float w : m_window) sumW2 += double(w) * w;

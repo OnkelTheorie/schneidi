@@ -387,6 +387,21 @@ int main(int argc, char** argv)
         CHECK(Stabilizer::missing(videoTimeline(past), fmt).isEmpty());
     }
 
+    // A raw stream (no container duration, its pictures cannot be fetched by position): the analysis fails instead of
+    // storing a result with nothing measured as done (the clip was never stabilized, without a word)
+    {
+        const QString raw = Check::makeMedia(tmp.filePath("shaky.h264"), {"-i", shaky, "-frames:v", "50", "-c:v", "libx264",
+                                                                         "-preset", "ultrafast", "-f", "h264"});
+        if (CHECK(!raw.isEmpty())) {
+            Clip rc = mk(1, raw, 0, 0, 39);
+            EffectRegistry::add(rc, "stabilize");
+            const auto r = Stabilizer::request(rc, fmt);
+            error.clear();
+            CHECK(r && !Stabilizer::analyze(*r, &error) && !error.isEmpty());
+            CHECK(r && !Stabilizer::find(*r).valid());
+        }
+    }
+
     // Portrait clip between bars (no transform): analyzed on the frame with its bars, applied to the fitted picture
     // - shift and turn in frame units there too (the picture shifted by a share of it was still shaking)
     {

@@ -408,6 +408,23 @@ void ProxyManager::setQuality(Quality q)
     emit qualityChanged();
 }
 
+namespace {
+
+QString proxyPathOf(const QString& original, int maxSize, bool hdr)
+{
+    const QFileInfo fi(original);
+    const QString id = QString("%1|%2|%3|%4|v2%5")
+                           .arg(fi.absoluteFilePath())
+                           .arg(fi.size())
+                           .arg(fi.lastModified().toMSecsSinceEpoch())
+                           .arg(maxSize)
+                           .arg(hdr ? QStringLiteral("-hdr1") : QString());
+    const QString hash = QCryptographicHash::hash(id.toUtf8(), QCryptographicHash::Sha1).toHex();
+    return ProxyManager::cacheDir() + "/" + hash + ".mp4";
+}
+
+} // namespace
+
 QString ProxyManager::proxyPath(const QString& original, int maxSize)
 {
     // Key as with the waveform cache: changed originals automatically get a new proxy. The trailing version is
@@ -416,18 +433,13 @@ QString ProxyManager::proxyPath(const QString& original, int maxSize)
     // proxies before 0.24 were tagged BT.709 (the preview showed the signal unmapped); SDR proxies stay valid. Only the
     // cached answer here (no file opened on the GUI thread): engine/HdrScan finds it in the background and then says
     // hdrFound(), the proxy is looked up again.
-    const QFileInfo fi(original);
-    const QString id = QString("%1|%2|%3|%4|v2%5")
-                           .arg(fi.absoluteFilePath())
-                           .arg(fi.size())
-                           .arg(fi.lastModified().toMSecsSinceEpoch())
-                           .arg(maxSize)
-                           .arg(MediaProbe::hdrTransferCached(original).value_or(HdrTone::Transfer::None)
-                                        != HdrTone::Transfer::None
-                                    ? QStringLiteral("-hdr1")
-                                    : QString());
-    const QString hash = QCryptographicHash::hash(id.toUtf8(), QCryptographicHash::Sha1).toHex();
-    return cacheDir() + "/" + hash + ".mp4";
+    return proxyPathOf(original, maxSize,
+                       MediaProbe::hdrTransferCached(original).value_or(HdrTone::Transfer::None) != HdrTone::Transfer::None);
+}
+
+QStringList ProxyManager::proxyPathsAnyTone(const QString& original)
+{
+    return {proxyPathOf(original, maxSize(), false), proxyPathOf(original, maxSize(), true)};
 }
 
 bool ProxyManager::hasProxy(const QString& original) const

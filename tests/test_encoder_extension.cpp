@@ -361,6 +361,13 @@ void testArguments()
              QDir("/videos").filePath(".a.mp4.schneidi-video.nut"));
     p.codec = "libx265";
     CHECK(ExternalEncoder::arguments(p).contains("log-level=error"));
+    // x265's own options (the low-memory short lookahead) keep their value: one -x265-params with the log level joined
+    // (a second one replaced the first in ffmpeg's option dictionary)
+    p.options << QPair<QByteArray, QByteArray>{"x265-params", "rc-lookahead=10"};
+    const QStringList x = ExternalEncoder::arguments(p);
+    CHECK_EQ(x.count("-x265-params:v"), 1);
+    CHECK_EQ(x.value(x.indexOf("-x265-params:v") + 1), QString("rc-lookahead=10:log-level=error"));
+    CHECK(!x.contains("-x265-params"));
 }
 
 // ffmpeg with libx264 to stand in for the extension (SCHNEIDI_TEST_ENCODER_FFMPEG: the real one); empty = none
