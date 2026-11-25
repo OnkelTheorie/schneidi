@@ -263,14 +263,12 @@ MediaStorage::MediaStorage(QWidget* parent) : QWidget(parent)
     m_search->installEventFilter(this);
     connect(m_search, &QLineEdit::textChanged, this, [this] {
         updateGrid();
-        if (deepActive()) {
-            cancelDeepSearch();
-            m_deepHits.clear();
-            showFiles();
-            m_deepTimer->start();
-        } else {
-            showFiles();
-        }
+        // A running deep search is dropped in any case: emptied text (deepActive() false now) would get its hits
+        // into the plain listing
+        cancelDeepSearch();
+        m_deepHits.clear();
+        showFiles();
+        if (deepActive()) m_deepTimer->start();
     });
     m_searchBtn = new QToolButton;
     m_searchBtn->setObjectName("storage_search_button");
