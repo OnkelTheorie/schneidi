@@ -66,6 +66,15 @@ void startEffect(QXmlStreamWriter& x, const QString& name, const QString& id, co
 double dbToGain(double db) { return db <= kMinVolumeDb ? 0.0 : std::pow(10.0, db / 20.0); }
 double gainToDb(double g) { return g <= 1e-5 ? kMinVolumeDb : 20.0 * std::log10(g); }
 
+// A level/opacity value of the file; "nan" / "inf" (QString::toDouble takes them) are none: NaN reached the mix as a
+// NaN gain (the whole bus silent or noise, an AAC export failed) and the compositor's opacity
+double finiteOr(const QString& text, double fallback)
+{
+    bool ok = false;
+    const double v = text.toDouble(&ok);
+    return ok && std::isfinite(v) ? v : fallback;
+}
+
 // ---------- Reading: a small element tree ----------
 
 struct Node {
@@ -529,8 +538,9 @@ Sequence readFcp7(const QByteArray& data)
                     const auto keys = [k](const Node* p, const std::function<double(double)>& convert) {
                         QVector<Key> out;
                         for (const Node* key : p->all("keyframe"))
-                            out << Key{int(std::lround(std::clamp(key->frames("when") * k, -double(kMaxFrames), double(kMaxFrames)))),
-                                   convert(key->at("value").toDouble())};
+                            if (const double v = finiteOr(key->at("value"), NAN); std::isfinite(v))
+                                out << Key{int(std::lround(std::clamp(key->frames("when") * k, -double(kMaxFrames), double(kMaxFrames)))),
+                                       convert(v)};
                         return out;
                     };
                     if (id == "timeremap") {
@@ -545,12 +555,12 @@ Sequence readFcp7(const QByteArray& data)
                         if (const Node* p = param("variablespeed"); p && p->at("value") == "1") effectsLost << T("variable Geschwindigkeit");
                     } else if (id == "audiolevels") {
                         if (const Node* p = param("level")) {
-                            it.volumeDb = gainToDb(p->at("value").isEmpty() ? 1.0 : p->at("value").toDouble());
+                            it.volumeDb = gainToDb(finiteOr(p->at("value"), 1.0));
                             it.volumeKeys = keys(p, gainToDb);
                         }
                     } else if (id == "opacity") {
                         if (const Node* p = param("opacity")) {
-                            it.opacity = p->at("value").isEmpty() ? 100 : p->at("value").toDouble();
+                            it.opacity = finiteOr(p->at("value"), 100);
                             it.opacityKeys = keys(p, [](double v) { return v; });
                         }
                     } else if (id != "basic" && id != "audiopan" && !eff->at("name").isEmpty()) {
