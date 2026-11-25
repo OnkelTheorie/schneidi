@@ -308,6 +308,8 @@ private:
     bool m_mixerOnlyNext = false;
     std::shared_ptr<std::atomic<bool>> m_gradeBypass = std::make_shared<std::atomic<bool>>(false);
     std::shared_ptr<std::atomic<int>> m_qualifierMask = std::make_shared<std::atomic<int>>(0);
+    // The timeline's end with its sound (the preview renderer gets the picture tracks only: Picture::Options::timelineEnd)
+    std::shared_ptr<std::atomic<int>> m_timelineEnd = std::make_shared<std::atomic<int>>(0);
     Timeline m_gridContent;
     QVector<MulticamAngle> m_gridAngles;
     int m_gridColumns = 0, m_gridPage = 0;

@@ -450,7 +450,10 @@ void applyCustomFx(NodeCtx& ctx, const QString& id, const EffectDescriptor& d, B
     const QString code = ctx.text(filter ? QStringLiteral("e_chain") : QStringLiteral("e_code"));
     if (!CodeTrust::isTrusted(code)) return; // not confirmed by the user (core/CodeTrust.h): the picture passes
     if (filter) {
-        Custom::applyFilter(code, out.data(), out.w, out.h, seconds);
+        // At project pixels (ctx.scale: project -> output pixels), as on a clip (Custom::applyFilter)
+        const double k = ctx.scale > 0 ? ctx.scale : 1.0;
+        const QSize work(std::max(1, int(std::lround(out.w / k))), std::max(1, int(std::lround(out.h / k))));
+        Custom::applyFilter(code, out.data(), out.w, out.h, seconds, nullptr, work);
         return;
     }
     Custom::ShaderValues v;
@@ -518,7 +521,7 @@ bool evalFx(NodeCtx& ctx, Buf* out)
         QString s;
         return given(*p, &s) ? s : p->defaultValue.toString();
     };
-    VideoEffects::apply(id, out->data(), out->w, out->h, vp, ctx.frameNo);
+    VideoEffects::apply(id, out->data(), out->w, out->h, vp, ctx.frameNo, ctx.scale > 0 ? ctx.scale : 1.0);
     out->area = {};
     mixByMask(*out, *src, ctx.input("mask"));
     return true;

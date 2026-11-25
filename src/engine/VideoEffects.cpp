@@ -427,30 +427,90 @@ void halftone(uint8_t* rgba, int width, int height, double dot, double cyan, dou
             rgba[i * 4 + ch] = uint8_t((rgba[i * 4 + ch] * (255 - ink[n * ch + i]) + 127) / 255);
 }
 
-void noise(uint8_t* rgba, int width, int height, double amount, uint32_t seed)
+namespace {
+
+// The grain of project pixel `i` (row-major index in the project-scale picture), channel c: -3069..3069
+inline void grain(uint32_t i, uint32_t seed, int u[3])
+{
+    const uint32_t h1 = mix(i * 2654435761U ^ seed), h2 = mix(h1 ^ 0x68e31da4U), h3 = mix(h2 ^ 0x1b873593U);
+    for (int c = 0; c < 3; ++c) {
+        const int sh = c * 10;
+        u[c] = 2 * int(((h1 >> sh) & 1023) + ((h2 >> sh) & 1023) + ((h3 >> sh) & 1023)) - 3069;
+    }
+}
+
+// The project pixels [from, to) one picture pixel p covers at `scale` picture pixels per project pixel (at least one)
+inline void covered(int p, double scale, int& from, int& to)
+{
+    from = int(std::floor(p / scale + 1e-9));
+    to = std::max(from + 1, int(std::floor((p + 1) / scale + 1e-9)));
+}
+
+} // namespace
+
+void noise(uint8_t* rgba, int width, int height, double amount, uint32_t seed, double scale)
 {
     if (!rgba || width <= 0 || height <= 0 || amount <= 0) return;
     // Sum of three uniform values per channel (close to a Gaussian, like film grain); standard deviation 125 levels
     // per 1.0 of amount, as the frei0r plugin. u = -3069..3069 (odd steps), up to ±375 * amount levels
     const int k = int(std::lround(std::clamp(amount, 0.0, 1.0) * 375.0 * 65536 / 3069));
-    const size_t n = size_t(width) * height;
-    for (size_t i = 0; i < n; ++i, rgba += 4) {
-        const uint32_t h1 = mix(uint32_t(i) * 2654435761U ^ seed), h2 = mix(h1 ^ 0x68e31da4U), h3 = mix(h2 ^ 0x1b873593U);
-        for (int c = 0; c < 3; ++c) {
-            const int sh = c * 10;
-            const int u = 2 * int(((h1 >> sh) & 1023) + ((h2 >> sh) & 1023) + ((h3 >> sh) & 1023)) - 3069;
-            rgba[c] = uint8_t(std::clamp(rgba[c] + ((u * k + 32768) >> 16), 0, 255));
+    if (!(scale > 0) || std::abs(scale - 1.0) < 1e-6) { // one grain per pixel
+        const size_t n = size_t(width) * height;
+        for (size_t i = 0; i < n; ++i, rgba += 4) {
+            int u[3];
+            grain(uint32_t(i), seed, u);
+            for (int c = 0; c < 3; ++c) rgba[c] = uint8_t(std::clamp(rgba[c] + ((u[c] * k + 32768) >> 16), 0, 255));
+        }
+        return;
+    }
+    // Grain of the project pixels: the picture's width in project pixels numbers them as at scale 1
+    const int pw = std::max(1, int(std::lround(width / scale)));
+    std::vector<int> x0(size_t(width) + 1), x1(size_t(width) + 1);
+    for (int x = 0; x < width; ++x) covered(x, scale, x0[x], x1[x]);
+    for (int y = 0; y < height; ++y) {
+        int y0 = 0, y1 = 0;
+        covered(y, scale, y0, y1);
+        uint8_t* row = rgba + size_t(y) * width * 4;
+        for (int x = 0; x < width; ++x) {
+            long sum[3] = {0, 0, 0};
+            int n = 0;
+            for (int py = y0; py < y1; ++py)
+                for (int px = x0[x]; px < x1[x]; ++px, ++n) {
+                    int u[3];
+                    grain(uint32_t(int64_t(py) * pw + px), seed, u);
+                    for (int c = 0; c < 3; ++c) sum[c] += u[c];
+                }
+            for (int c = 0; c < 3; ++c) {
+                const int u = int(std::lround(double(sum[c]) / n));
+                row[x * 4 + c] = uint8_t(std::clamp(row[x * 4 + c] + ((u * k + 32768) >> 16), 0, 255));
+            }
         }
     }
 }
 
-void scanlines(uint8_t* rgba, int width, int height)
+void scanlines(uint8_t* rgba, int width, int height, double scale)
 {
     if (!rgba || width <= 0 || height <= 0) return;
-    for (int y = 1; y < height; y += 2) {
+    if (!(scale > 0) || std::abs(scale - 1.0) < 1e-6) { // every other pixel row
+        for (int y = 1; y < height; y += 2) {
+            uint8_t* row = rgba + size_t(y) * width * 4;
+            for (int x = 0; x < width; ++x)
+                for (int c = 0; c < 3; ++c) row[x * 4 + c] >>= 1;
+        }
+        return;
+    }
+    // Every other project row: a pixel row gets the share of odd project rows it covers at half brightness
+    for (int y = 0; y < height; ++y) {
+        const double top = y / scale, bottom = (y + 1) / scale;
+        double dark = 0;
+        for (int p = int(std::floor(top)); p < bottom; ++p)
+            if (p % 2 == 1) dark += std::min<double>(bottom, p + 1) - std::max<double>(top, p);
+        const double share = dark / (bottom - top);
+        if (share <= 1e-6) continue;
+        const int f = int(std::lround((1.0 - 0.5 * share) * 256)); // 128 = half: a full dark row is >> 1
         uint8_t* row = rgba + size_t(y) * width * 4;
         for (int x = 0; x < width; ++x)
-            for (int c = 0; c < 3; ++c) row[x * 4 + c] >>= 1;
+            for (int c = 0; c < 3; ++c) row[x * 4 + c] = uint8_t((row[x * 4 + c] * f) >> 8);
     }
 }
 
@@ -635,7 +695,7 @@ const Entry* entry(const QString& id)
 
 } // namespace
 
-bool apply(const QString& effectId, uint8_t* img, int w, int h, const Params& params, int64_t frameNo)
+bool apply(const QString& effectId, uint8_t* img, int w, int h, const Params& params, int64_t frameNo, double scale)
 {
     const Entry* e = entry(effectId);
     if (!e) return false;
@@ -663,9 +723,9 @@ bool apply(const QString& effectId, uint8_t* img, int w, int h, const Params& pa
     case Kind::Halftone: halftone(img, w, h, c.num("0", 0.4), c.num("1", 0.3), c.num("2", 0.45), c.num("3", 0.25)); break;
     case Kind::Noise:
         // a new pattern every frame, the same one for the same frame (preview = export)
-        noise(img, w, h, c.num("0", 0.2), mix(uint32_t(frameNo) * 0x9e3779b9U + 1));
+        noise(img, w, h, c.num("0", 0.2), mix(uint32_t(frameNo) * 0x9e3779b9U + 1), scale);
         break;
-    case Kind::Scanlines: scanlines(img, w, h); break;
+    case Kind::Scanlines: scanlines(img, w, h, scale); break;
     case Kind::NoSync: noSync(img, w, h, c.num("0", 0)); break;
     case Kind::Gradient: {
         GradientParams p;

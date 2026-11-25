@@ -1487,7 +1487,10 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
             if (!Picture::Custom::canRender(d.id, &why)) o["unavailable"] = why;
             if (d.id == QLatin1String(Picture::Custom::kFilterId))
                 o["note"] = "params.chain = an FFmpeg filter chain on the clip's picture (one linear chain, filters "
-                            "separated by ','; expressions see t = clip seconds; the size stays). Checked when set: "
+                            "separated by ','; expressions see t = clip seconds; the size stays). Sizes in the chain are project "
+                            "pixels: the chain sees the clip's picture at its size in the project (a 1920x1080 clip "
+                            "in a 1080p project: 1920x1080) in the preview and in every export size, so "
+                            "pixelize=w=24 or crop=1280:720 look the same everywhere. Checked when set: "
                             "bad chains and forbidden filters are refused with the reason";
             else
                 o["note"] = "params.code = " + Picture::Custom::shaderHelp()
