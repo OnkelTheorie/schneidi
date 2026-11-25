@@ -18,6 +18,7 @@
 #include "core/ShortPick.h"
 #include "core/StreamPresets.h"
 #include "core/TranscriptCut.h"
+#include "core/Vocabulary.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/Extensions.h"
 
@@ -73,7 +74,7 @@ std::optional<double> soundPeakDb(const QString& project, const QString& timelin
 } // namespace
 
 QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, const QString& language, Context& ctx,
-                             QStringList* voices)
+                             QStringList* voices, const QString& game)
 {
     Session view(project);
     if (!timeline.isEmpty() && timeline != QLatin1String("@current")) view.selectTimeline(timeline);
@@ -103,7 +104,7 @@ QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, co
     for (const int i : tracks)
         for (const auto& [file, stream] : TranscriptCut::missingTranscripts(tl, media, i)) {
             failIfCanceled();
-            const std::optional<QJsonObject> one = streamTranscript(file, stream, language, false, ctx);
+            const std::optional<QJsonObject> one = streamTranscript(file, stream, language, false, ctx, Vocabulary::gameTerms(game));
             MediaInfo* m = info(file);
             if (!one || !m) continue;
             MediaTranscript t;
@@ -159,11 +160,13 @@ QJsonArray shortFinishOps(const QString& project, const QString& timeline, const
             // Each voice track transcribed on its own (a quiet voice chat partner is lost in a mix with the
             // microphone), else the timeline's sound as `transcribe` hears it
             QStringList voices;
-            QJsonArray words = voiceCaptionWords(project, timeline, f.language, ctx, &voices);
+            QJsonArray words = voiceCaptionWords(project, timeline, f.language, ctx, &voices, f.game);
             int segments = 0;
             if (voices.isEmpty()) {
                 QJsonObject t{{"source", project}, {"timeline", timeline}, {"words", true}};
                 if (!f.language.isEmpty()) t["language"] = f.language;
+                if (const QStringList terms = Vocabulary::gameTerms(f.game); !terms.isEmpty())
+                    t["vocabulary"] = QJsonArray::fromStringList(terms);
                 try {
                     const QJsonObject tr = run("transcribe", t);
                     segments = int(tr["segments"].toArray().size());

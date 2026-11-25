@@ -88,10 +88,11 @@ QJsonObject applyTemplate(const Direction::Session& s, const QVector<const Direc
 QString timelineStamp(const QString& project, const QString& timeline);
 
 // The words of one audio stream of a file, transcribed alone (whisper through `transcribe`), cached per file, stream,
-// language and verbatim (AnalysisCache "speech-words"): {stream, language, words:[[from_ms, to_ms, text]…]}; no speech
-// = no words. nullopt = the file or stream cannot be read (not cached)
+// language, verbatim and word list (AnalysisCache "speech-words"): {stream, language, words:[[from_ms, to_ms, text]…]};
+// no speech = no words. nullopt = the file or stream cannot be read (not cached). vocabulary: words for whisper on top
+// of the settings' list (core/Vocabulary, e.g. a game's terms)
 std::optional<QJsonObject> streamTranscript(const QString& file, int stream, const QString& language, bool verbatim,
-                                            Context& ctx);
+                                            Context& ctx, const QStringList& vocabulary = {});
 // A stream of the player's microphone or of a voice chat (not the mix, not music), by its title
 bool voiceStream(const QString& title);
 
@@ -109,9 +110,10 @@ struct ShortFinish {
 // transcribed on its own (streamTranscript) and mapped onto the timeline, each phrase moved onto the sound of its
 // track (Captions::snapToSound), merged in time order, every word at its own time (Captions::mergeSpeakers):
 // [{from, to, text, speaker}] in timeline frames for op 'captions' (speaker n = voices[n]). *voices: the tracks'
-// names; empty (and no words) when the timeline has no voice track - then the timeline's sound is the source
+// names; empty (and no words) when the timeline has no voice track - then the timeline's sound is the source.
+// game ("cs2", …): its terms go to whisper with the word list (Vocabulary::gameTerms)
 QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, const QString& language, Context& ctx,
-                             QStringList* voices);
+                             QStringList* voices, const QString& game = {});
 // noteKeys (optional): the notes' fixed keys (Direction::noteText), in the order of notes, for a page to translate
 QJsonArray shortFinishOps(const QString& project, const QString& timeline, const ShortFinish& f, Context& ctx,
                           QJsonArray* done, QJsonArray* notes, QJsonArray* noteKeys = nullptr);

@@ -1625,6 +1625,10 @@ const QVector<Command>& commands()
           {"model", T::String, "large, turbo, small, base, tiny, parakeet or a model file (default: see quality, else "
                                "the best installed)"},
           {"words", T::Boolean, "also return every word with its time"},
+          {"vocabulary", T::Json, "names, slang, game terms whisper should spell like this: a list or comma text, "
+                                  "added to the word list of the app's settings (File > Settings > Transcription) for "
+                                  "this call. It biases the spelling, it does not make whisper hear a word; Parakeet "
+                                  "ignores it"},
           {"music", T::Boolean, "sung words and shouts in music (a song, a chant): without voice detection, which "
                                 "hears no speech there; slower, may hear words a bit wrong (\"cracker\" for \"Kraken\")"},
           {"srt", T::Path, "also write the segments as an SRT file"},

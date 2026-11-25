@@ -13,6 +13,7 @@
 class AiSettingsPage;
 class QCheckBox;
 class QComboBox;
+class QPlainTextEdit;
 class QLabel;
 class QLineEdit;
 class QPushButton;
@@ -53,6 +54,7 @@ public:
     QString timelineMomentum() const; // the glide after a flick: "low" (default), "normal", "off" (timeline/momentum)
     bool updateHint() const;  // look for new versions at the start (UpdateCheck::enabled)
     int backgroundThreads() const; // Background::chosenThreads (0 = automatic)
+    QStringList vocabulary() const; // the word list for speech recognition (Vocabulary::stored), one entry per line
     // Where "Save as" suggests a new project: off = next to its first clip; on = this folder (the user's choice)
     bool autoLinkNodes() const; // Compositing: new nodes linked at once (CompUi::autoLink)
     ZoomAnchor::Mode zoomAnchor() const; // Timeline tab: where wheel zoom stays put (ZoomAnchor::mode)
@@ -119,6 +121,7 @@ private:
     QComboBox* m_momentum = nullptr;
     QComboBox* m_startPage = nullptr;
     QComboBox* m_threads = nullptr;
+    QPlainTextEdit* m_vocabulary = nullptr;
     QCheckBox* m_ownFolder = nullptr;
     QComboBox* m_autosave = nullptr;
     QCheckBox* m_autoLink = nullptr;

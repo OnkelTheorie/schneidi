@@ -226,6 +226,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/ScriptAlign.h        src/core/ScriptAlign.cpp
     src/core/JumpCut.h            src/core/JumpCut.cpp
     src/core/Captions.h           src/core/Captions.cpp
+    src/core/Vocabulary.h         src/core/Vocabulary.cpp
     src/core/TimelineStory.h      src/core/TimelineStory.cpp
     src/core/Story.h              src/core/Story.cpp
     src/core/Voiceover.h          src/core/Voiceover.cpp

@@ -13,6 +13,7 @@
 #include "app/SettingsDialog.h"
 #include "app/TimelineSettingsPage.h"
 #include "core/Project.h"
+#include "core/Vocabulary.h"
 #include "ui/comp/CompShared.h"
 #include "app/StartTemplatesPage.h"
 #include "app/Theme.h"
@@ -136,6 +137,7 @@ void MainWindow::settingsDialog(int tab)
         QSettings().setValue("timeline/magneticMain", dlg.magneticMain());
         QSettings().setValue("timeline/clipDrag", dlg.clipDrag());
         QSettings().setValue("timeline/momentum", dlg.timelineMomentum());
+        Vocabulary::setStored(dlg.vocabulary());
     }
     applyCenterPlayhead();
     // The magnetic main track switched on here: V1's gaps close at once, as with its switch (setMagneticMainByUser)

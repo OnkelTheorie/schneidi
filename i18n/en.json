@@ -3937,5 +3937,9 @@
  "Lachen im Sprachkanal ({stream})": "laughter in the voice chat ({stream})",
  "Stimmen werden laut ({stream})": "voices get loud ({stream})",
  "Spiel: {game} (im Bild erkannt).": "Game: {game} (recognised in the picture).",
- "Nur {s} s Action (Minimum {min} s): Der Short bleibt kürzer, statt die Zeit vor den Momenten oder nach dem Tod des Spielers zu zeigen.": "Only {s} s of action (minimum {min} s): the short stays shorter rather than showing the time before the moments or after the player's death."
+ "Nur {s} s Action (Minimum {min} s): Der Short bleibt kürzer, statt die Zeit vor den Momenten oder nach dem Tod des Spielers zu zeigen.": "Only {s} s of action (minimum {min} s): the short stays shorter rather than showing the time before the moments or after the player's death.",
+ "Transkription": "Transcription",
+ "Wörterliste": "Word list",
+ "Ein Wort oder Ausdruck pro Zeile, z. B. Namen, Spitznamen, Slang": "One word or phrase per line, e.g. names, nicknames, slang",
+ "Whisper bekommt die Wörter als Starttext und schreibt sie dann eher so. Das hilft bei der Schreibweise, es erfindet keine Wörter, die nicht gesagt werden. Bei Spielen wie CS2 kommen ein paar Spielbegriffe von selbst dazu. Parakeet nutzt die Liste nicht.": "Whisper gets the words as its starting text and then tends to spell them like this. It helps with spelling, it does not make up words that are not said. For games like CS2 a few game terms are added on their own. Parakeet does not use the list."
 }

@@ -9,6 +9,7 @@
 #include "engine/AnalysisCache.h"
 #include "core/AppPaths.h"
 #include "core/Direction.h"
+#include "core/Vocabulary.h"
 #include "engine/Extensions.h"
 #include "cli/Live.h"
 #include "cli/Sandbox.h"
@@ -874,6 +875,29 @@ int main(int argc, char** argv)
                 std::printf("       voices %s\n", qPrintable(voices.join(", ")));
             CHECK(voices.contains("Mikrofon") && voices.contains("Discord") && speakers.size() == 2);
             for (int i = 1; i < words.size(); ++i) CHECK(words[i]["from"].toInt() >= words[i - 1]["from"].toInt());
+            // With a game: its terms go to whisper, so the transcripts are other ones (another cache key; the ones
+            // without a word list stay where they are)
+            const QString id = Vocabulary::cacheId(Vocabulary::gameTerms("cs2"));
+            CHECK(!id.isEmpty());
+            const auto putTerms = [&](int stream, const QJsonArray& w) {
+                AnalysisCache::put(AnalysisCache::key("speech-words", two,
+                                                      QJsonObject{{"language", ""}, {"stream", stream}, {"verbatim", false},
+                                                                  {"vocabulary", id}}, 1),
+                                   QJsonObject{{"stream", stream}, {"language", "de"}, {"words", w}});
+            };
+            putTerms(1, QJsonArray{QJsonArray{4100, 4400, "Einer"}, QJsonArray{4450, 4800, "Smoke?"}});
+            putTerms(2, QJsonArray{QJsonArray{5600, 6000, "Headshot."}});
+            QStringList gameVoices;
+            QStringList withTerms;
+            for (const QJsonValue& w : Cli::detail::voiceCaptionWords(made["project"].toString(), made["timeline"].toString(),
+                                                                     "", cctx, &gameVoices, "cs2"))
+                withTerms << w["text"].toString();
+            CHECK_EQ(withTerms.join(' '), QString("Einer Smoke? Headshot."));
+            QStringList again; // no game: the old transcripts
+            for (const QJsonValue& w : Cli::detail::voiceCaptionWords(made["project"].toString(), made["timeline"].toString(),
+                                                                     "", cctx, &gameVoices))
+                again << w["text"].toString();
+            CHECK_EQ(again.join(' '), QString("Einer soll? Heilige Scheiße. Crazy."));
         }
     }
 

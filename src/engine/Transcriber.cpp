@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/Transcriber.h"
 
+#include "core/Vocabulary.h"
+
 #include "core/I18n.h"
 #include "engine/Background.h"
 #include "engine/Bundle.h"
@@ -232,6 +234,7 @@ Transcriber::Transcriber(QObject* parent) : QObject(parent)
         }
         m_result.dropped += m_repeats;
         if (!m_prompt.isEmpty() && !m_request.verbatim) m_result.dropped += Transcript::dropPromptEcho(m_result.words, m_prompt);
+        if (!m_vocabularyText.isEmpty()) m_result.dropped += Transcript::dropPromptEcho(m_result.words, m_vocabularyText);
         Transcript::fitToSpeech(m_result.words, m_result.levels);
         const QString lang = m_request.language.isEmpty() ? QString("auto") : m_request.language;
         // A chosen language is what whisper wrote in; it reports "en" when it heard nothing. Parakeet reports none:
@@ -522,6 +525,27 @@ void Transcriber::runWhisper()
     m_prompt.clear();
     if (m_request.verbatim) m_prompt = verbatimPromptFor(m_language, fitsCodePage, &m_promptNote);
     else if (const QString p = punctuationPrompt(m_language); !p.isEmpty() && fitsCodePage(p)) m_prompt = p;
+    // The word list after it, as much as whisper reads (words the code page cannot hold left out)
+    m_vocabularyText.clear();
+    if (!m_request.vocabulary.isEmpty()) {
+        QStringList words, dropped;
+        for (const QString& w : m_request.vocabulary)
+            if (fitsCodePage(w)) words << w;
+            else dropped << w;
+        QStringList cut;
+        const QString base = m_prompt;
+        m_prompt = Vocabulary::prompt(base, words, Vocabulary::kMaxPromptTokens, &cut);
+        m_vocabularyText = m_prompt.mid(base.size()).trimmed();
+        QStringList notes;
+        if (!m_promptNote.isEmpty()) notes << m_promptNote;
+        if (!cut.isEmpty())
+            notes << QString("word list too long for whisper's starting text (about %1 tokens): %2 word(s) left out "
+                             "(%3)").arg(Vocabulary::kMaxPromptTokens).arg(cut.size()).arg(cut.mid(0, 5).join(", ") + (cut.size() > 5 ? ", …" : ""));
+        if (!dropped.isEmpty())
+            notes << QString("%1 word(s) of the word list left out: whisper cannot read their letters here (%2)")
+                         .arg(dropped.size()).arg(dropped.join(", "));
+        m_promptNote = notes.join("; ");
+    }
     if (!m_prompt.isEmpty()) args << "--prompt" << m_prompt;
     if (m_cpuOnly) args << "-ng";
     const QString gpu = m_cpuOnly ? QString() : Extensions::whisperGpuBackend();
@@ -619,6 +643,9 @@ void Transcriber::runParakeet()
     m_output.clear();
     m_prompt.clear(); // no starting text, no DTW: its own token times
     m_promptNote.clear();
+    m_vocabularyText.clear();
+    if (!m_request.vocabulary.isEmpty())
+        m_promptNote = QStringLiteral("Parakeet has no starting text: the word list was not used (whisper uses it)");
     m_usedDtw = false;
     m_clock.start();
     m_beat.start();
