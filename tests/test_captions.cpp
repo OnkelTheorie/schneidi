@@ -110,6 +110,42 @@ TranscriptCut::Word word(int from, int to, const QString& text)
     return w;
 }
 
+// ---- Two speakers transcribed on their own (the microphone and the voice chat of a game recording, 25.11.: the quiet
+// chat partner was missing from the captions of the mix): one list a phrase at a time in the order they begin; a phrase
+// that begins while the other one's runs follows right after it (its pace kept), no word dropped, short lines kept;
+// a caption never mixes the two ----
+void testMergeSpeakers()
+{
+    std::printf("merge speakers\n");
+    // 60 fps. Chat: "Heilige Scheiße." 3.9-5.0 s, "Direkt Headshot kassiert." 5.0-5.9 s, "Auch da?" 8.3 s;
+    // microphone: "Einer soll?" from 5.5 s - while the chat's second sentence is still spoken
+    const QVector<TranscriptCut::Word> chat{word(234, 260, "Heilige"), word(262, 300, "Scheiße."), word(300, 320, "Direkt"),
+                                            word(322, 340, "Headshot"), word(342, 354, "kassiert."), word(498, 510, "Auch"),
+                                            word(512, 524, "da?")};
+    const QVector<TranscriptCut::Word> mic{word(330, 345, "Einer"), word(347, 362, "soll?")};
+    const QVector<TranscriptCut::Word> all = Captions::mergeSpeakers({chat, mic}, 42);
+    QStringList got;
+    for (const TranscriptCut::Word& w : all) got << QString("%1:%2@%3-%4").arg(w.track).arg(w.text).arg(w.from).arg(w.spokenTo);
+    CHECK_EQ(got.join(" "), QString("0:Heilige@234-260 0:Scheiße.@262-300 0:Direkt@300-320 0:Headshot@322-340 "
+                                    "0:kassiert.@342-354 1:Einer@354-369 1:soll?@371-386 0:Auch@498-510 0:da?@512-524"));
+    // In time order (what op 'captions' sorts by), every word there
+    for (int i = 1; i < all.size(); ++i) CHECK(all[i].from >= all[i - 1].from);
+    CHECK_EQ(all.size(), chat.size() + mic.size());
+    // Captions: the speakers never in one cue, even without a sentence end between them
+    QVector<TranscriptCut::Word> noStop = all;
+    for (TranscriptCut::Word& w : noStop) w.text.remove('.').remove('?');
+    Captions::Options o;
+    o.maxWords = 6;
+    o.maxGapFrames = 36;
+    QStringList cues;
+    for (const SubtitleCue& c : Captions::fromWords(noStop, o)) cues << c.text;
+    CHECK_EQ(cues.join(" | "), QString("Heilige Scheiße Direkt Headshot kassiert | Einer soll | Auch da"));
+    // One speaker alone: unchanged
+    const QVector<TranscriptCut::Word> one = Captions::mergeSpeakers({chat}, 42);
+    CHECK_EQ(one.size(), chat.size());
+    CHECK(one.first().from == 234 && one.last().spokenTo == 524);
+}
+
 void testFromWords()
 {
     Captions::Options o;
@@ -914,6 +950,7 @@ int main(int argc, char** argv)
     testPop();
     testLines();
     testFromWords();
+    testMergeSpeakers();
     testEdits();
     testSpeed();
     testVtt();

@@ -19,12 +19,15 @@
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/Reframe.h"
+#include "engine/Engine.h"
 #include "engine/KillFeedLines.h"
 #include "engine/Snapshot.h"
 
 #include <QApplication>
 #include <QDir>
 #include <QFile>
+#include <QElapsedTimer>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QPainter>
 #include <QTemporaryDir>
@@ -648,6 +651,65 @@ void testCli(const QString& dir)
 
 } // namespace
 
+// ---- A recording whose game is not named: CS2 recognised by its kill feed lines staying in pictures 1 s apart (a
+// kill's line stays ~5 s); a desktop (windows with title bars, a task bar), a busy picture and line-like bands that
+// come and go (another game's picture) are none ----
+void testRecognise()
+{
+    std::printf("recognise\n");
+    const auto game = [](const std::function<QImage(double)>& at) {
+        int longest = 0;
+        const GameHud::Game* g = KillFeedLines::recognise(at, 30, 1.0, 40, 3, &longest);
+        return std::make_pair(g ? g->id : QString(), longest);
+    };
+    const auto plain = [] { return background(QColor(200, 170, 120), QColor(120, 90, 60)); };
+    // Lines from 10 to 15 s (a kill), none before or after
+    const auto withLines = [&](double s) {
+        QImage img = plain();
+        if (s >= 10 && s < 15) line(img, 75, 300), line(img, 109, 260);
+        return img;
+    };
+    auto r = game(withLines);
+    CHECK_EQ(r.first, QString("cs2"));
+    CHECK(r.second >= 4);
+    // A desktop: grey windows with title bars and a task bar, a white page
+    const auto desktop = [](double s) {
+        QImage img(1920, 1080, QImage::Format_RGB32);
+        img.fill(QColor(48, 52, 60));
+        QPainter p(&img);
+        p.fillRect(QRect(0, 1040, 1920, 40), QColor(30, 30, 34));                   // task bar
+        p.fillRect(QRect(200 + int(s) * 10, 60, 1700, 900), QColor(230, 230, 230)); // a window
+        p.fillRect(QRect(200 + int(s) * 10, 60, 1700, 31), QColor(70, 70, 76));     // its title bar, 31 px
+        for (int y = 120; y < 900; y += 34) p.fillRect(QRect(260 + int(s) * 10, y, 900, 12), QColor(40, 40, 40));
+        return img;
+    };
+    r = game(desktop);
+    CHECK(r.first.isEmpty());
+    std::printf("       desktop: longest run %d\n", r.second);
+    // A busy picture (no lines); line-like bands now and then, never three pictures in a row (another game)
+    r = game([&](double) { return background(QColor(90, 140, 60), QColor(30, 60, 20)); });
+    CHECK(r.first.isEmpty() && r.second == 0);
+    r = game([&](double s) { return int(s) % 3 == 1 ? withLines(12) : plain(); });
+    CHECK(r.first.isEmpty() && r.second == 1);
+    r = game([&](double s) { return int(s) == 7 || int(s) == 8 ? withLines(12) : plain(); });
+    CHECK(r.first.isEmpty() && r.second == 2);
+    // Real recordings to look at (SCHNEIDI_RECOGNISE_FILES="a.mkv:b.mkv"): what each gives
+    for (const QString& file : qEnvironmentVariable("SCHNEIDI_RECOGNISE_FILES").split(':', Qt::SkipEmptyParts)) {
+        Check::initEngine();
+        ProjectFormat f;
+        f.rate = {30, 1};
+        const MediaInfo info = Engine::probe(f, file);
+        const auto snap = Snapshot::Source::media(f, file);
+        QElapsedTimer clock;
+        clock.start();
+        int longest = 0;
+        const GameHud::Game* g = KillFeedLines::recognise([&](double sec) { return snap->frame(int(sec * 30), 1920); },
+                                                          info.length / 30.0, 1.0, 40, 3, &longest);
+        std::printf("       %s: %s (longest run %d, %lld ms)\n", qPrintable(QFileInfo(file).fileName()),
+                    g ? qPrintable(g->id) : "none", longest, qlonglong(clock.elapsed()));
+    }
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -664,6 +726,7 @@ int main(int argc, char** argv)
     testCompositingOff();
     testBaseOpacity();
     testReshape();
+    testRecognise();
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();

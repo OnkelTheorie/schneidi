@@ -1130,8 +1130,14 @@ void testFollowNewIds()
     e.deleteSelection();
     CHECK(!TimelineOps::findClip(p.timeline(), m.id));
     CHECK_EQ(followed(p.timeline()), right);
-    // A clip of another file under it is never followed instead: deleting the last piece leaves the shape as it was
-    p.edit("other", [&](Timeline& tl) { tl.video[0].clips << media(p.newClipId(), "/x/other.mp4", 5); });
+    // A clip of another file under it is never followed instead, nor another use of the same take far from it in
+    // the file (its graph has a node 2 too: ids are small per graph): deleting the last piece leaves the shape as it was
+    Clip far = trackedClip();
+    far.id = p.newClipId();
+    far.start = 100;
+    far.in += 5000;
+    far.out += 5000;
+    p.edit("other", [&](Timeline& tl) { tl.video[0].clips << media(p.newClipId(), "/x/other.mp4", 5) << far; });
     sel.set({right});
     e.deleteSelection();
     CHECK_EQ(followed(p.timeline()), right);

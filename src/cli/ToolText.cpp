@@ -106,10 +106,10 @@ const QHash<QString, Tool>& tools()
              "Subtitles are burned in only with subtitles:'burn'. GIF: e.g. height 480, fps 15.",
              {{"project"}, {"out"}, {"preset", "e.g. youtube-1080p, tiktok"},
               {"format", "",
-               {"h264", "h265", "av1", "vp9", "s264", "prores", "prores422", "proreslt", "proresproxy", "prores4444",
+               {"h264", "mp4", "webm", "h265", "av1", "vp9", "s264", "prores", "prores422", "proreslt", "proresproxy", "prores4444",
                 "dnxhr-sq", "dnxhr-hq", "dnxhr-hqx", "gif", "png", "tiff", "jpeg", "aac", "mp3", "opus", "wav", "aiff",
                 "flac", "alac", "srt", "vtt"}},
-              {"quality", "", {"high", "medium", "small", "web", "source"}},
+              {"quality", "", {"high", "medium", "small", "web", "source", "0", "1", "2", "3", "4"}},
               {"max_mb", "file size limit"},
               {"height"},
               {"fps"},
@@ -261,14 +261,8 @@ QJsonObject schema(const Command& cmd)
         if (p.name == "ops" && cmd.name == "edit") o["description"] = editOpsBrief();
         else if (brief.text.isEmpty()) o.remove("description");
         else o["description"] = brief.text;
-        // Times as text: seconds ("4.5s") are the safe way (a bare number is frames); normalize still takes numbers.
-        // Objects without the "or a text" form. Both shorter, and what an AI should send anyway
-        if (p.type == ParamType::Time) o["type"] = "string";
-        else if (p.type == ParamType::Times && p.name != "run") {
-            o["type"] = "array";
-            o["items"] = QJsonObject{{"type", p.name == "clips" ? "integer" : "string"}}; // clip ids, else times
-        }
-        else if (p.type == ParamType::Object) o["type"] = "object";
+        // The types stay those of the full schema: a validating client must not refuse what the server accepts and
+        // hands out itself (direct's session id 'd3-7f2a', frames from `info`); test_mcp_tool_size checks it
         out[p.name] = o;
     }
     s["properties"] = out;

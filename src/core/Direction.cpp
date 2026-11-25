@@ -44,7 +44,8 @@ const Text kReasons[] = {
     {"clip_end_loud", "the loudest moment at the end of the clip", nullptr,
      N_("Lauteste Stelle am Ende des Clips"), nullptr},
     {"voice_laughter", "laughter in the voice chat ({stream})", nullptr, N_("Lachen im Sprachkanal ({stream})"), nullptr},
-    {"voice_shout", "someone shouts ({stream})", nullptr, N_("Jemand ruft laut ({stream})"), nullptr},
+    // (not "a scream": on a gated voice stream, silence around every word, a loud exclamation is one to the rules)
+    {"voice_shout", "voices get loud ({stream})", nullptr, N_("Stimmen werden laut ({stream})"), nullptr},
 };
 
 const Text kNotes[] = {
@@ -54,6 +55,8 @@ const Text kNotes[] = {
      nullptr},
     {"running", "Analysis still running for {n} file(s): the suggestions use what is there so far.", nullptr,
      N_("Die Analyse läuft noch für {n} Datei(en): die Vorschläge nutzen, was schon da ist."), nullptr},
+    {"game_recognised", "Game: {game} (recognised in the picture).", nullptr, N_("Spiel: {game} (im Bild erkannt)."),
+     nullptr},
     {"no_moments", "Nothing stood out: the suggestions are the end of each recording.", nullptr,
      N_("Nichts ist aufgefallen: die Vorschläge sind das Ende jeder Aufnahme."), nullptr},
     {"fallback", "No highlight found: moments from sound events and picture changes instead.", nullptr,

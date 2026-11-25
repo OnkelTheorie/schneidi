@@ -333,6 +333,30 @@ Sample detect(const QImage& picture, const GameHud::Game& game)
     return detectView(v, g);
 }
 
+const GameHud::Game* recognise(const std::function<QImage(double)>& pictureAt, double length, double step, int maxCount,
+                               int run, int* longest)
+{
+    if (longest) *longest = 0;
+    if (!(length > 0) || !(step > 0) || maxCount <= 0) return nullptr;
+    const int count = std::clamp(int(length / step), 1, maxCount);
+    QVector<QImage> pictures;
+    for (int i = 0; i < count; ++i) pictures << pictureAt(length * (i + 0.5) / count);
+    for (const GameHud::Game& g : GameHud::games()) {
+        if (!canMeasure(g)) continue;
+        int best = 0, now = 0;
+        for (const QImage& p : pictures) {
+            now = detect(p, g).lines > 0 ? now + 1 : 0;
+            best = std::max(best, now);
+        }
+        if (longest) *longest = std::max(*longest, best);
+        if (best >= run) {
+            if (longest) *longest = best;
+            return &g;
+        }
+    }
+    return nullptr;
+}
+
 QString cacheDir() { return AppPaths::writable(QStandardPaths::CacheLocation) + "/killfeed"; }
 
 std::optional<Samples> measure(const QString& file, double from, double to, const QRectF& contentIn,

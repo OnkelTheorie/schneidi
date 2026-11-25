@@ -267,8 +267,9 @@ void keepFollowing(const Timeline& before, Timeline& after)
             const Clip* was = TimelineOps::findClip(before, gone, &ref);
             if (!was || ref.index >= after.tracks(ref.kind).size()) continue;
             const int node = c.title.shape.followNode;
+            // Only a piece of the gone clip itself (its source range touches or overlaps the gone one's): another use
+            // of the same take minutes away is not one, though its graph may have a node of the same (small) id
             const Clip* best = nullptr;
-            int bestDistance = INT_MAX;
             for (const Clip& o : after.track(ref).clips) {
                 if (o.mediaPath != was->mediaPath || o.speed != was->speed || o.reverse != was->reverse
                     || o.freeze != was->freeze || o.ramp != was->ramp)
@@ -277,9 +278,9 @@ void keepFollowing(const Timeline& before, Timeline& after)
                 CompGraph g;
                 if (!e || !Comp::graphOf(*e, &g) || !g.node(node)) continue;
                 const int distance = std::max({0, o.in - (was->out + 1), was->in - (o.out + 1)}); // (in the file)
-                if (distance < bestDistance) {
+                if (distance == 0) {
                     best = &o;
-                    bestDistance = distance;
+                    break;
                 }
             }
             if (best) repoint.insert(gone, best->id);

@@ -85,7 +85,14 @@ struct Options {
 // a beat), and lasts until the next word's beat
 QVector<TranscriptCut::Word> onBeats(const QVector<TranscriptCut::Word>& words, const QVector<int>& beats);
 // Cues with word times from timeline words (TranscriptCut::timelineWords): a cue ends after a sentence, before a long
-// pause or when it has maxWords; a comma after half of them is a good place too. ids stay 0.
+// pause, when it has maxWords or where the next word is another track's (another speaker); a comma after half of them
+// is a good place too. ids stay 0.
 QVector<SubtitleCue> fromWords(const QVector<TranscriptCut::Word>& words, const Options& options);
+// The words of several speakers (one voice track each, transcribed on its own) as one list for fromWords: each
+// speaker's words in phrases (a sentence end or a pause over `pauseFrames` closes one), the phrases in the order they
+// begin. A phrase that begins while another speaker's is still spoken follows right after it: moved back as a whole
+// (its own pace kept), never dropped - two people talking at once are read one after the other. Every word keeps its
+// speaker (index into `speakers`) in `track`, so a cue never mixes two of them.
+QVector<TranscriptCut::Word> mergeSpeakers(const QVector<QVector<TranscriptCut::Word>>& speakers, int pauseFrames);
 
 } // namespace Captions

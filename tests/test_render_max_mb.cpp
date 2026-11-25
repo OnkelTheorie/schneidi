@@ -9,6 +9,7 @@
 #include "check.h"
 
 #include "cli/Commands.h"
+#include "core/I18n.h"
 #include "core/Project.h"
 #include "core/RenderJob.h"
 #include "core/TargetSize.h"
@@ -118,6 +119,15 @@ void testPlan()
     std::printf("       %s\n", qPrintable(p.error));
     CHECK(p.error.contains("too small") && p.error.contains("360p") && p.error.contains("MB"));
     CHECK(!TargetSize::plan(input(9, 0)).ok);
+    CHECK(TargetSize::plan(input(9, 0)).empty && !p.empty); // nothing to render, not "too small"
+    // A tiny range with a huge limit: no int overflow, a rate the picture can use (at most ~1 bit per pixel)
+    for (const double seconds : {0.001, 0.04, 1.0}) {
+        const TargetSize::Plan big = TargetSize::plan(input(100000, seconds));
+        const TargetSize::Plan mid = TargetSize::plan(input(25, seconds));
+        std::printf("       %.3f s: 100000 MB -> %d kbit/s, 25 MB -> %d kbit/s\n", seconds, big.videoK, mid.videoK);
+        CHECK(big.ok && big.videoK > 0 && big.bitsPerPixel <= 1.0 + 1e-9);
+        CHECK(mid.ok && mid.videoK > 0 && mid.bitsPerPixel <= 1.0 + 1e-9);
+    }
     // Retry: lower, and lower the more it was over
     p = TargetSize::plan(input(9, 30));
     const int a = TargetSize::retryVideoK(p, 9300000), b = TargetSize::retryVideoK(p, 12000000);
@@ -377,6 +387,33 @@ void testDeliver(const QTemporaryDir& dir)
     std::printf("       queue: max 1.50 MB -> %.3f MB, %s\n", bytes / 1e6, qPrintable(done.message));
     CHECK(bytes > 0 && bytes <= 1500000);
     CHECK(plays(job.path));
+    // Still over the limit after the retry: the job says so (the CLI's fits:false); under it: nothing
+    {
+        const QString note = RenderQueue::sizeMissNote(job, p, 2600000);
+        std::printf("       %s\n", qPrintable(note));
+        CHECK(note.contains(QLocale().toString(1.5, 'g', 4)) && note.contains(QLocale().toString(2.6, 'f', 2)));
+        CHECK(RenderQueue::sizeMissNote(job, p, bytes).isEmpty());
+        RenderJob plain = job;
+        plain.settings.maxMb = 0;
+        CHECK(RenderQueue::sizeMissNote(plain, p, 2600000).isEmpty());
+    }
+    // An empty in/out range: the exporter's reason, not "does not fit in 1.5 MB"
+    {
+        RenderJob empty = job;
+        empty.id = 2;
+        empty.path = dir.filePath("empty.mp4");
+        empty.inOut = true;
+        empty.from = 400;
+        empty.to = 450;
+        p.setRenderQueue({empty});
+        RenderQueue q2(&p);
+        q2.start();
+        CHECK(waitFor(q2));
+        const RenderJob failed = p.renderQueue().value(0);
+        std::printf("       empty range: %s\n", qPrintable(failed.message));
+        CHECK(failed.status == RenderStatus::Failed);
+        CHECK_EQ(failed.message, T("Der In/Out-Bereich enthält nichts."));
+    }
 }
 
 } // namespace

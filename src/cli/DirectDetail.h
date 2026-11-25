@@ -7,6 +7,7 @@
 #include "core/Direction.h"
 
 #include <QJsonArray>
+#include <QImage>
 #include <QJsonObject>
 #include <QString>
 #include <QStringList>
@@ -36,6 +37,18 @@ struct DirectMoment {
 // The player's deaths in samples of the middle of a CS2 picture (mean R, G, B each, `rate` per second): the red
 // tint over everything that fades into a black screen -> [{s: the tint begins, end_s: where a moment ends}]
 QJsonArray deathScreensOf(const std::vector<std::array<double, 3>>& rgb, int rate);
+
+// Where the game picture ends at the end of a recording (the recorder stopped from the task bar: its last seconds
+// show the desktop): pictures `rate` per second from `firstS` on; the end is a hard change of the whole picture after
+// which it stays (nearly) still for at least 1 s with at most 1 s after that (the recorder's stop may move it once
+// more), or still up to the last picture (at least 0.2 s) - a desktop, a window, a menu. Changes from one still
+// picture to another (a second window) belong to the tail too. -1 = the game goes on to the end
+double gameEndOf(const QVector<QImage>& pictures, double firstS, int rate);
+
+// The game of recordings that do not name it (a clip tool's "Desktop_clip_…"): the first of up to `upTo` files whose
+// pictures show a known game's kill feed lines staying (KillFeedLines::recognise), confirmed by the player's own kills
+// in it (CS2: their red frame, as `highlights` counts them). Per file in AnalysisCache. Empty = none recognised
+QString gameInPicture(const QStringList& files, Context& ctx, int upTo = 3);
 
 // The moments of one file (args: file, project?, game: id or "none", no_index?): its material line, the highlights'
 // candidates (best first, as `highlights` gives them) and, for material that is no game, the moments of sound events
@@ -74,6 +87,14 @@ QJsonObject applyTemplate(const Direction::Session& s, const QVector<const Direc
 // The timeline as it is now, as a fingerprint (its clips): ranges and words measured on it fit only that state
 QString timelineStamp(const QString& project, const QString& timeline);
 
+// The words of one audio stream of a file, transcribed alone (whisper through `transcribe`), cached per file, stream,
+// language and verbatim (AnalysisCache "speech-words"): {stream, language, words:[[from_ms, to_ms, text]…]}; no speech
+// = no words. nullopt = the file or stream cannot be read (not cached)
+std::optional<QJsonObject> streamTranscript(const QString& file, int stream, const QString& language, bool verbatim,
+                                            Context& ctx);
+// A stream of the player's microphone or of a voice chat (not the mix, not music), by its title
+bool voiceStream(const QString& title);
+
 // What `short` does after its cut, on its vertical timeline: word captions (style karaoke|word|off; whisper when
 // installed - never installed from here) and effect sounds (sfx 'mild': whooshes on the cuts, hits on the kills of
 // `game`). shortFinishOps measures everything (speech, the sound's peak, the kill feed) and answers the ops, so the app
@@ -84,6 +105,12 @@ struct ShortFinish {
     QString game;     // empty = none
     QString language; // empty = detect
 };
+// Word captions of a timeline's voice tracks (audible tracks of microphone or voice chat streams), each (file, stream)
+// transcribed on its own (streamTranscript) and mapped onto the timeline, merged in time order a phrase at a time
+// (Captions::mergeSpeakers): [{from, to, text, speaker}] in timeline frames for op 'captions'. *voices: the tracks'
+// names; empty (and no words) when the timeline has no voice track - then the timeline's sound is the source
+QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, const QString& language, Context& ctx,
+                             QStringList* voices);
 // noteKeys (optional): the notes' fixed keys (Direction::noteText), in the order of notes, for a page to translate
 QJsonArray shortFinishOps(const QString& project, const QString& timeline, const ShortFinish& f, Context& ctx,
                           QJsonArray* done, QJsonArray* notes, QJsonArray* noteKeys = nullptr);

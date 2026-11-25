@@ -1050,10 +1050,12 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         job.settings = p->settings;
         job.preset = p->name;
     }
-    QString formatId = canonicalFormatId(a.contains("format") ? a["format"].toString().trimmed() : job.settings.format);
+    // Format ids are lower case ("H264" from an AI is h264)
+    QString formatId =
+        canonicalFormatId((a.contains("format") ? a["format"].toString() : job.settings.format).trimmed().toLower());
     // Containers named as the format (an AI asked for "mp4"): their usual codec
     QString formatNote;
-    if (const QString c = formatId.toLower(); c == "mp4" || c == "webm") {
+    if (const QString c = formatId; c == "mp4" || c == "webm") {
         formatId = c == "mp4" ? "h264" : "vp9";
         formatNote = QString("format %1 read as %2 (formats name the codec; %2 writes .%1)").arg(c, formatId);
     }
@@ -1183,7 +1185,7 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
     }
     if (a.contains("audio_bitrate")) job.settings.audioBitrateK = std::clamp(a["audio_bitrate"].toInt(), 32, 512);
     if (a.contains("subtitles")) {
-        const int i = QStringList{"none", "burn", "srt", "vtt"}.indexOf(a["subtitles"].toString());
+        const int i = QStringList{"none", "burn", "srt", "vtt"}.indexOf(a["subtitles"].toString().trimmed().toLower());
         if (i < 0)
             fail("BAD_ARGUMENT", "subtitles must be none, burn (into the picture), srt or vtt (file next to the video)");
         job.settings.subtitles = i;

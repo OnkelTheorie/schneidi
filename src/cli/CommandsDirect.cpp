@@ -18,6 +18,7 @@
 #include "core/RenderJob.h"
 #include "core/ShortPick.h"
 #include "core/StreamPresets.h"
+#include "engine/AudioAnalysis.h"
 #include "engine/Extensions.h"
 
 #include <QDateTime>
@@ -33,6 +34,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 
 namespace Cli::detail {
 
@@ -191,6 +193,13 @@ Direction::Suggestion suggestionOf(const ShortPick::Moment& m, const QVector<Dir
     return s;
 }
 
+// How far a recording's moments may reach: its length, or where its game picture ends (the desktop in its last seconds)
+double usableLength(const Direction::Material& m)
+{
+    const double end = m.analysis["game_end_s"].toDouble(-1);
+    return end > 0 && end < m.length ? end : m.length;
+}
+
 // bounded (recipe short): each moment within its lo/hi - from shortly before its first hit to a little after its last
 // one or the player's death - and growing only inside them
 QVector<ShortPick::Moment> asMoments(const QVector<DirectMoment>& list, bool bounded = false)
@@ -308,7 +317,7 @@ void suggestShort(Direction::Session& s, const CollectedMoments& found, const QS
     const bool hookBest = o["hook"].toString("best").trimmed().toLower() != QLatin1String("chronological");
 
     QVector<double> durations;
-    for (const Direction::Material& m : s.material) durations << m.length;
+    for (const Direction::Material& m : s.material) durations << usableLength(m);
     // The highlights first (as `short` always took them); without any, the sound events and picture changes
     QVector<DirectMoment> source = found.highlights;
     std::stable_sort(source.begin(), source.end(),
@@ -396,7 +405,7 @@ void suggestHighlights(Direction::Session& s, const CollectedMoments& found, con
     if (transitions != QLatin1String("cut") && transitions != QLatin1String("soft"))
         fail("BAD_ARGUMENT", "transitions must be cut or soft");
     QVector<double> durations;
-    for (const Direction::Material& m : s.material) durations << m.length;
+    for (const Direction::Material& m : s.material) durations << usableLength(m);
     // Everything that stands out counts here (holiday clips: laughter, cheering, movement, loud)
     // (not the end of a replay clip: a fallback of recipe short; this recipe offers the ends when few stood out)
     QVector<DirectMoment> all;
@@ -616,13 +625,58 @@ bool sameProject(const QString& a, const QString& b)
     return key(a) == key(b);
 }
 
+// The speech level of a voice stream in the moments used (dB, the power of the 0.1 s blocks the voice detection hears
+// words in); nullopt = no words in them (a stream that only breathes or hums is never raised)
+std::optional<double> speechLevelDb(const QString& file, int stream, const QVector<const Direction::Suggestion*>& used)
+{
+    double power = 0;
+    int blocks = 0;
+    for (const Direction::Suggestion* x : used) {
+        failIfCanceled();
+        std::vector<bool> speech;
+        const auto levels = AudioAnalysis::fileBlockLevels(file, stream, x->from, x->to, 0.1, &speech);
+        if (!levels) continue;
+        for (size_t i = 0; i < levels->size() && i < speech.size(); ++i)
+            if (speech[i] && (*levels)[i] > -90) {
+                power += std::pow(10.0, (*levels)[i] / 10);
+                ++blocks;
+            }
+    }
+    if (blocks < 3) return std::nullopt; // (under 0.3 s of words: too little to tell)
+    return 10 * std::log10(power / blocks);
+}
+
+// The voices placed brought to one level, per recording (its microphone and its voice chat, recorded together): each
+// up to the loudest of them (at most kVoiceRaiseMaxDb; under 1 dB left as it is), only voices with words in the
+// moments. Not across recordings: one shout in another clip would set every voice there. *said: what was raised
+constexpr double kVoiceRaiseMaxDb = 12;
+void levelVoices(QJsonArray& voiceRefs, QStringList* said)
+{
+    QHash<QString, double> loudest; // per recording
+    for (const QJsonValue& v : voiceRefs)
+        if (v["level_db"].isDouble())
+            loudest[v["media"].toString()] = std::max(loudest.value(v["media"].toString(), -200.0), v["level_db"].toDouble());
+    for (int i = 0; i < voiceRefs.size(); ++i) {
+        QJsonObject v = voiceRefs[i].toObject();
+        if (!v["level_db"].isDouble()) continue;
+        const double gain = std::min(kVoiceRaiseMaxDb, loudest.value(v["media"].toString()) - v["level_db"].toDouble());
+        if (gain < 1) continue;
+        v["gain_db"] = std::round(gain * 10) / 10;
+        voiceRefs[i] = v;
+        *said << QString("%1 +%2 dB (%3)")
+                     .arg(v["name"].toString().isEmpty() ? QString("stream %1").arg(v["stream"].toInt()) : v["name"].toString())
+                     .arg(v["gain_db"].toDouble())
+                     .arg(QFileInfo(v["media"].toString()).fileName());
+    }
+}
+
 // Sound of the recordings: audio_stream 'auto' (default: the game streams of game material with several streams,
 // plus each voice stream - microphone, voice chat - that is heard in a used moment of its recording), 'game' (only
 // the game streams, as before 0.26), 'all', or numbers/names - as `short` always chose (per file: undefined = all).
-// *voiced: per recording the voice streams placed and why
+// *voiced: per recording the voice streams placed and why; *gameRefs/*voiceRefs: the streams placed ({media, stream})
 QVector<QJsonValue> soundStreams(const Direction::Session& s, const QString& game, QStringList* said,
                                  const QVector<const Direction::Suggestion*>& used, QStringList* dropped,
-                                 QStringList* voiced, QStringList* gameNames, QStringList* voiceNames)
+                                 QStringList* voiced, QJsonArray* gameRefs, QJsonArray* voiceRefs)
 {
     const QString choice = s.options.contains("audio_stream") ? s.options["audio_stream"].toVariant().toString().trimmed()
                                                               : QString(s.recipe == QLatin1String("short") ? "auto" : "game");
@@ -668,8 +722,12 @@ QVector<QJsonValue> soundStreams(const Direction::Session& s, const QString& gam
         out[i] = list;
         // Only the recordings in the cut are named (not a switched-off one, not one without a moment)
         if (mine.isEmpty()) continue;
-        for (int k : g) if (!gameNames->contains(names[k])) *gameNames << names[k];
-        for (int k : voices) if (!voiceNames->contains(names[k])) *voiceNames << names[k];
+        for (int k : g) *gameRefs << QJsonObject{{"media", s.material[i].file}, {"stream", k}};
+        for (int k : voices) {
+            QJsonObject ref{{"media", s.material[i].file}, {"stream", k}, {"name", names[k]}};
+            if (const std::optional<double> level = speechLevelDb(s.material[i].file, k, mine)) ref["level_db"] = *level;
+            *voiceRefs << ref;
+        }
         *said << QString("%1: %2").arg(QFileInfo(s.material[i].file).fileName(), kept.join(", "));
         if (!heardIn.isEmpty())
             *voiced << QString("%1: %2").arg(QFileInfo(s.material[i].file).fileName(), heardIn.join(", "));
@@ -744,6 +802,12 @@ Direction::Session directSuggest(const QJsonObject& a, Context& ctx, CollectedMo
         fail("BAD_ARGUMENT", "reframe must be auto, center or fit");
     levelTarget(s.options); // checked now, not only when applying
     if (s.recipe == QLatin1String("short")) shortAccents(s.options);
+    // A game neither given nor in the file names: looked for in the picture (its kill feed), kept in the session
+    if (!s.options.contains("game") && gameOf(s.options, files) == QLatin1String("none"))
+        if (const QString seen = gameInPicture(files, ctx); !seen.isEmpty()) {
+            s.options["game"] = seen;
+            s.notes << note("game_recognised", {{"game", seen}});
+        }
     const QString game = gameOf(s.options, files);
     Context sub;
     sub.cancel = ctx.cancel;
@@ -870,6 +934,8 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
             if (&b != a && b.on && b.file == a->file && b.from < a->to && a->from < b.to) {
                 a->from = std::min(a->from, b.from);
                 a->to = std::max(a->to, b.to);
+                for (const double h : b.hits) // (b's hits keep their punch)
+                    if (!a->hits.contains(h)) a->hits << h;
                 b.on = false;
             }
     }
@@ -961,14 +1027,19 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
         created = true;
         done << QString("new project %1 (template %2)").arg(project, n["template"].toString());
     }
-    QStringList soundSaid, soundDropped, voiced, gameNames, voiceNames;
-    const QVector<QJsonValue> soundOf = soundStreams(s, game, &soundSaid, list, &soundDropped, &voiced, &gameNames,
-                                                     &voiceNames);
+    QStringList soundSaid, soundDropped, voiced;
+    QJsonArray gameRefs, voiceRefs;
+    const QVector<QJsonValue> soundOf = soundStreams(s, game, &soundSaid, list, &soundDropped, &voiced, &gameRefs,
+                                                     &voiceRefs);
     if (!soundSaid.isEmpty())
         done << QString("sound: the game streams (%1)").arg(soundSaid.join("; "));
     if (!voiced.isEmpty())
         done << QString("sound: voices heard in the moments placed too, the game sound ducked 6 dB under them (%1)")
                     .arg(voiced.join("; "));
+    // The quieter voices up to the loudest (a voice chat partner far under the microphone), before the duck
+    QStringList raised;
+    levelVoices(voiceRefs, &raised);
+    if (!raised.isEmpty()) done << QString("sound: voices leveled to the loudest one: %1").arg(raised.join("; "));
     // Said on its own, not only inside `done`: voice chat and the microphone are not in the video
     if (!soundDropped.isEmpty()) {
         soundDropped.removeDuplicates();
@@ -1038,9 +1109,10 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
             from = to;
         }
     }
-    // The voices placed: the game sound (the bed) a little under them while they speak
-    if (!voiceNames.isEmpty() && !gameNames.isEmpty())
-        ops << QJsonObject{{"op", "duck"}, {"track", gameNames.join(',')}, {"by", voiceNames.join(',')}, {"amount_db", -6}};
+    // The voices placed: the game sound (the bed) a little under them while they speak - by the streams placed, not by
+    // their names (an unplayable stream is not placed, an untitled one's name depends on the UI language)
+    if (!voiceRefs.isEmpty() && (!gameRefs.isEmpty() || !raised.isEmpty()))
+        ops << QJsonObject{{"op", "_voice_mix"}, {"game", gameRefs}, {"voice", voiceRefs}, {"amount_db", -6}};
     QString result = cut;
     if (isShort) {
         // The vertical copy, every clip following its subject; game footage keeps its kill feed readable at the top
@@ -1277,6 +1349,55 @@ void addDirectOps(QVector<OpDef>& ops)
                      }
                  },
                  {"files"}};
+    // Hidden too: the voices placed in a short brought to one level and the game sound ducked under them ({game:
+    // [{media, stream}], voice:[{media, stream, gain_db?}], amount_db}). The clips are found by their recording and
+    // stream; a duck that finds nothing or fails is left out with a note - it never fails the cut
+    ops << OpDef{"_voice_mix", {}, {}, {},
+                 [](Session& s, const QJsonObject& op) {
+                     const auto placed = [](const Clip& c, const QJsonArray& refs) {
+                         return std::any_of(refs.begin(), refs.end(), [&](const QJsonValue& r) {
+                             return absolute(r["media"].toString()) == c.mediaPath && r["stream"].toInt() == c.audioStream;
+                         });
+                     };
+                     const QJsonArray gameRefs = op.value("game").toArray(), voiceRefs = op.value("voice").toArray();
+                     // The quieter voices up (clip volume), before the duck measures them
+                     for (const QJsonValue& r : voiceRefs) {
+                         if (!r["gain_db"].isDouble()) continue;
+                         QJsonArray ids;
+                         for (const Track& t : s.project.timeline().audio)
+                             for (const Clip& c : t.clips)
+                                 if (placed(c, QJsonArray{r})) ids << c.id;
+                         if (!ids.isEmpty())
+                             applyOp(s, QJsonObject{{"op", "volume"}, {"clips", ids}, {"db", r["gain_db"].toDouble()}});
+                     }
+                     if (gameRefs.isEmpty()) return;
+                     const Timeline& tl = s.project.timeline();
+                     QJsonArray game;
+                     QStringList voice;
+                     for (int i = 0; i < tl.audio.size(); ++i) {
+                         bool hasGame = false, hasVoice = false;
+                         for (const Clip& c : tl.audio[i].clips) {
+                             if (placed(c, gameRefs)) {
+                                 game << c.id;
+                                 hasGame = true;
+                             } else if (placed(c, voiceRefs)) {
+                                 hasVoice = true;
+                             }
+                         }
+                         if (hasVoice && !hasGame) voice << QString("A%1").arg(i + 1);
+                     }
+                     if (game.isEmpty() || voice.isEmpty()) {
+                         s.notes << "the game sound is not ducked under the voices: the cut has no track of each";
+                         return;
+                     }
+                     try {
+                         applyOp(s, QJsonObject{{"op", "duck"}, {"clips", game}, {"by", voice.join(',')},
+                                                {"amount_db", op.value("amount_db").toDouble(-6)}});
+                     } catch (const Error& e) {
+                         s.notes << "the game sound is not ducked under the voices: " + e.message;
+                     }
+                 },
+                 {"game", "voice", "amount_db"}};
 }
 
 } // namespace Cli::detail

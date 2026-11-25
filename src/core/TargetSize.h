@@ -22,6 +22,8 @@ inline constexpr int kAudioMinK = 64;
 inline constexpr double kAudioShare = 0.2;
 // Below this the encoders make mush: a video under it says so (`poor`)
 inline constexpr int kMinVideoK = 30;
+// Above this many bits per pixel and frame more rate buys nothing (a huge limit for a short range: the rate stops here)
+inline constexpr double kMaxBitsPerPixel = 1.0;
 
 // A format with a bit rate (video with a quality choice: H.264, H.265, AV1, VP9, s264). Else why not (English, for the
 // CLI's BAD_ARGUMENT), empty when it takes one
@@ -43,6 +45,7 @@ struct Input {
 struct Plan {
     bool ok = false;
     QString error;          // !ok: why (English, the CLI's BAD_ARGUMENT)
+    bool empty = false;     // !ok because there is nothing to render (empty range or size), not because it is too small
     int videoK = 0;         // video bit rate to aim at (kbit/s)
     int audioK = 0;         // sound bit rate (kbit/s), 0 = no sound
     QSize size;             // output size (scaled down or as given)
