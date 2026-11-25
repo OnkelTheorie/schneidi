@@ -694,6 +694,11 @@ int main(int argc, char** argv)
         CHECK(throws([] { readEdl("001  AX       A65   C        00:00:00:00 00:00:01:00 01:00:00:00 01:00:01:00\n", {25, 1}); }));
         CHECK_EQ(readEdl("001  AX       A64   C        00:00:00:00 00:00:01:00 01:00:00:00 01:00:01:00\n", {25, 1}).audio.size(),
                  qsizetype(64));
+        // "A1" (the first audio track numbered) is read like "A" (the event was dropped)
+        {
+            const Seq a1 = readEdl("001  AX       A1    C        00:00:00:00 00:00:01:00 01:00:00:00 01:00:01:00\n", {25, 1});
+            CHECK(a1.audio.size() == 1 && a1.audio[0].items.size() == 1 && a1.video.isEmpty());
+        }
         // A dissolve of 10^12 frames (its end overflowed)
         CHECK(throws([&cut] {
             readEdl(cut + "002  AX       V     D    999999999999 00:00:00:00 00:00:01:00 01:00:01:00 01:00:02:00\n", {25, 1});
