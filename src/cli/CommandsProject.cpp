@@ -168,6 +168,35 @@ QJsonObject changedJson(const QJsonObject& before, const QJsonObject& after)
     return j;
 }
 
+// An effect's parameters at their defaults left out of an edit's answer (an accent's flash added a grade with all 22
+// neutral values; `info` still shows every value, `effects` with the id the defaults)
+QJsonObject withoutDefaultParams(QJsonObject clip)
+{
+    if (!clip["effects"].isArray()) return clip;
+    QJsonArray fx = clip["effects"].toArray();
+    for (QJsonValueRef v : fx) {
+        QJsonObject eo = v.toObject();
+        const EffectDescriptor* d = EffectRegistry::find(eo["effect"].toString());
+        if (!d || !eo["params"].isObject()) continue;
+        QJsonObject params = eo["params"].toObject();
+        for (const QString& key : params.keys()) {
+            const EffectParam* p = EffectRegistry::findParam(*d, key);
+            if (!p || !p->defaultValue.isValid()) continue;
+            const QJsonValue def = p->defaultValue.typeId() == QMetaType::QColor
+                                       ? QJsonValue(p->defaultValue.value<QColor>().name())
+                                       : QJsonValue::fromVariant(p->defaultValue);
+            const QJsonValue now = params[key];
+            if (now == def || (now.isDouble() && def.isDouble() && qFuzzyCompare(1 + now.toDouble(), 1 + def.toDouble())))
+                params.remove(key);
+        }
+        if (params.isEmpty()) eo.remove("params");
+        else eo["params"] = params;
+        v = eo;
+    }
+    clip["effects"] = fx;
+    return clip;
+}
+
 QJsonObject changesJson(const QMap<QString, Shown>& before, const QMap<QString, Shown>& after, int shown)
 {
     QVector<Shown> added, changed, removed;
@@ -180,21 +209,41 @@ QJsonObject changesJson(const QMap<QString, Shown>& before, const QMap<QString, 
     for (auto it = before.begin(); it != before.end(); ++it)
         if (!after.contains(it.key()))
             removed << Shown{it.value().sequence, {{"id", it.value().json["id"]}, {"track", it.value().json["track"]}}};
-    const auto list = [shown](const QVector<Shown>& items) {
+    // A clip added with linked partners (a file with 5 sound streams: 6 clips) repeated the same media, times and
+    // names in each: a partner after the first comes as its id, track and what differs, same_as = the first one's id
+    QHash<QString, QJsonObject> firstOfLink;
+    const auto partnerOf = [&firstOfLink](const Shown& s) -> QJsonObject {
+        const QJsonValue link = s.json["link"];
+        if (!link.isDouble()) return s.json;
+        const QString key = QString("%1/%2").arg(s.sequence).arg(link.toInt());
+        const auto first = firstOfLink.constFind(key);
+        if (first == firstOfLink.constEnd()) {
+            firstOfLink.insert(key, s.json);
+            return s.json;
+        }
+        QJsonObject j{{"id", s.json["id"]}, {"track", s.json["track"]}, {"same_as", (*first)["id"]}};
+        for (auto it = s.json.begin(); it != s.json.end(); ++it)
+            if (!j.contains(it.key()) && first->value(it.key()) != it.value()) j[it.key()] = it.value();
+        for (auto it = first->begin(); it != first->end(); ++it)
+            if (!s.json.contains(it.key())) j[it.key()] = QJsonValue::Null;
+        return j;
+    };
+    const auto list = [shown](const QVector<Shown>& items, const std::function<QJsonObject(const Shown&)>& shape) {
         QJsonArray out;
         const bool brief = items.size() > 40;
         for (const Shown& s : items) {
-            QJsonObject j = s.json;
-            if (brief) j = QJsonObject{{"id", j["id"]}, {"track", j["track"]}, {"start", j["start"]}, {"end", j["end"]}};
+            QJsonObject j = withoutDefaultParams(shape(s));
+            if (brief) j = QJsonObject{{"id", j["id"]}, {"track", j["track"]}, {"start", s.json["start"]}, {"end", s.json["end"]}};
             if (s.sequence != shown) j["timeline"] = s.sequence;
             out << j;
         }
         return out;
     };
     QJsonObject o;
-    if (!added.isEmpty()) o["added"] = list(added);
-    if (!changed.isEmpty()) o["changed"] = list(changed);
-    if (!removed.isEmpty()) o["removed"] = list(removed);
+    const auto asIs = [](const Shown& s) { return s.json; };
+    if (!added.isEmpty()) o["added"] = list(added, partnerOf);
+    if (!changed.isEmpty()) o["changed"] = list(changed, asIs);
+    if (!removed.isEmpty()) o["removed"] = list(removed, asIs);
     return o;
 }
 

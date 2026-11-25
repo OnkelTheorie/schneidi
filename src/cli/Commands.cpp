@@ -1107,8 +1107,10 @@ const QVector<Command>& commands()
          cmdExportTimeline},
         {"edit", "Apply edit operations to a project and save it (a backup of the previous state is kept). If the "
                  "project is open in the schneidi app, the app's project changes instead (one undo step, not saved). "
-                 "Answer: 'changes' (added clips and subtitles as `info` shows them, with their new ids; changed "
-                 "ones with id, track, start, end and the values that changed, keyframes as a count per parameter; "
+                 "Answer: 'changes' (added clips and subtitles as `info` shows them, with their new ids - a linked partner "
+                 "added with them as its id, track and what differs, same_as = the clip it equals otherwise; changed "
+                 "ones with id, track, start, end and the values that changed, keyframes as a count per parameter, effect "
+                 "parameters at their default left out; "
                  "removed ids) and the timeline as a summary. Plan first (the user decides): plan:true changes "
                  "nothing and answers plan {id, steps:[{n, op, why, summary, changes}]}; then edit with plan_id and "
                  "run:[step numbers] or \"all\" (one edit, one undo step) or discard:true. A plan is void once the "
