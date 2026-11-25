@@ -345,8 +345,14 @@ void TimelinePanel::setCompact(bool on)
 
 void TimelinePanel::setPhoneRow(bool on, const QList<QAction*>& keep)
 {
-    for (QWidget* w : std::as_const(m_phoneHidden))
-        if (w) w->show();
+    // (Slip and slide stay hidden in the compact form, also when this row hid them before setCompact did)
+    const bool compact = m_barScroll != nullptr;
+    for (QWidget* w : std::as_const(m_phoneHidden)) {
+        if (!w) continue;
+        const QString id = w->objectName();
+        if (compact && (id == QLatin1String("tool_slip") || id == QLatin1String("tool_slide"))) continue;
+        w->show();
+    }
     m_phoneHidden.clear();
     if (m_bladeSwitch) m_bladeSwitch->setVisible(on);
     if (!on) {

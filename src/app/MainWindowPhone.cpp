@@ -580,7 +580,7 @@ void MainWindow::enableShell(bool tablet)
         ensureColorPage();
         return shellHome(m_colorPanel);
     });
-    m_phone->addPanelTool("inspector", QStringLiteral("☰"), T("Inspektor"), [this] { return shellHome(m_inspector); });
+    m_phone->addPanelTool("inspector", QStringLiteral("ⓘ"), T("Inspektor"), [this] { return shellHome(m_inspector); });
     m_phone->addPanelTool("transcript", QStringLiteral("¶"), T("Transkript"), [this] { return shellHome(m_transcript); });
     m_phone->addPanelTool("ai", QStringLiteral("✧"), T("KI"), [this]() -> QWidget* {
         m_chatPanel->setCompact(true); // (no own title or docking; the setup starts with a button, not a key field)
@@ -662,14 +662,17 @@ void MainWindow::enableShell(bool tablet)
     const auto context = [this] {
         if (m_selection->isEmpty()) return QStringLiteral("main");
         bool titles = true, sound = true;
+        int clips = 0;
         const Timeline& tl = m_project->timeline();
         for (const int id : m_selection->ids()) {
             TrackRef where;
             const Clip* c = TimelineOps::findClip(tl, id, &where);
-            if (!c) continue;
+            if (!c) continue; // (a caption: not a clip)
+            ++clips;
             titles = titles && c->isTitle();
             sound = sound && where.kind == TrackKind::Audio;
         }
+        if (!clips) return QStringLiteral("clip"); // captions only: not the title bar
         return titles ? QStringLiteral("title") : sound ? QStringLiteral("audio") : QStringLiteral("clip");
     };
     connect(m_selection, &Selection::changed, m_phone, [this, context] { m_phone->setToolContext(context()); });

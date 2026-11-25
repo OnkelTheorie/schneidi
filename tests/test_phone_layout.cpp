@@ -710,7 +710,7 @@ void testFiveTools(Engine& engine, int width, const QString& lang)
                       QString::number(row.size()) + where);
         for (QWidget* c : row)
             if (auto* b = qobject_cast<QToolButton*>(c))
-                Check::report(b->toolButtonStyle() == Qt::ToolButtonIconOnly || b->icon().isNull() == false,
+                Check::report(!b->icon().isNull(),
                               "timeline row: a symbol, not a cut text", __FILE__, __LINE__, b->text() + where);
         if (auto* scroll = panel->findChild<QScrollArea*>("timelineBarScroll"))
             Check::report(scroll->horizontalScrollBar()->maximum() == 0, "timeline row: nothing to scroll sideways",
