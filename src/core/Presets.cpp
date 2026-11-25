@@ -496,6 +496,13 @@ QString safeFileName(QString name)
     name.replace(bad, QStringLiteral("_"));
     name = name.trimmed();
     while (name.startsWith('.')) name.remove(0, 1); // no hidden files
+    while (name.endsWith('.')) name.chop(1);         // Windows drops a trailing dot: another name than shown
+    name = name.trimmed();
+    // Windows device names are no files there, also with an extension ("Con.xml"); as RenderJob's file names
+    const QString stem = name.section('.', 0, 0).trimmed().toUpper();
+    if (QStringList{"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}.contains(stem)
+        || (stem.size() == 4 && (stem.startsWith("COM") || stem.startsWith("LPT")) && stem[3] >= '0' && stem[3] <= '9'))
+        name.insert(name.section('.', 0, 0).size(), '_');
     return name.isEmpty() ? QStringLiteral("Preset") : name;
 }
 
