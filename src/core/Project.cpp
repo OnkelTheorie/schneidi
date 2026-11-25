@@ -954,8 +954,8 @@ QVector<QPair<int, int>> Project::mediaUsage(const QStringList& paths) const
 bool Project::removeMedia(const QStringList& paths, bool withClips)
 {
     QSet<QString> files;
-    for (const QString& p : paths)
-        if (mediaInfo(p)) files.insert(p);
+    for (const QString& p : paths) // the pool's own spelling (Windows: "c:\\clips\\a.mp4" finds "C:/Clips/A.mp4")
+        if (const MediaInfo* m = mediaInfo(p)) files.insert(m->path);
     if (files.isEmpty()) return false;
     const QStringList list = files.values();
     const QVector<QPair<int, int>> usage = mediaUsage(list);

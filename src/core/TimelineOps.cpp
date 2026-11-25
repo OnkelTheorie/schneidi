@@ -393,9 +393,13 @@ void cutCopiesLikeBases(const Timeline& before, Timeline& after, const IdGen& ne
             if (still && (sameTime(*still, *base) || !inSync(*still, *base) || still->linkId != base->linkId
                           || nowTrack.value(base->id) != wasTrack.value(base->id)))
                 continue; // untouched, or moved/changed on purpose: not this kind of edit
+            // Its track now, by uid: a track delete or reorder shifts the indices (gone: nothing was cut there)
+            const int bt = wasTrack.value(base->id);
+            const int at = followTrack(after.video, before.video[bt].uid.value, bt);
+            if (at < 0) continue;
             // The pieces of the clip left in place on its track (clearRange: the right one with the provisional link)
             QVector<const Clip*> pieces;
-            for (const Clip& x : after.video[wasTrack.value(base->id)].clips)
+            for (const Clip& x : after.video[at].clips)
                 if ((x.id == base->id || !was.contains(x.id)) && inSync(x, *base) && x.start >= base->start
                     && x.end() <= base->end() && (x.linkId == base->linkId || x.linkId == -base->linkId))
                     pieces << &x;
@@ -693,6 +697,13 @@ void shiftFine(Clip& c, int fine)
 void moveClips(Timeline& tl, const QVector<int>& clipIds, int deltaFrames,
                TrackKind anchorKind, int trackDelta, const IdGen& newId)
 {
+    moveClips(tl, clipIds, [deltaFrames](const Clip& c) { return c.start + deltaFrames; },
+              anchorKind, trackDelta, newId);
+}
+
+void moveClips(Timeline& tl, const QVector<int>& clipIds, const std::function<int(const Clip&)>& targetStart,
+               TrackKind anchorKind, int trackDelta, const IdGen& newId)
+{
     trackDelta = clampTrackDelta(tl, clipIds, anchorKind, trackDelta);
     struct Moving { Clip clip; TrackRef target; };
     QVector<Moving> moving;
@@ -701,7 +712,7 @@ void moveClips(Timeline& tl, const QVector<int>& clipIds, int deltaFrames,
         const Clip* c = findClip(tl, id, &ref);
         if (!c) continue;
         Moving m{*c, ref};
-        m.clip.start = std::max(0, c->start + deltaFrames);
+        m.clip.start = std::max(0, targetStart(*c));
         m.target.index = ref.index + trackDelta;
         moving << m;
     }

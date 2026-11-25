@@ -547,15 +547,24 @@ int main(int argc, char** argv)
         BrandKit kit;
         kit.logo = "/weg/logo.png";
         d.brand = kit;
+        // ... and a Color page still's LUT (only its grade is kept)
+        d.media << d.media[2];
+        d.media[6].path = "/weg/look.cube";
+        GradeStill still;
+        CHECK(EffectRegistry::add(still.grade, "grade"));
+        EffectRegistry::instance(still.grade, "grade")->params["lut"] = "/weg/look.cube";
+        d.stills << still;
         CHECK_EQ(ProjectFile::unusedMedia(d), QStringList({"/weg/c.mp4"}));
-        // ... and relink finds the wipe picture again (it pointed at the old path before)
+        // ... and relink finds the wipe picture and the LUT again (they pointed at the old paths before)
         const QString found = tmp.filePath("wischen");
         QDir().mkpath(found);
-        QFile wipe(found + "/wipe.png");
-        CHECK(wipe.open(QIODevice::WriteOnly));
-        wipe.close();
-        CHECK_EQ(ProjectFile::relink(&d, found), 1);
+        for (const char* name : {"/wipe.png", "/look.cube"}) {
+            QFile f(found + name);
+            CHECK(f.open(QIODevice::WriteOnly));
+        }
+        CHECK_EQ(ProjectFile::relink(&d, found), 2);
         CHECK_EQ(d.timeline.video[0].clips[0].transOutStyle.luma, found + "/wipe.png");
+        CHECK_EQ(EffectRegistry::instance(d.stills[0].grade, "grade")->params.value("lut").toString(), found + "/look.cube");
     }
 
     // --- Older file: freeze frame without freezeFrame shows `in` - also after splitting (shifts `in` of the right part)
@@ -820,6 +829,15 @@ int main(int argc, char** argv)
                 {"id":2,"media":0,"start":50,"in":0,"out":99}]},{"clips":[]}],"audio":[{"clips":[]}]}})";
             CHECK(!opened(same, p).isEmpty());
             CHECK_EQ(Check::dump(p.timeline()), QString("V1: a[0-100|0-99]  V2: a[50-150|0-99]  A1:"));
+            // ... but not one whose surround panner (depth, centre, LFE) differs
+            const QByteArray surround = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasVideo":true,
+                "hasAudio":true,"length":300}],"timeline":{"video":[{"clips":[]}],
+                "audio":[{"panDepth":50,"panCenter":30,"lfeDb":-6,"clips":[{"id":1,"media":0,"start":0,"in":0,"out":99},
+                                                 {"id":2,"media":0,"start":50,"in":0,"out":99}]},{"clips":[]}]}})";
+            CHECK(!opened(surround, p).isEmpty());
+            CHECK_EQ(Check::dump(p.timeline()), QString("V1:  A1: a[0-100|0-99]  A2:  A3: a[50-150|0-99]"));
+            if (CHECK_EQ(int(p.timeline().audio.size()), 3))
+                CHECK(p.timeline().audio[2].panDepth == 50 && p.timeline().audio[2].lfeDb == -6);
             // Multicam: V2 is the second camera - the clip goes to a new track
             const QByteArray multicam = R"({"app":"schneidi","media":[{"name":"a.mp4","path":"/m/a.mp4","hasVideo":true,
                 "hasAudio":true,"length":300}],"currentSequence":1,"sequences":[{"id":1,"name":"T"},

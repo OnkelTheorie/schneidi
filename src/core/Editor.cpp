@@ -379,16 +379,19 @@ void Editor::moveClipsFine(const QVector<int>& idsIn, int fine, TrackKind kind, 
         if (const Clip* c = TimelineOps::findClip(cur, id)) earliest = std::min(earliest, c->start * 100 + c->subframe);
     if (earliest != INT_MAX) fine = std::max(fine, -earliest);
     if (fine == 0 && dt == 0) return;
-    // Target per clip; whole frames via moveClips (overwriting as usual), then the fine position
+    // Target per clip; whole frames via moveClips (overwriting as usual), then the fine position.
+    // The carry into whole frames differs between clips of different subframes, so each clip
+    // gets its own target start (one shared delta put some clips a frame off)
     QHash<int, Clip> target;
+    int frames = 0, frameRef = INT_MAX; // subtitles follow the whole-frame delta of the earliest clip
     for (int id : ids)
         if (const Clip* c = TimelineOps::findClip(cur, id)) {
             Clip t = *c;
             TimelineOps::shiftFine(t, fine);
             target.insert(id, t);
+            if (c->start < frameRef) frameRef = c->start, frames = t.start - c->start;
         }
     if (target.isEmpty()) return;
-    const int frames = target.begin()->start - TimelineOps::findClip(cur, target.begin().key())->start;
     int cueStart = INT_MAX;
     const QVector<int> cues = unlockedSubtitles(ids, &cueStart); // move along by whole frames
     const int cueDelta = std::max(frames, -cueStart);
@@ -396,7 +399,8 @@ void Editor::moveClipsFine(const QVector<int>& idsIn, int fine, TrackKind kind, 
     p->edit(T("Clips verschieben"), [&](Timeline& tl) {
         TimelineOps::detachTransitions(tl, ids);
         ensureMoveTracks(tl, ids, dt);
-        TimelineOps::moveClips(tl, ids, frames, kind, dt, [p] { return p->newClipId(); });
+        TimelineOps::moveClips(tl, ids, [&target](const Clip& c) { return target.value(c.id, c).start; }, kind, dt,
+                               [p] { return p->newClipId(); });
         for (auto it = target.cbegin(); it != target.cend(); ++it)
             if (Clip* c = TimelineOps::findClip(tl, it.key())) c->subframe = it->subframe;
         if (cueDelta) Subtitles::move(tl, cues, cueDelta, 0, [p] { return p->newClipId(); });

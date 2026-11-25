@@ -619,6 +619,7 @@ bool Editor::trackCompNode(int clipId, int node, const QVector<Comp::TrackPoint>
     CompGraph g;
     if (!e || !Comp::graphOf(*e, &g) || !g.node(node) || g.node(node)->type != QLatin1String(Comp::kTrackerType))
         return false;
+    if (editable({clipId}).isEmpty()) return false; // its track locked meanwhile: modifyClips would drop it silently
     modifyClips({clipId}, T("Knoten verfolgen"), [&](Clip& c) {
         AnimParam params[4];
         for (int i = 0; i < 4; ++i) params[i] = Keys::effectParam(Comp::kEffectId, CompGraph::paramKey(node, Comp::kTrackKeys[i]));

@@ -122,7 +122,7 @@ void opRoute(Session& s, const QJsonObject& op)
         const Clip& c = *TimelineOps::findClip(s.project.timeline(), id);
         if (c.isNested() || c.mediaPath.isEmpty()) fail("BAD_ARGUMENT", QString("clip %1 is not from a file").arg(id));
         const MediaInfo* m = s.project.mediaInfo(c.mediaPath);
-        const int channels = m && c.audioStream < m->audioStreams.size() ? m->audioStreams[c.audioStream].channels : 2;
+        const int channels = m && c.audioStream >= 0 && c.audioStream < m->audioStreams.size() ? m->audioStreams[c.audioStream].channels : 2;
         for (int ch : pick)
             if (ch >= channels)
                 fail("BAD_ARGUMENT", QString("clip %1 plays a stream with %2 channel(s) (`probe` lists them); channel %3 "

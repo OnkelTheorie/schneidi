@@ -310,6 +310,22 @@ std::optional<ContentTemplate> save(const ProjectData& project, const QString& n
             moved[src] = dst;
         }
         redirect(d, moved);
+    } else if (o.replace && QFileInfo::exists(final)) {
+        // The project may use files inside the template it replaces (made from it and not saved elsewhere yet): they
+        // come along to the same place in the new folder, else removing the old folder below deleted them
+        QSet<QString> used = usedFiles(d);
+        for (const MediaInfo& m : d.media) used.insert(m.path);
+        QHash<QString, QString> moved;
+        for (const QString& src : std::as_const(used)) {
+            if (src.isEmpty() || !QFileInfo(src).isFile()) continue;
+            const QString rel = QDir(final).relativeFilePath(QFileInfo(src).absoluteFilePath());
+            if (QDir::isAbsolutePath(rel) || rel == ".." || rel.startsWith("../") || rel == ProjectFileName) continue;
+            const QString dst = QDir(tmp).filePath(rel);
+            QDir().mkpath(QFileInfo(dst).absolutePath());
+            if (!QFile::copy(src, dst)) return fail("SAVE_FAILED", QString("cannot copy %1 into the template").arg(src));
+            moved[src] = dst;
+        }
+        redirect(d, moved);
     }
     QString err;
     const bool saved = ProjectFile::save(d, QDir(tmp).filePath(ProjectFileName), &err);

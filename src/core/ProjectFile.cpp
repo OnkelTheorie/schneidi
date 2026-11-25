@@ -1423,7 +1423,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         }
         // Clips lying over each other on a track (a hand-edited or AI-written file; edits never make them): the later
         // one moves to the first track above where its place is free and that plays the same way (not locked; muted,
-        // hidden, solo, volume, pan, EQ, dynamics like its own), otherwise to a new one on top with the settings of
+        // hidden, solo, volume, pan, surround pan, EQ, dynamics like its own), otherwise to a new one on top with the settings of
         // its own (not locked); in a multicam clip always to a new one, or one made here for the same track (the
         // angles point at tracks: another track is another camera; an angle hearing the track hears the new one too).
         // At the same time - nothing is lost, and its linked partner, moved the same way, stays in sync.
@@ -1442,7 +1442,8 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
                         return (!multicam || made.value(j, -1) == i) && !t.locked && t.muted == own.muted
                                && t.hidden == own.hidden
                                && t.solo == own.solo && t.volumeDb == own.volumeDb && t.volumeAuto == own.volumeAuto && t.panAuto == own.panAuto && t.pan == own.pan && t.eq == own.eq
-                               && t.dynamics == own.dynamics
+                               && t.dynamics == own.dynamics && t.panDepth == own.panDepth
+                               && t.panCenter == own.panCenter && t.lfeDb == own.lfeDb
                                && std::none_of(t.clips.cbegin(), t.clips.cend(),
                                                [&](const Clip& o) { return o.start < c.end() && c.start < o.end(); });
                     };

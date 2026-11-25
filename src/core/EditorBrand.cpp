@@ -9,6 +9,8 @@
 
 #include <QSet>
 #include <cmath>
+#include <optional>
+#include <utility>
 
 namespace {
 
@@ -119,9 +121,20 @@ bool Editor::addIntroOutro()
         const MediaInfo* m = path.isEmpty() ? nullptr : m_project->mediaInfo(path);
         return m && (m->hasVideo || m->hasAudio) && m->length > 0 ? m : nullptr;
     };
-    const MediaInfo* intro = usable(kit.intro);
-    const MediaInfo* outro = usable(kit.outro);
-    if ((!intro && !outro) || isTrackLocked({TrackKind::Video, 0})) return false;
+    if (isTrackLocked({TrackKind::Video, 0})) return false;
+    // A locked A1: the sound is left out (as sourceEdit does) - it would overwrite the locked clips there, and the
+    // outro's picture would move with the intro's gap while its linked sound stayed
+    const bool soundLocked = isTrackLocked({TrackKind::Audio, 0});
+    std::optional<MediaInfo> introPart, outroPart;
+    for (auto [path, part] : {std::pair{kit.intro, &introPart}, std::pair{kit.outro, &outroPart}})
+        if (const MediaInfo* m = usable(path)) {
+            MediaInfo placed = *m;
+            if (soundLocked) placed.hasAudio = false;
+            if (placed.hasVideo || placed.hasAudio) *part = placed;
+        }
+    const MediaInfo* intro = introPart ? &*introPart : nullptr;
+    const MediaInfo* outro = outroPart ? &*outroPart : nullptr;
+    if (!intro && !outro) return false;
     // A still as intro/outro gets 3 s (it has no length of its own)
     auto lengthOf = [this](const MediaInfo& m) { return m.isImage ? 3 * m_project->fps() : m.length; };
     Project* p = m_project;

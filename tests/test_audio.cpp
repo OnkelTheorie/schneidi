@@ -173,6 +173,25 @@ int main(int argc, char** argv)
         moved = TimelineOps::findClip(p.timeline(), 1);
         CHECK(moved && moved->start == 10 && moved->subframe == 0);
 
+        // Two clips of different subframes moved together: each lands exactly half a frame later
+        // (one shared whole-frame delta put one of them a frame off)
+        p.edit("two", [](Timeline& tl) {
+            TimelineOps::ensureTracks(tl, TrackKind::Audio, 2);
+            Clip b = mk(2, "/x/m.wav", 20, 0, 49);
+            b.subframe = 60;
+            tl.audio[1].clips = {b};
+        });
+        ed.moveClipsFine({1, 2}, 50, TrackKind::Audio, 0);
+        const Clip* a = TimelineOps::findClip(p.timeline(), 1);
+        const Clip* b = TimelineOps::findClip(p.timeline(), 2);
+        CHECK(a && a->start == 10 && a->subframe == 50);
+        CHECK(b && b->start == 21 && b->subframe == 10);
+        ed.moveClipsFine({2, 1}, 50, TrackKind::Audio, 0);
+        a = TimelineOps::findClip(p.timeline(), 1);
+        b = TimelineOps::findClip(p.timeline(), 2);
+        CHECK(a && a->start == 11 && a->subframe == 0);
+        CHECK(b && b->start == 21 && b->subframe == 60);
+
         ProjectData d;
         TimelineOps::ensureTracks(d.timeline, TrackKind::Audio, 1);
         Clip f = mk(1, "/x/m.wav", 10, 0, 49);

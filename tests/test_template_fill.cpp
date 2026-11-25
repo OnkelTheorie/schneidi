@@ -1310,6 +1310,27 @@ void testLibrary()
         CHECK_EQ(TimelineOps::findClip(l.timeline, 1)->mediaPath, a); // not copied: where it was
         CHECK_EQ(int(l.media.size()), 3);
     }
+    // A project made from the template (its media inside the template folder) saved over it without copying: the
+    // files it uses stay (removing the old folder deleted them)
+    {
+        TemplateLibrary::SaveOptions copy;
+        copy.replace = true;
+        std::optional<ContentTemplate> withMedia = TemplateLibrary::save(d, "My Short", copy, &err);
+        ProjectData fromIt;
+        if (CHECK(withMedia.has_value()) && CHECK(TemplateLibrary::load(*withMedia, &fromIt, &err))) {
+            const QString inside = TimelineOps::findClip(fromIt.timeline, 2)->mediaPath;
+            CHECK_EQ(inside, QDir(withMedia->dir).absoluteFilePath("media/clip-2.mp4"));
+            t = TemplateLibrary::save(fromIt, "My Short", again, &err);
+            CHECK(t.has_value());
+            CHECK_EQ(QFileInfo(inside).size(), 4); // the open project's file is still there
+            ProjectData l;
+            if (t && CHECK(TemplateLibrary::load(*t, &l, &err))) {
+                CHECK_EQ(TimelineOps::findClip(l.timeline, 2)->mediaPath, inside);
+                CHECK_EQ(TimelineOps::findClip(l.timeline, 1)->mediaPath,
+                         QDir(t->dir).absoluteFilePath("media/clip.mp4"));
+            }
+        }
+    }
     // Rename: the name and the folder; remove
     CHECK(TemplateLibrary::rename("My Short", "Gaming", &err));
     CHECK(TemplateLibrary::find("Gaming").has_value());

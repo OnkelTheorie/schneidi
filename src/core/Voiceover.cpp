@@ -3,6 +3,7 @@
 
 #include "core/AppPaths.h"
 #include "core/I18n.h"
+#include "core/PathKey.h"
 #include "core/Types.h"
 
 #include <QDir>
@@ -86,8 +87,9 @@ bool isVoiceoverTrack(const Track& t)
 bool isTake(const QString& mediaPath, const QString& takes)
 {
     if (mediaPath.isEmpty()) return false;
-    const QString dir = QDir::cleanPath(QFileInfo(mediaPath).absolutePath());
-    const auto in = [&](const QString& f) { return !f.isEmpty() && dir == QDir::cleanPath(QFileInfo(f).absoluteFilePath()); };
+    // PathKey: on Windows "c:/x" and "C:/X" are one folder
+    const QString dir = PathKey::of(QFileInfo(mediaPath).absolutePath());
+    const auto in = [&](const QString& f) { return !f.isEmpty() && dir == PathKey::of(f); };
     return in(takes) || in(folder(QString()));
 }
 

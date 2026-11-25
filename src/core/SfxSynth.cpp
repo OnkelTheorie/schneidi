@@ -212,9 +212,12 @@ QString recordedRoot()
 
 namespace {
 
-const QVector<Recorded>& recordedTable()
+QVector<Recorded> recordedTable()
 {
-    // Read once per data folder (tests switch it)
+    // Read once per data folder (tests switch it). Under a lock and handed out as a copy (implicitly shared, cheap):
+    // a project load on a worker thread and the Effects Library may ask at the same time
+    static QMutex lock;
+    const QMutexLocker locked(&lock);
     static QString root;
     static QVector<Recorded> table;
     if (root == recordedRoot() && !root.isEmpty()) return table;

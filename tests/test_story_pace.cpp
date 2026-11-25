@@ -10,6 +10,7 @@
 // cut 6.8 s before a drop at 7 s; the help names the new ids and the output.
 #include "cli/Commands.h"
 #include "core/ExportCheck.h"
+#include "core/I18n.h"
 #include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -275,6 +276,16 @@ void testStory()
     t.sections[1].kind = StoryKind::Hook;
     issues = ExportCheck::story(t, 0, 500, v, {10}, true, {});
     if (CHECK_EQ(checks(issues), QStringList({"story_no_hook"}))) CHECK(issues[0].to == 50);
+    {
+        // An In/Out export from 1 s: the hook 1 s into the video, said in the video's time (as story_hook_late)
+        ExportCheck::Options inOut;
+        inOut.rangeIsVideo = true;
+        issues = ExportCheck::story(t, 25, 500, v, {30}, true, {}, inOut);
+        if (CHECK_EQ(checks(issues), QStringList({"story_no_hook"})))
+            CHECK_EQ(issues[0].message,
+                     T("Der Hook beginnt erst bei %1 s – an den Anfang legen").arg(QString::number(1.0, 'f', 1)
+                                                                                     .replace('.', I18n::decimalPoint())));
+    }
     // A question without a turn or resolution after it
     t = good;
     t.sections[3].kind = StoryKind::Build;

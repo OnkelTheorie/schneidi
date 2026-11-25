@@ -368,6 +368,10 @@ void testEditor()
     CHECK(!ed.trackCompNode(id, 2, points)); // not a tracker
     CHECK(!ed.trackCompNode(id, 3, points)); // no such node
     CHECK(!ed.trackCompNode(id, 1, {}));
+    // The track locked while the analysis ran: false (nothing written; it reported success)
+    p.edit("lock", [](Timeline& tl) { tl.video[0].locked = true; });
+    CHECK(!ed.trackCompNode(id, 1, points));
+    undo.undo();
     CHECK_EQ(undo.index(), before);
     // A keyframe of x inside the range goes, one outside stays
     const AnimParam px = Keys::effectParam(::Comp::kEffectId, "n1.x"), pa = Keys::effectParam(::Comp::kEffectId, "n1.angle");

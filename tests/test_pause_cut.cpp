@@ -208,7 +208,12 @@ void testCore()
             CHECK_EQ(c.last().from, 69);
         }
         const QVector<Range> two = combined({}, {Range{1, 4, Kind::Filler, {0}, "äh"}, Range{3, 6, Kind::Filler, {1}, "uh"}});
-        if (CHECK_EQ(two.size(), 1)) CHECK(two[0].tracks == QVector<int>({0, 1}));
+        if (CHECK_EQ(two.size(), 1)) {
+            CHECK(two[0].tracks == QVector<int>({0, 1}));
+            CHECK(two[0].kind == Kind::Filler);
+            CHECK_EQ(two[0].quiet, 0); // two fillers stay a filler: no pause length
+        }
+        if (!c.isEmpty()) CHECK_EQ(c[0].quiet, 13); // a filler touching a pause makes the pause longer
     }
 }
 

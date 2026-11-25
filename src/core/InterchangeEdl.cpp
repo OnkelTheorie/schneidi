@@ -264,7 +264,7 @@ Sequence readEdl(const QByteArray& data, FrameRate rate)
                 throw Error{T("EDL: Audiospur %1 - mehr als %2 Audiospuren werden nicht gelesen")
                                 .arg(m.captured(1).left(12))
                                 .arg(kMaxReadTracks)};
-            if (n >= 2) targets << qMakePair(TrackKind::Audio, int(n) - 1);
+            if (n >= 1) targets << qMakePair(TrackKind::Audio, int(n) - 1); // "A1" = A1 (some writers number it)
         }
         if (targets.isEmpty()) continue;
         ++link;

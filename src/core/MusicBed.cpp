@@ -90,7 +90,7 @@ void parallel(int n, Job&& job, Reset&& reset)
 
 // ---------- Noise and filters ----------
 
-// Deterministic white noise in [-1, 1) (xorshift32)
+// Deterministic white noise in [-1, 1] (xorshift32; states near INT32_MAX round to 1.0f)
 struct Noise {
     std::uint32_t s;
     explicit Noise(std::uint32_t seed) : s(seed * 2654435761u + 0x9E3779B9u) { s |= 1; }
@@ -101,7 +101,9 @@ struct Noise {
         s ^= s << 5;
         return float(std::int32_t(s)) * (1.0f / 2147483648.0f);
     }
-    double unit() { return 0.5 + 0.5 * double(next()); } // [0, 1)
+    // [0, 1): a phase of 1.0 would read one past a wavetable. Only that one rounded value changes, so beds
+    // made before stay the same (no kVersion bump)
+    double unit() { return std::min(0.5 + 0.5 * double(next()), std::nextafter(1.0, 0.0)); }
 };
 
 // Biquad of the audio EQ cookbook formulas (direct form II transposed)
