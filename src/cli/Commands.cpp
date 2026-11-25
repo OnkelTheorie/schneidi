@@ -2275,7 +2275,12 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
                             break;
                         }
                 }
-                if (only.isEmpty()) fail("NOT_FOUND", "no op " + a["op"].toString() + " (ops: " + names.join(", ") + ")");
+                if (only.isEmpty()) {
+                    const QStringList close = ToolText::nearest(a["op"].toString().trimmed(), names);
+                    fail("NOT_FOUND", "no op " + a["op"].toString()
+                                          + (close.isEmpty() ? QString() : " - did you mean " + close.join(", ") + "?")
+                                          + " (ops: " + names.join(", ") + ")");
+                }
                 ops = only;
                 o.remove("params");
             }
@@ -2283,7 +2288,19 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
         }
         list << o;
     }
-    if (list.isEmpty()) fail("NOT_FOUND", "no command " + a["command"].toString());
+    if (list.isEmpty()) {
+        QStringList names;
+        for (const Command& c : commands()) names << c.name;
+        const QStringList close = ToolText::nearest(a["command"].toString(), names, 2);
+        // An edit op asked as a command (help {command:'title'}): its details are under edit
+        const bool op = std::any_of(editOps().begin(), editOps().end(),
+                                    [&a](const OpDef& d) { return d.name == a["command"].toString(); });
+        fail("NOT_FOUND", "no command " + a["command"].toString()
+                              + (op ? QString(" - it is an edit op: help {command:'edit', op:'%1'}").arg(a["command"].toString())
+                                 : close.isEmpty() ? QString()
+                                                   : " - did you mean " + close.join(" or ") + "?")
+                              + " (commands: " + names.join(", ") + ")");
+    }
     QJsonObject o{{"program", "schneidi-cli"}, {"version", QCoreApplication::applicationVersion()},
                   {"api_version", ApiVersion}, {"commands", list}};
     if (a.contains("command")) return o; // one command (or op): only that, an AI asks for it in the middle of work

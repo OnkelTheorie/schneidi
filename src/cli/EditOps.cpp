@@ -1489,10 +1489,12 @@ void applyOp(Session& s, const QJsonObject& given)
             shown.erase(std::remove_if(shown.begin(), shown.end(), [](const QString& k) { return k.startsWith('_'); }),
                         shown.end());
             // The other usual name of a key this op has under its own name (transition duration -> length)
-            static const QHash<QString, QString> usual{{"duration", "length"}, {"length", "duration"}};
-            const QString hint = usual.contains(it.key()) && keys.contains(usual.value(it.key()))
-                                     ? QString("use '%1'; ").arg(usual.value(it.key()))
-                                     : QString();
+            static const QMultiHash<QString, QString> usual{{"duration", "length"}, {"length", "duration"},
+                                                            {"fade_in", "enter"},   {"fade_out", "exit"},
+                                                            {"fade_in", "in"},      {"fade_out", "out"}};
+            QString hint;
+            for (const QString& other : usual.values(it.key()))
+                if (keys.contains(other)) hint = QString("use '%1'; ").arg(other);
             const QStringList close = hint.isEmpty() ? ToolText::nearest(it.key(), shown, 1) : QStringList();
             fail("BAD_ARGUMENT", QString("unknown key '%1' (%2keys: %3; details: help {command:'edit', op:'%4'})")
                                      .arg(it.key(), close.isEmpty() ? hint : QString("use '%1'; ").arg(close.first()),

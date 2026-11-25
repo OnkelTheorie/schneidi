@@ -623,7 +623,8 @@ void test(const QString& dir)
     CHECK_EQ(r1.body["tools"].toArray().size(), chat->tools()->tools().size());
     for (const QJsonValue& t : r1.body["tools"].toArray())
         if (t["name"].toString() == "edit")
-            CHECK(t["input_schema"]["properties"]["ops"]["description"].toString().contains("A timeline position"));
+            // the op names by group (cli/ToolText.h); keys and rules of each op: one `help` call
+            CHECK(t["input_schema"]["properties"]["ops"]["description"].toString().contains("help {command:'edit', op:'name'}"));
     CHECK(fake.probes.isEmpty());
     const qint64 fullChars = system.size() + QJsonDocument(r1.body["tools"].toArray()).toJson(QJsonDocument::Compact).size();
     if (const QString d = qEnvironmentVariable("AI_CHAT_DUMP"); !d.isEmpty()) {
