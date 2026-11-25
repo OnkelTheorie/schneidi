@@ -173,7 +173,8 @@ void MainWindow::contactSheetDialog()
         QMessageBox::information(this, title, T("Die Timeline ist leer."));
         return;
     }
-    const bool hasInOut = tl.markIn >= 0 && tl.markOut > tl.markIn;
+    // In/Out only when the range reaches the timeline (marks past its end gave no frames and no message)
+    const bool hasInOut = tl.markIn >= 0 && tl.markOut > tl.markIn && tl.markIn < end;
     ContactSheetDialog dialog(m_project->sequenceName(m_project->currentSequence()), startDir(m_projectPath), hasInOut,
                               this);
     if (dialog.exec() != QDialog::Accepted) return;
