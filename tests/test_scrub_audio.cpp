@@ -7,6 +7,7 @@
 //  3. A fast burst of requests: the stale ones are dropped, the newest position plays, no lag queues up
 //  4. A muted track stays silent, a soloed other track is heard
 //  5. Nowhere a step in the wave (fades at every slice edge)
+//  4c. The feeder behind in the middle of a slice (the ring runs dry at a callback's end): faded, no step
 //  6. Engine: scrubTo plays a slice, a plain seek does not, the setting off is silent; the setting is stored
 #include "check.h"
 
@@ -212,6 +213,30 @@ int main(int argc, char** argv)
     sleepMs(150);
     player.reset();
 
+    // 4c. The feeder falls behind in the middle of a slice (a slow slice mix): the ring runs dry at full level. With a
+    // device period of one ring block (256) that is always the end of a callback - the sound fades out there anyway
+    Speaker spDry;
+    spDry.path = tmp.filePath("dry.raw");
+    qputenv("SCHNEIDI_AUDIO_DEVICE", ("file:" + QDir::toNativeSeparators(spDry.path)).toLocal8Bit());
+    int dryUnderruns = -1;
+    {
+        Audio::Player::Options dopt;
+        dopt.buffer = 512; // the file device's period: buffer / 2 = 256
+        auto dry = std::make_unique<Audio::Player>(dopt);
+        dry->setTimeline(tl, kFps);
+        dry->scrub(0); // opens the device
+        sleepMs(300);
+        for (int n = 0; n < 4; ++n) {
+            dry->scrub((10.0 + n * 0.3) * kRate);
+            sleepMs(20); // the slice sounds, the ring holds its lead (~50 ms) at full level
+            dry->stallFeedForTest(120);
+            sleepMs(300);
+        }
+        dryUnderruns = dry->stats().underruns;
+    }
+    spDry.load();
+    qputenv("SCHNEIDI_AUDIO_DEVICE", ("file:" + QDir::toNativeSeparators(sp.path)).toLocal8Bit());
+
     sp.load();
     std::printf("Lautsprecher: %.2f s\n", sp.frames() / double(kRate));
 
@@ -311,6 +336,19 @@ int main(int argc, char** argv)
         const int step = largestStep(sp, 0, sp.frames(), &at);
         std::printf("Größter Sprung von Sample zu Sample: %d bei %.3f s\n", step, at / double(kRate));
         CHECK(step < 1300);
+    }
+
+    // 4c. Dry mid-slice: the slices break in two (the rest after the stall), never with a step
+    {
+        const auto segs = segments(spDry, 0, spDry.frames());
+        qsizetype at = 0;
+        const int step = largestStep(spDry, 0, spDry.frames(), &at);
+        std::printf("Ring leer mitten in der Scheibe: %zu Stück(e) aus 4 Scheiben, größter Sprung %d bei %.3f s, "
+                    "%d Aussetzer gezählt\n",
+                    segs.size(), step, at / double(kRate), dryUnderruns);
+        CHECK(segs.size() >= 6); // the feeder really fell behind inside the slices
+        CHECK(step < 1300);
+        CHECK_EQ(dryUnderruns, 0); // scrubbing: a slice's end is no dropout
     }
 
     // Listening (optional, by hand): SCHNEIDI_SCRUB_SOURCE=<a media file> scrubs it like a user - a slow drag forward,
