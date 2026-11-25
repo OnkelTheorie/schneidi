@@ -432,6 +432,12 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent, RenderQueue* queue
             m_fixBtn->hide();
         }
     });
+    // The fix holds absolute values measured by the check: after an edit (a master fader moved since) they are stale
+    connect(m_project, &Project::timelineChanged, this, [this] {
+        if (!m_fix) return;
+        m_fix = {};
+        m_fixBtn->hide();
+    });
     connect(m_fixBtn, &QPushButton::clicked, this, [this] {
         if (!m_fix || m_project->currentSequence() != m_fixSequence) return;
         m_project->edit(T("Prüfung: Ton behoben"), m_fix);
