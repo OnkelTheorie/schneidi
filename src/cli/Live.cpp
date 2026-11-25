@@ -9,6 +9,7 @@
 #include "core/CodeTrust.h"
 #include "core/LiveHost.h"
 #include "core/MainTrack.h"
+#include "core/NestedLoop.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/Selection.h"
@@ -397,6 +398,12 @@ QString Server::waitingNow(bool* readsAllowed) const
                            "answered")
                 .arg(title.isEmpty() ? QString() : QString(": \"%1\"").arg(title));
         }
+    // A measuring loop of the app (normalize, ducking, the deliver check ...) runs events before its progress dialog
+    // shows: a change meanwhile would get the measurement of the state before it applied. Reads stay allowed.
+    if (NestedLoop::guarded()) {
+        if (readsAllowed) *readsAllowed = true;
+        return QStringLiteral("schneidi is busy with a task in the app (measuring or a drag); try again in a moment");
+    }
     return {};
 }
 
