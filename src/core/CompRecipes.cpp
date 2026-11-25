@@ -290,6 +290,8 @@ QVector<CompRecipe> own()
 {
     QVector<CompRecipe> list;
     for (const QFileInfo& fi : QDir(dir()).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name)) {
+        // Staging folders (.<id>.saving.<hex>, .import.<hex>) are no recipes; Windows does not hide dot names
+        if (fi.fileName().startsWith('.')) continue;
         const QString file = QDir(fi.absoluteFilePath()).filePath(FileName);
         if (!QFileInfo::exists(file)) continue;
         std::optional<CompRecipe> r = readFile(file, fi.absoluteFilePath(), nullptr);
