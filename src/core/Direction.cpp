@@ -37,6 +37,14 @@ const Text kReasons[] = {
     {"take", "best take of sentence {sentence}", nullptr, N_("bester Take von Satz {sentence}"), nullptr},
     {"alt_take", "another take of sentence {sentence}", nullptr, N_("anderer Take von Satz {sentence}"), nullptr},
     {"fallback_end", "end of the recording (nothing found)", nullptr, N_("Ende der Aufnahme (nichts gefunden)"), nullptr},
+    {"clip_end", "end of the clip (saved right after the moment)", nullptr,
+     N_("Ende des Clips (direkt nach dem Moment gespeichert)"), nullptr},
+    {"clip_end_death", "the player's death at the end of the clip", nullptr, N_("Tod des Spielers am Ende des Clips"),
+     nullptr},
+    {"clip_end_loud", "the loudest moment at the end of the clip", nullptr,
+     N_("Lauteste Stelle am Ende des Clips"), nullptr},
+    {"voice_laughter", "laughter in the voice chat ({stream})", nullptr, N_("Lachen im Sprachkanal ({stream})"), nullptr},
+    {"voice_shout", "someone shouts ({stream})", nullptr, N_("Jemand ruft laut ({stream})"), nullptr},
 };
 
 const Text kNotes[] = {
@@ -67,6 +75,13 @@ const Text kNotes[] = {
      nullptr,
      N_("Nur {found} s sind aufgefallen, gewünscht sind {target} s: Jeder Moment zeigt mehr von seiner Szene (bis 6 s "
         "davor, 4 s danach), zusammen {s} s."),
+     nullptr},
+    {"short_shorter",
+     "Only {s} s of action (min_s {min}): the short stays shorter rather than showing the time before the moments or "
+     "after the player's death.",
+     nullptr,
+     N_("Nur {s} s Action (Minimum {min} s): Der Short bleibt kürzer, statt die Zeit vor den Momenten oder nach dem "
+        "Tod des Spielers zu zeigen."),
      nullptr},
     {"fewer_variants", "Only {n} variant(s) instead of {asked}: the material has too few moments for more.", nullptr,
      N_("Nur {n} Variante(n) statt {asked}: Für mehr hat das Material zu wenige Momente."), nullptr},
@@ -219,6 +234,11 @@ QJsonObject toJson(const Suggestion& s)
     if (!s.slot.isEmpty()) o["slot"] = s.slot;
     if (s.shot > 0) o["shot"] = s.shot;
     if (s.sentence > 0) o["sentence"] = s.sentence;
+    if (!s.hits.isEmpty()) {
+        QJsonArray hits;
+        for (double h : s.hits) hits << round3(h);
+        o["hit_s"] = hits;
+    }
     return o;
 }
 
@@ -237,6 +257,7 @@ QJsonObject toJson(const Material& m)
     }
     if (!m.audioStreams.isEmpty()) o["audio_streams"] = QJsonArray::fromStringList(m.audioStreams);
     o["moments"] = m.moments;
+    if (!m.voice.isEmpty()) o["voice"] = m.voice;
     return o;
 }
 
@@ -289,6 +310,7 @@ std::optional<Session> fromJson(const QJsonObject& o, QString* error)
         m.height = v["height"].toInt();
         for (const QJsonValue& a : v["audio_streams"].toArray()) m.audioStreams << a.toString();
         m.moments = v["moments"].toInt();
+        m.voice = v["voice"].toArray();
         s.material << m;
     }
     for (const QJsonValue& v : o["suggestions"].toArray()) {
@@ -309,6 +331,7 @@ std::optional<Session> fromJson(const QJsonObject& o, QString* error)
         x.slot = v["slot"].toString();
         x.shot = v["shot"].toInt();
         x.sentence = v["sentence"].toInt();
+        for (const QJsonValue& h : v["hit_s"].toArray()) x.hits << h.toDouble();
         s.suggestions << x;
     }
     for (const QJsonValue& v : o["order"].toArray()) s.order << v.toInt();

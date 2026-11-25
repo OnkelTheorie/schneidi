@@ -278,7 +278,7 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
         }
         // 3. The best moments of every recording: `direct` recipe short (the highlights, ShortPick)
         QJsonObject options;
-        for (const char* k : {"min_s", "max_s", "for", "hook", "aspect", "reframe", "audio_stream"})
+        for (const char* k : {"min_s", "max_s", "for", "hook", "aspect", "reframe", "audio_stream", "accents"})
             if (a.contains(k)) options[k] = a[k];
         options["for"] = QString::fromLatin1(platform->alias);
         if (game) options["game"] = game->id;

@@ -13,6 +13,10 @@ QVector<Moment> joined(QVector<Moment> list, double gap)
     QVector<Moment> out;
     for (const Moment& m : list) {
         if (!out.isEmpty() && out.last().file == m.file && m.from - out.last().to < gap) {
+            // The earlier one's lo; the end's hi of the one reaching further (no limit when either has none)
+            if (m.to > out.last().to) out.last().hi = m.hi;
+            else if (m.hi < 0) out.last().hi = -1;
+            if (m.lo < 0) out.last().lo = -1;
             out.last().to = std::max(out.last().to, m.to);
             out.last().score = std::max(out.last().score, m.score);
         } else {
@@ -25,7 +29,9 @@ QVector<Moment> joined(QVector<Moment> list, double gap)
 void widen(Moment& m, double by, double duration)
 {
     double before = by * 0.45, after = by - before;
-    const double roomBefore = m.from, roomAfter = duration - m.to;
+    const double first = m.lo >= 0 ? std::min(m.lo, m.from) : 0.0;
+    const double last = m.hi >= 0 ? std::max(m.to, std::min(m.hi, duration)) : duration;
+    const double roomBefore = std::max(0.0, m.from - first), roomAfter = std::max(0.0, last - m.to);
     if (before > roomBefore) after += before - roomBefore, before = roomBefore;
     if (after > roomAfter) before = std::min(roomBefore, before + after - roomAfter), after = roomAfter;
     m.from -= before;
