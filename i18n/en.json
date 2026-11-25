@@ -3951,5 +3951,14 @@
  "Keine Untertitel: Die zwei Spracherkennungen haben jede Zeile verschieden gehört.": "No captions: the two speech recognitions heard every line differently.",
  "Untertitel nicht gegengeprüft: ohne Grafikkarte dauert die zweite Erkennung zu lange.": "Captions not cross-checked: without a graphics card the second recognition takes too long.",
  "Tempo ändern": "Speed",
- "Klingen-Werkzeug an/aus: an = ein Tipp auf einen Clip schneidet ihn": "Blade tool on/off: on = a tap on a clip cuts it"
+ "Klingen-Werkzeug an/aus: an = ein Tipp auf einen Clip schneidet ihn": "Blade tool on/off: on = a tap on a clip cuts it",
+ "Auf Android gibt es keine Erweiterungen: die Programme dafür laufen nur auf Windows und Linux.": "Extensions are not available on Android: the programs they need only run on Windows and Linux.",
+ "Auf Android landet jeder Export an einem festen Ort, den Galerie und Dateien-App sehen: Videos in Movies, Ton in Music, Bilder in Pictures, mit Untertiteldatei in Download (je im Ordner schneidi).": "On Android every export goes to a fixed place that the gallery and the Files app can see: videos in Movies, sound in Music, pictures in Pictures, with a subtitle file in Download (each in the schneidi folder).",
+ "Erlaubnis zum Speichern wird angefragt …": "Asking for permission to save …",
+ "Medien (*.mp4 *.mov *.mkv *.avi *.webm *.mts *.m4v *.mp3 *.wav *.flac *.ogg *.m4a *.aac *.png *.jpg *.jpeg *.webp *.bmp);;Alle Dateien (*)": "Media (*.mp4 *.mov *.mkv *.avi *.webm *.mts *.m4v *.mp3 *.wav *.flac *.ogg *.m4a *.aac *.png *.jpg *.jpeg *.webp *.bmp);;All Files (*)",
+ "Ohne die Erlaubnis für Dateien kann schneidi auf diesem Android (9 oder 10) nichts in %1 speichern. Erlauben lässt sie sich beim nächsten Versuch oder in den Android-Einstellungen unter Apps › schneidi › Berechtigungen.": "Without the permission for files, schneidi cannot save anything to %1 on this Android (9 or 10). You can allow it on the next try or in the Android settings under Apps › schneidi › Permissions.",
+ "Schwung der Timeline": "Timeline momentum",
+ "Wenig": "Low",
+ "Wie weit die Timeline nach einem schnellen Wischen weitergleitet. Langsames Ziehen hält an Clip-Anfängen und -Enden kurz an.": "How far the timeline keeps gliding after a quick swipe. Slow dragging stops briefly at the starts and ends of clips.",
+ "schneidi darf das Mikrofon nicht benutzen, daher kann keine Aufnahme starten. Erlauben lässt es sich in den Android-Einstellungen unter Apps › schneidi › Berechtigungen › Mikrofon.": "schneidi is not allowed to use the microphone, so no recording can start. You can allow it in the Android settings under Apps › schneidi › Permissions › Microphone."
 }
