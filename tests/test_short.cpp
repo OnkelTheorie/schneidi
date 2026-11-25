@@ -119,6 +119,32 @@ int main(int argc, char** argv)
         // A kill at the very start: what does not fit before goes after
         p = ShortPick::pick({{0, 0, 3, 1}}, {60}, o);
         if (CHECK_EQ(p.size(), 1)) CHECK(near(p[0].from, 0) && near(p[0].to, 15));
+        // Bounded (lo/hi, 25.11.): a kill's moment never grows before its lead-in - padding goes after it, as far as
+        // hi allows (6 s after the last hit, or the player's death); the short stays shorter rather than padded
+        Moment kill{0, 15.1, 18.6, 27};
+        kill.lo = 15.1;
+        kill.hi = 19.8; // died at 19.1
+        p = ShortPick::pick({kill}, {30}, o);
+        if (CHECK_EQ(p.size(), 1)) {
+            CHECK(near(p[0].from, 15.1)); // was 9.99: 6.5 s of a wall before the action
+            CHECK(near(p[0].to, 19.8));   // was 24.99: the death screen and 5 s of spectating
+        }
+        kill.hi = 28;
+        p = ShortPick::pick({kill}, {30}, o);
+        if (CHECK_EQ(p.size(), 1)) CHECK(near(p[0].from, 15.1) && near(p[0].to, 28));
+        // Two bounded moments of two clips: each grows only within its own limits, together under min_s
+        Moment other{1, 20.5, 25.9, 0.5};
+        other.lo = 20.5;
+        other.hi = 25.9;
+        kill.hi = 19.8;
+        p = ShortPick::pick({kill, other}, {30, 30}, o);
+        if (CHECK_EQ(p.size(), 2)) CHECK(near(ShortPick::total(p), 4.7 + 5.4));
+        // Joined moments keep the earlier lo and the later hi
+        Moment a{0, 10, 12, 5}, b{0, 13, 15, 4};
+        a.lo = 9.5, a.hi = 13;
+        b.lo = 12.5, b.hi = 16;
+        const QVector<Moment> j = ShortPick::joined({a, b}, 2);
+        if (CHECK_EQ(j.size(), 1)) CHECK(near(j[0].lo, 9.5) && near(j[0].hi, 16));
     }
 
     // ---- Presets for Shorts, Reels, TikTok
@@ -228,9 +254,18 @@ int main(int argc, char** argv)
         const QString out = dir.filePath("out/short.mp4");
         const QJsonObject r = run("short", {{"files", QJsonArray{clip}}, {"out", out}, {"game", "none"}});
         CHECK(!r.contains("error"));
-        CHECK(sameMoments("default", r, "cs2_clip_test.mp4 25.56-33.06; cs2_clip_test.mp4 5.32-12.82"));
+        CHECK(sameMoments("default", r, "cs2_clip_test.mp4 28.07-35.57; cs2_clip_test.mp4 7.83-15.33"));
         CHECK(QFileInfo::exists(out));
         CHECK_EQ(r["out"].toString(), out);
+        // A contact sheet of the video next to it (8 tiles), the answer's next says to look at it (25.11.)
+        CHECK_EQ(r["sheet"].toString(), dir.filePath("out/short-sheet.jpg"));
+        CHECK(QFileInfo(r["sheet"].toString()).size() > 1000);
+        CHECK(r["next"].toString().contains("sheet"));
+        // Loud moments start at most 1.5 s before their first peak (9 and 29 s) and grow only after it
+        for (const QJsonValue& m : r["moments"].toArray()) {
+            const double from = m["from_s"].toDouble();
+            if (!CHECK((from >= 7.4 && from <= 9.4) || (from >= 27.4 && from <= 29.4))) std::printf("       from %.2f\n", from);
+        }
         const double len = r["length_s"].toDouble();
         if (!CHECK(len >= 14.9 && len <= 45.1)) std::printf("       length %.2f s\n", len);
         CHECK_EQ(r["width"].toInt(), 1080);
@@ -289,12 +324,14 @@ int main(int argc, char** argv)
         const QJsonObject again = run("short", {{"files", QJsonArray{clip}}, {"captions", "off"}, {"max_s", 20}});
         CHECK_EQ(QFileInfo(again["out"].toString()).fileName(), QString("cs2_clip_test-short.mp4"));
         CHECK(again["length_s"].toDouble() <= 20.05);
-        CHECK(sameMoments("again", again, "cs2_clip_test.mp4 20-40"));
+        // A replay clip (cs2 by its folder, 40 s) without a kill: its end around its loudest moment there, not padded
+        // before it (was the last 20 s)
+        CHECK(sameMoments("again", again, "cs2_clip_test.mp4 28.07-40"));
         // hook:'chronological': the moments in the order they happened
         const QJsonObject inOrder = run("short", {{"files", QJsonArray{clip}}, {"captions", "off"}, {"game", "none"},
                                                   {"hook", "chronological"}});
         const QJsonArray ordered = inOrder["moments"].toArray();
-        CHECK(sameMoments("chronological", inOrder, "cs2_clip_test.mp4 5.32-12.82; cs2_clip_test.mp4 25.56-33.06"));
+        CHECK(sameMoments("chronological", inOrder, "cs2_clip_test.mp4 7.83-15.33; cs2_clip_test.mp4 28.07-35.57"));
         if (CHECK(ordered.size() >= 2)) CHECK(ordered[0]["from_s"].toDouble() < ordered[1]["from_s"].toDouble());
         CHECK_EQ(run("short", {{"files", QJsonArray{clip}}, {"hook", "loudest"}})["error"].toString(), QString("BAD_ARGUMENT"));
         // Effect sounds: none by default (sfx:'off', nothing on the cuts by itself); sfx:'mild' puts a soft whoosh on the
@@ -361,7 +398,7 @@ int main(int argc, char** argv)
                                                   {"captions", "off"}, {"min_s", 6}, {"max_s", 7},
                                                   {"out", dir.filePath("out/few.mp4")}});
             CHECK(!few.contains("error"));
-            CHECK(sameMoments("few", few, "cs2_clip_test.mp4 26.23-32.23"));
+            CHECK(sameMoments("few", few, "cs2_clip_test.mp4 28.07-34.07"));
             const QJsonArray unused = few["unused"].toArray();
             if (CHECK_EQ(unused.size(), 2)) {
                 CHECK_EQ(unused[0]["file"].toString(), copy);
@@ -384,7 +421,7 @@ int main(int argc, char** argv)
         const QJsonObject inTall = run("short", {{"files", QJsonArray{clip}}, {"project", tall}, {"captions", "off"},
                                                  {"max_s", 15}, {"out", dir.filePath("out/tall.mp4")}});
         CHECK(!inTall.contains("error"));
-        CHECK(sameMoments("tall", inTall, "cs2_clip_test.mp4 25-40"));
+        CHECK(sameMoments("tall", inTall, "cs2_clip_test.mp4 28.07-40"));
         const QJsonObject cut = run("info", {{"project", tall}, {"timeline", "Short-Schnitt"}, {"summary", true}});
         if (!CHECK_EQ(cut["timeline"]["width"].toInt() * 9, cut["timeline"]["height"].toInt() * 16))
             std::printf("       cut %d x %d\n", cut["timeline"]["width"].toInt(), cut["timeline"]["height"].toInt());

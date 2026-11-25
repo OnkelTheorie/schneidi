@@ -5,6 +5,7 @@
 // canceled suggest or apply fails with CANCELED and leaves no half project. Prints the suggest time of 10 clips cold
 // and warm (DIRECT_MEASURE=1 makes them 30 s long as in the plan's target).
 #include "cli/Commands.h"
+#include "cli/DirectDetail.h"
 #include "core/AppPaths.h"
 #include "core/Direction.h"
 #include "engine/Extensions.h"
@@ -471,7 +472,8 @@ int main(int argc, char** argv)
         const QJsonObject g = run("direct", {{"recipe", "short"}, {"files", QJsonArray{noKill}}})["session"].toObject();
         const QJsonArray gs = g["suggestions"].toArray();
         if (CHECK(!gs.isEmpty())) {
-            CHECK_EQ(gs[0]["reason"]["key"].toString(), QString("fallback_end"));
+            // A replay clip of up to 60 s: its end is a moment of its own (25.11.; was the fallback of nothing found)
+            CHECK(gs[0]["reason"]["key"].toString().startsWith("clip_end"));
             CHECK(std::abs(gs[0]["to_s"].toDouble() - 20) < 0.1);
         }
         CHECK_EQ(g["material"][0]["analysis"]["events"].toString(), QString("none"));
@@ -536,13 +538,160 @@ int main(int argc, char** argv)
         if (!CHECK(said)) std::printf("       %s\n", QJsonDocument(made).toJson().constData());
     }
 
+    // ---- CS2's death screen (25.11.: a short showed the death and 5 s of spectating after the kills): the red tint
+    // over the whole picture that fades into a black screen is a death, a black screen alone or a red picture is not
+    {
+        std::vector<std::array<double, 3>> rgb;
+        const auto add = [&](double seconds, std::array<double, 3> c) {
+            for (int i = 0; i < int(seconds * 10); ++i) rgb.push_back(c);
+        };
+        add(5, {130, 120, 110});  // game
+        add(1.5, {120, 60, 60});  // tint at 5.0
+        add(2, {2, 2, 2});        // black at 6.5
+        add(3, {130, 120, 110});  // spectating
+        add(2, {2, 2, 2});        // a black screen without a tint (a loading screen) at 11.5
+        add(1, {130, 120, 110});
+        add(1.2, {200, 60, 60});  // a red picture at 14.5 ... up to the end: the clip saved while the tint shows
+        const QJsonArray deaths = Cli::detail::deathScreensOf(rgb, 10);
+        if (CHECK_EQ(deaths.size(), 2)) {
+            CHECK(std::abs(deaths[0]["s"].toDouble() - 5.0) < 0.05);
+            CHECK(std::abs(deaths[0]["end_s"].toDouble() - 5.7) < 0.05); // 0.7 s after it, before the black
+            CHECK(std::abs(deaths[1]["s"].toDouble() - 14.5) < 0.05);
+        }
+        rgb.resize(150); // without the tint at the end: only the first
+        CHECK_EQ(Cli::detail::deathScreensOf(rgb, 10).size(), 1);
+    }
+
+    // ---- A CS2 replay clip without a kill (25.11.: the second clip of a short was dropped as "no moment"): its end,
+    // cut at the player's death (the tint, then the black screen; spectating after it); the microphone's laughter a
+    // moment of its own from the sentence before it; voices heard in the short's moments are placed, the game ducked
+    {
+        const int rate = 48000;
+        Synth::Builder mic(rate, 20.0, 7), discord(rate, 20.0, 8);
+        mic.floor();
+        Synth::speech(mic, 0.5, 1.5); // the sentence ...
+        Synth::laughter(mic, 2.2);    // ... and the laughter after it
+        discord.floor();
+        const QString micWav = dir.filePath("clips/mic.wav"), discordWav = dir.filePath("clips/discord.wav");
+        Synth::writeWav(micWav, mic.s, rate);
+        Synth::writeWav(discordWav, discord.s, rate);
+        const QString died = Check::makeMedia(
+            dir.filePath("clips/cs2/cs2_clip_died.mkv"),
+            {"-f", "lavfi", "-i",
+             "testsrc2=s=640x360:r=30:d=20[a];color=c=0xC03030:s=640x360:r=30:d=20[r];color=c=black:s=640x360:r=30:d=20[k];"
+             "[a][r]overlay=enable='between(t,14,15.5)'[x];[x][k]overlay=enable='between(t,15.5,18)'",
+             "-f", "lavfi", "-i", "aevalsrc='0.02*sin(2*PI*220*t)+if(between(t,13,13.4),0.8*sin(2*PI*440*t),0)':d=20:s=48000",
+             "-i", micWav, "-i", discordWav, "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:a",
+             "-metadata:s:a:0", "title=System Output", "-metadata:s:a:1", "title=Mikrofon", "-metadata:s:a:2",
+             "title=Discord", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
+        if (CHECK(!died.isEmpty())) {
+            // (min_s 5: the two moments are not grown into one)
+            const QJsonObject r = run("direct", {{"recipe", "short"}, {"files", QJsonArray{died}},
+                                                 {"options", QJsonObject{{"min_s", 5}}}});
+            const QJsonObject session = r["session"].toObject();
+            const QJsonArray list = session["suggestions"].toArray();
+            QJsonObject end, laugh;
+            for (const QJsonValue& x : list) {
+                if (x["reason"]["key"].toString() == QLatin1String("clip_end_death")) end = x.toObject();
+                if (x["reason"]["key"].toString() == QLatin1String("voice_laughter")) laugh = x.toObject();
+            }
+            // The end: the fight before the death, up to 0.7 s after the tint began (14 s) - not the black screen
+            if (!CHECK(!end.isEmpty())) std::printf("       %s\n", QJsonDocument(session).toJson().constData());
+            CHECK(std::abs(end["to_s"].toDouble() - 14.7) < 0.15);
+            CHECK(end["from_s"].toDouble() >= 8.9 && end["from_s"].toDouble() < 12);
+            CHECK(end["labels"].toArray().contains("death"));
+            CHECK(end["reason"].toObject()["text"].toString().contains("death"));
+            // The laughter: from the sentence that leads into it (0.5 s), scored over the clip's end
+            if (CHECK(!laugh.isEmpty())) {
+                if (!CHECK(laugh["from_s"].toDouble() >= 0.3 && laugh["from_s"].toDouble() <= 0.8))
+                    std::printf("       laughter from %.2f\n", laugh["from_s"].toDouble());
+                CHECK(laugh["to_s"].toDouble() >= 3.4);
+                CHECK(laugh["reason"].toObject()["text"].toString().contains("Mikrofon"));
+                CHECK(laugh["score"].toDouble() > end["score"].toDouble());
+                CHECK(laugh["on"].toBool());
+            }
+            // Where each voice stream is heard: the microphone, not the quiet Discord
+            const QJsonArray voice = session["material"][0]["voice"].toArray();
+            QStringList voiced;
+            for (const QJsonValue& v : voice) voiced << v["name"].toString();
+            CHECK(voiced.contains("Mikrofon") && !voiced.contains("Discord"));
+            CHECK_EQ(session["material"][0]["analysis"]["death"].toString(), QString("done"));
+            // Applied (audio_stream auto): the game sound and the microphone heard in the moments, the game ducked
+            // under it; Discord left out (said)
+            const QJsonObject made = run("direct", {{"session", session["id"]}, {"apply", QJsonObject{{"on", "all"}}},
+                                                    {"project_dir", dir.filePath("out/died")}});
+            const QString doneText = QJsonDocument(made["done"].toArray()).toJson();
+            if (!CHECK(doneText.contains("voices heard in the moments placed too") && doneText.contains("Mikrofon")))
+                std::printf("       %s\n", qPrintable(doneText));
+            const QString notesText = QJsonDocument(made["notes"].toArray()).toJson();
+            CHECK(notesText.contains("left out of the sound") && notesText.contains("Discord"));
+            {
+                ProjectData d;
+                QString error;
+                CHECK(ProjectFile::load(made["project"].toString(), &d, &error));
+                QStringList streams;
+                bool ducked = false;
+                for (const Track& t : d.timeline.audio)
+                    for (const Clip& c : t.clips) {
+                        const auto m = std::find_if(d.media.begin(), d.media.end(),
+                                                    [&](const MediaInfo& x) { return x.path == c.mediaPath; });
+                        if (m != d.media.end()) streams << m->audioStreamName(c.audioStream);
+                        ducked |= m != d.media.end() && m->audioStreamName(c.audioStream) == QLatin1String("System Output")
+                                  && !c.keys.value(AnimParam::Volume).isEmpty();
+                    }
+                CHECK(streams.contains("System Output") && streams.contains("Mikrofon") && !streams.contains("Discord"));
+                CHECK(ducked);
+            }
+            // audio_stream 'game': only the game sound, as before
+            const QJsonObject gameOnly = run("direct", {{"recipe", "short"}, {"files", QJsonArray{died}},
+                                                        {"options", QJsonObject{{"audio_stream", "game"}}}});
+            const QJsonObject madeGame = run("direct", {{"session", gameOnly["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}},
+                                                        {"project_dir", dir.filePath("out/died-game")}});
+            CHECK(!QJsonDocument(madeGame["done"].toArray()).toJson().contains("voices heard"));
+            CHECK(QJsonDocument(madeGame["notes"].toArray()).toJson().contains("Mikrofon"));
+
+            // Accents: a mild zoom punch on each hit of the short's moments (the session's hit_s), none with 'off'
+            const auto zoomKeys = [](const QString& project) {
+                ProjectData d;
+                QString error;
+                ProjectFile::load(project, &d, &error);
+                int n = 0;
+                for (const Track& t : d.timeline.video)
+                    for (const Clip& c : t.clips) n += int(c.keys.value(AnimParam::ZoomX).size());
+                return n;
+            };
+            QJsonObject withHits = session;
+            QJsonArray sug = withHits["suggestions"].toArray();
+            for (int i = 0; i < sug.size(); ++i) {
+                QJsonObject x = sug[i].toObject();
+                if (x["on"].toBool()) x["hit_s"] = QJsonArray{x["from_s"].toDouble() + 1.0};
+                sug[i] = x;
+            }
+            withHits["suggestions"] = sug;
+            const QJsonObject punched = run("direct", {{"session", withHits}, {"apply", QJsonObject{{"on", "all"}}},
+                                                       {"project_dir", dir.filePath("out/punch")}});
+            CHECK(QJsonDocument(punched["done"].toArray()).toJson().contains("accents: a mild zoom punch on"));
+            QJsonObject options = withHits["options"].toObject();
+            options["accents"] = "off";
+            withHits["options"] = options;
+            const QJsonObject calm = run("direct", {{"session", withHits}, {"apply", QJsonObject{{"on", "all"}}},
+                                                    {"project_dir", dir.filePath("out/calm")}});
+            CHECK(!QJsonDocument(calm["done"].toArray()).toJson().contains("accents"));
+            const int with = zoomKeys(punched["project"].toString()), without = zoomKeys(calm["project"].toString());
+            if (!CHECK(with > without)) std::printf("       zoom keys %d vs %d\n", with, without);
+            CHECK_EQ(run("direct", {{"recipe", "short"}, {"files", QJsonArray{died}},
+                                    {"options", QJsonObject{{"accents", "flash"}}}})["error"].toString(),
+                     QString("BAD_ARGUMENT"));
+        }
+    }
+
     // ---- The short's hook starts on the action: a hard cut in its lead-in (CS2: the round restarts after the
     // round-end screen) moves its start there (videotest 21.11.: the hook began on "RUNDE VERLOREN")
     {
         const QString cutClip = Check::makeMedia(
             dir.filePath("clips/round.mp4"),
             {"-f", "lavfi", "-i",
-             "color=c=red:s=320x180:r=30:d=20[a];testsrc2=s=320x180:r=30:d=20[b];[a][b]overlay=enable='gte(t,8)'",
+             "color=c=red:s=320x180:r=30:d=20[a];testsrc2=s=320x180:r=30:d=20[b];[a][b]overlay=enable='gte(t,8.5)'",
              "-f", "lavfi", "-i",
              "aevalsrc='0.02*sin(2*PI*220*t)+if(between(t,9,9.6),0.9*sin(2*PI*440*t),0)':d=20:s=48000",
              "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
@@ -550,7 +699,8 @@ int main(int argc, char** argv)
                                              {"options", QJsonObject{{"game", "none"}}}});
         const QJsonArray list = r["session"]["suggestions"].toArray();
         const QJsonObject hook = list.isEmpty() ? QJsonObject{} : list[0].toObject();
-        CHECK(std::abs(hook["from_s"].toDouble() - 8.0) < 0.1);
+        // (the lead-in is 1.5 s before the first loud peak since 25.11.: the cut lies inside it at 8.5 s)
+        if (!CHECK(std::abs(hook["from_s"].toDouble() - 8.5) < 0.1)) std::printf("       from %.3f\n", hook["from_s"].toDouble());
         CHECK(hook["labels"].toArray().contains("hook_trimmed"));
         CHECK(hook["to_s"].toDouble() > 9.6);
     }

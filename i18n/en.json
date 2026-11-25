@@ -3923,5 +3923,11 @@
  "An": "On",
  "Ton beim Scrubben": "Audio while scrubbing",
  "An: ziehst du die Abspielmarke oder gehst Einzelbilder, hörst du kurz den Ton an der Stelle (gut, um Schnitte an Sprache zu setzen). Umschalten auch im Menü Wiedergabe oder mit Shift+S.": "On: dragging the playhead or stepping frames plays a short moment of the sound there (handy for cutting on speech). Also switched in the Playback menu or with Shift+S.",
- "Verfolgung verworfen – Clip geändert": "Tracking discarded – clip changed"
+ "Verfolgung verworfen – Clip geändert": "Tracking discarded – clip changed",
+ "Ende des Clips (direkt nach dem Moment gespeichert)": "end of the clip (saved right after the moment)",
+ "Tod des Spielers am Ende des Clips": "the player's death at the end of the clip",
+ "Lauteste Stelle am Ende des Clips": "the loudest moment at the end of the clip",
+ "Lachen im Sprachkanal ({stream})": "laughter in the voice chat ({stream})",
+ "Jemand ruft laut ({stream})": "someone shouts ({stream})",
+ "Nur {s} s Action (Minimum {min} s): Der Short bleibt kürzer, statt die Zeit vor den Momenten oder nach dem Tod des Spielers zu zeigen.": "Only {s} s of action (minimum {min} s): the short stays shorter rather than showing the time before the moments or after the player's death."
 }

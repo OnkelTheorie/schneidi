@@ -30,7 +30,7 @@ namespace Cli::detail {
 
 namespace {
 
-constexpr int kMomentsVersion = 5; // raise when the moments of a file change for the same sources
+constexpr int kMomentsVersion = 6; // raise when the moments of a file change for the same sources
 
 constexpr double kHighlightsPreS = 2.0;  // highlights' default lead-in before the first kill or loud moment
 constexpr double kHighlightsPostS = 1.0; // ... and lead-out after the last one
@@ -570,11 +570,12 @@ QJsonObject directMomentsFile(const QJsonObject& a, Context& ctx)
                 if (!inside) highlights << v;
             }
             if (!found && length <= kClipEndMaxS) highlights << clipEndMoment(m, {}, length, deaths);
-            for (int i = 0; i < highlights.size(); ++i) {
-                QJsonObject x = highlights[i].toObject();
-                bound(x, deaths, length);
-                highlights[i] = x;
-            }
+        }
+        // How far each may grow in a short: around its hits (or loud peaks), not into a death
+        for (int i = 0; i < highlights.size(); ++i) {
+            QJsonObject x = highlights[i].toObject();
+            bound(x, deaths, length);
+            highlights[i] = x;
         }
         if (ctx.progress) ctx.progress(1);
         mat.moments = int(highlights.size() + extra.size());
