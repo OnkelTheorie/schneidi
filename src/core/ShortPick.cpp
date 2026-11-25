@@ -12,12 +12,14 @@ QVector<Moment> joined(QVector<Moment> list, double gap)
               [](const Moment& a, const Moment& b) { return a.file != b.file ? a.file < b.file : a.from < b.from; });
     QVector<Moment> out;
     for (const Moment& m : list) {
-        // Not across a death screen: the earlier one's end (hi) before where the later one may begin (lo, else from)
-        const bool apart = !out.isEmpty() && out.last().hi >= 0 && out.last().hi < (m.lo >= 0 ? m.lo : m.from);
+        // Not across a death screen: the earlier one ended by a death (its hi) before where the later one may begin
+        // (lo, else from). Another hi is only "a little after the last hit": no reason to keep two clips apart
+        const bool apart = !out.isEmpty() && out.last().died && out.last().hi >= 0
+                        && out.last().hi < (m.lo >= 0 ? m.lo : m.from);
         if (!out.isEmpty() && out.last().file == m.file && m.from - out.last().to < gap && !apart) {
             // The earlier one's lo; the end's hi of the one reaching further (no limit when either has none)
-            if (m.to > out.last().to) out.last().hi = m.hi;
-            else if (m.hi < 0) out.last().hi = -1;
+            if (m.to > out.last().to) out.last().hi = m.hi, out.last().died = m.died;
+            else if (m.hi < 0) out.last().hi = -1, out.last().died = false;
             if (m.lo < 0) out.last().lo = -1;
             out.last().to = std::max(out.last().to, m.to);
             out.last().score = std::max(out.last().score, m.score);

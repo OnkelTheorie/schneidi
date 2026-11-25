@@ -211,6 +211,7 @@ QVector<ShortPick::Moment> asMoments(const QVector<DirectMoment>& list, bool bou
         if (bounded) {
             x.lo = m.lo;
             x.hi = m.hi;
+            x.died = m.labels.contains(QLatin1String("death")); // (bound: hi at the death screen)
             if (m.lo >= 0) x.from = std::max(x.from, m.lo);
             if (m.hi >= 0) x.to = std::min(x.to, m.hi);
             if (x.to <= x.from) x.to = m.hi >= 0 ? std::max(x.from, m.hi) : m.to;
