@@ -13,17 +13,32 @@
 #include <climits>
 #include <cstdlib>
 
-bool Editor::packTrack(TrackRef ref, const QVector<int>& order, const QString& text)
+bool Editor::packTrack(TrackRef ref, const QVector<int>& order, const QString& text, const QHash<int, int>& keep)
 {
     Timeline probe = m_project->timeline();
     QString why;
-    if (MainTrack::pack(probe, ref, order, &why) != MainTrack::Result::Moved) {
+    if (MainTrack::pack(probe, ref, order, &why, keep) != MainTrack::Result::Moved) {
         if (!why.isEmpty()) tell(why, true);
         return false;
     }
     m_project->edit(text.isEmpty() ? T("Hauptspur schließen") : text,
-                    [&](Timeline& tl) { MainTrack::pack(tl, ref, order); });
+                    [&](Timeline& tl) { MainTrack::pack(tl, ref, order, nullptr, keep); });
     return true;
+}
+
+bool Editor::reorderMain(const QVector<int>& order, const QVector<int>& moved, const QString& text)
+{
+    const Timeline& cur = m_project->timeline();
+    if (cur.video.isEmpty()) return false;
+    return packTrack(MainTrack::kMain, order, text, keptOnReorder(cur.video[0], moved));
+}
+
+QHash<int, int> Editor::keptOnReorder(const Track& main, const QVector<int>& moved)
+{
+    // The gaps that were there stay before their clips; a moved clip closes the gap before it (it was picked up)
+    QHash<int, int> keep = MainTrack::gapsBefore(main);
+    for (int id : moved) keep.remove(id);
+    return keep;
 }
 
 void Editor::setMagneticMain(bool on)
@@ -112,9 +127,12 @@ bool Editor::moveOnMain(const QVector<int>& ids, int deltaFrames, TrackKind kind
         for (int id : cues)
             if (const SubtitleCue* c = Subtitles::find(cur, id)) earliest = std::min(earliest, c->start);
         const int anchorId = anchor->id, anchorStart = anchor->start;
+        QVector<int> movedMain;
+        for (const Clip* c : onMain) movedMain << c->id;
+        const QHash<int, int> keep = keptOnReorder(cur.video[0], movedMain);
         const auto apply = [&](Timeline& tl, QString* why) {
             if (reordered) TimelineOps::detachTransitions(tl, mainMoved);
-            const MainTrack::Result r = MainTrack::pack(tl, MainTrack::kMain, order, why);
+            const MainTrack::Result r = MainTrack::pack(tl, MainTrack::kMain, order, why, keep);
             if (r == MainTrack::Result::Refused) return r;
             const Clip* moved = TimelineOps::findClip(std::as_const(tl), anchorId);
             int offset = moved ? moved->start - anchorStart : 0;

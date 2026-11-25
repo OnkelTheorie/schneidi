@@ -18,6 +18,7 @@
 
 #include <QCoreApplication>
 #include <QUndoStack>
+#include <algorithm>
 
 using Check::dump;
 
@@ -503,6 +504,65 @@ void testNotBeforeZero()
     CHECK_EQ(MainTrack::insertPoint(t, 130, {}, 100), 160);
 }
 
+void testKeepOldGaps()
+{
+    // x-phone 9: a project cut with a gap on V1 (desktop, magnet off), then edited with the magnet on (the phone): the
+    // magnet closes only the gaps the edit opened - the pause that was there stays, unlinked music stays in sync
+    Fixture f(false);
+    f.project.edit("a pause before c, music on A2", [](Timeline& tl) {
+        TimelineOps::findClip(tl, 3)->start = 200;
+        TimelineOps::findClip(tl, 13)->start = 200;
+        tl.audio[1].clips = {mk(22, "m", 200, 80)}; // (not linked: timed to c)
+    });
+    f.editor.setMagneticMain(true);
+    const QString start("V1: a[0-100|0-99] b[100-160|0-59] c[200-280|0-79]  V2:  "
+                        "A1: a[0-100|0-99] b[100-160|0-59] c[200-280|0-79]  A2: m[200-280|0-79]");
+    CHECK_EQ(f.d(), start);
+    // An edit after the pause: nothing else moves
+    using TimelineOps::Edge;
+    Timeline before = f.tl();
+    int steps = f.steps();
+    f.editor.trimClip(3, Edge::End, -10);
+    CHECK_EQ(f.d(), QString("V1: a[0-100|0-99] b[100-160|0-59] c[200-270|0-69]  V2:  "
+                            "A1: a[0-100|0-99] b[100-160|0-59] c[200-270|0-69]  A2: m[200-280|0-79]"));
+    CHECK_ONE_STEP(f, before, steps, "trim after the pause");
+    // A shorter clip before it: what the trim opened closes, the pause (40) stays
+    f.editor.trimClip(1, Edge::End, -20);
+    CHECK_EQ(f.d(), QString("V1: a[0-80|0-79] b[80-140|0-59] c[180-250|0-69]  V2:  "
+                            "A1: a[0-80|0-79] b[80-140|0-59] c[180-250|0-69]  A2: m[200-280|0-79]"));
+    // A deleted clip in front of the pause: its room closes, the pause stays
+    f.sel.set({2, 12});
+    f.editor.deleteSelection();
+    CHECK_EQ(f.d(), QString("V1: a[0-80|0-79] c[120-190|0-69]  V2:  A1: a[0-80|0-79] c[120-190|0-69]  A2: m[200-280|0-79]"));
+    // A clip inserted at the pause's end: the pause stays before it
+    f.editor.addMediaAt({"/x/x.mp4"}, 120, 0);
+    CHECK_EQ(f.tl().video[0].clips.size(), 3);
+    CHECK_EQ(f.tl().video[0].clips[1].start, 120);
+    CHECK_EQ(TimelineOps::findClip(f.tl(), 3)->start, 320);
+    // Reordering keeps the gaps before the clips that stay; the moved clip closes the one before it
+    f.editor.moveClips({1, 11}, 1000, TrackKind::Video, 0); // a to the end
+    CHECK_EQ(f.tl().video[0].clips[0].start, 40); // (x keeps its 40)
+    CHECK_EQ(f.tl().video[0].clips[2].id, 1);
+    CHECK_EQ(f.tl().video[0].clips[2].start, f.tl().video[0].clips[1].end());
+    // The phone's hold-and-drag reorder: the same
+    QVector<int> order;
+    for (const Clip& c : f.tl().video[0].clips) order << c.id;
+    std::rotate(order.begin(), order.begin() + 2, order.end()); // a first again
+    f.editor.reorderMain(order, {1}, "reorder");
+    CHECK_EQ(f.tl().video[0].clips[0].id, 1);
+    CHECK_EQ(f.tl().video[0].clips[0].start, 0);
+    CHECK_EQ(f.tl().video[0].clips[1].start, 80 + 40);
+    // The explicit way (the switch turned on, "Lücken auf Spur 1 schließen"): every gap closes
+    CHECK(f.editor.packTrack(MainTrack::kMain));
+    CHECK_EQ(f.tl().video[0].clips[1].start, 80);
+    // A new gap the edit makes (a clip placed past the end, e.g. by a script) closes; with the switch on a drop goes
+    // to the end anyway
+    Timeline a = f.tl(), b = f.tl();
+    Clip late = mk(50, "x", 1000, 20);
+    b.video[0].clips << late;
+    CHECK(MainTrack::keptGaps(a, b, MainTrack::kMain).isEmpty());
+}
+
 void testCore()
 {
     // MainTrack directly: insertPoint, openGap refusing, pack's ripple
@@ -531,6 +591,20 @@ void testCore()
     CHECK(MainTrack::pack(g, MainTrack::kMain) == MainTrack::Result::Moved);
     CHECK_EQ(dump(g), dump(tl));
     CHECK(MainTrack::pack(g, MainTrack::kMain) == MainTrack::Result::Unchanged);
+    // keptGaps: the gaps before a clip that stays are kept, up to what the new layout has there
+    {
+        Timeline w;
+        TimelineOps::ensureTracks(w, TrackKind::Video, 1);
+        w.video[0].clips = {mk(1, "a", 10, 20), mk(2, "b", 50, 20), mk(3, "c", 70, 20)}; // gaps 10, 20
+        Timeline n = w;
+        n.video[0].clips.removeAt(1); // b gone: c had no gap, b's 20 passes to it
+        n.video[0].clips[0].start = 0;
+        const QHash<int, int> k = MainTrack::keptGaps(w, n, MainTrack::kMain);
+        CHECK_EQ(k.value(1), 0); // (a's leading 10: the layout has none there now)
+        CHECK_EQ(k.value(3), 20);
+        CHECK_EQ(MainTrack::gapsBefore(w.video[0]).value(2), 20);
+        CHECK_EQ(MainTrack::gapsBefore(w.video[0]).value(1), 10);
+    }
     // touched: positions only
     Timeline h = tl;
     h.video[0].clips[0].volumeDb = -3;
@@ -562,5 +636,6 @@ int main(int argc, char** argv)
     testRange();
     testLocked();
     testAnnotations();
+    testKeepOldGaps();
     return Check::result();
 }
