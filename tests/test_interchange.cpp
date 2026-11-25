@@ -6,6 +6,7 @@
 
 #include "core/Interchange.h"
 #include "core/Project.h"
+#include "core/Retime.h"
 #include "core/TimelineOps.h"
 #include "core/Timecode.h"
 
@@ -649,6 +650,40 @@ int main(int argc, char** argv)
         m.audioStreams = {AudioStreamInfo{2, "game"}, AudioStreamInfo{2, "mic"}};
         CHECK(m.audioStreamTrackLabel(-1).isEmpty());
         CHECK(!m.audioStreamName(-1).isEmpty() && m.audioStreamName(-1) != "game" && m.audioStreamName(-1) != "mic");
+    }
+    // Speeds outside what a project file keeps (0.01..100) are clamped on import: 1e-9 made materialForPicture's int
+    // conversion undefined, 200 played and then changed to 100 after save + reopen
+    {
+        auto otio = [](const char* scalar) {
+            return readOtio(QByteArray(R"({"OTIO_SCHEMA":"Timeline.1","tracks":{"children":[{"OTIO_SCHEMA":"Track.1",
+                "kind":"Video","children":[{"OTIO_SCHEMA":"Clip.1","name":"a","media_reference":{"target_url":"file:///m/a.mp4"},
+                "effects":[{"OTIO_SCHEMA":"LinearTimeWarp.1","time_scalar":)") + scalar + R"(}],
+                "source_range":{"duration":{"rate":25,"value":50},"start_time":{"rate":25,"value":100}}}]}]}})");
+        };
+        const Seq tiny = otio("1e-9"), fast = otio("-200");
+        if (CHECK(tiny.video.size() == 1 && tiny.video[0].items.size() == 1)) {
+            CHECK_EQ(tiny.video[0].items[0].speed, Retime::kMinSpeed);
+            CHECK(tiny.video[0].items[0].in >= 0 && tiny.video[0].items[0].in <= 100 / Retime::kMinSpeed);
+        }
+        if (CHECK(fast.video.size() == 1 && fast.video[0].items.size() == 1))
+            CHECK(fast.video[0].items[0].speed == Retime::kMaxSpeed && fast.video[0].items[0].reverse);
+        const Seq edl = readEdl("001  AX       V     C        00:00:10:00 00:00:11:00 01:00:00:00 01:00:01:00\n"
+                                "M2   AX       000.0001 00:00:10:00\n",
+                                {25, 1});
+        if (CHECK(edl.video.size() == 1 && edl.video[0].items.size() == 1))
+            CHECK_EQ(edl.video[0].items[0].speed, Retime::kMinSpeed);
+        Seq raw;
+        raw.video.resize(1);
+        Interchange::Item it;
+        it.path = "/m/a.mp4";
+        it.length = 10;
+        it.speed = 1e-6; // a reader that did not clamp
+        raw.video[0].items << it;
+        int id = 0, link = 0;
+        const Timeline tl = toTimeline(raw, [&] { return ++id; }, [&] { return ++link; });
+        if (CHECK(tl.video.size() == 1 && tl.video[0].clips.size() == 1))
+            CHECK_EQ(tl.video[0].clips[0].speed, Retime::kMinSpeed);
+        CHECK_EQ(RetimeMap::materialForPicture(1e10, 1e-9), 1 << 30);
     }
     // Deeply nested files (an upload to `serve`): refused instead of overflowing the stack
     {

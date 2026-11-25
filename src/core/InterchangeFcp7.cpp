@@ -6,6 +6,7 @@
 #include "core/Interchange.h"
 
 #include "core/I18n.h"
+#include "core/Retime.h"
 #include "core/Timecode.h"
 
 #include <QFileInfo>
@@ -535,8 +536,8 @@ Sequence readFcp7(const QByteArray& data)
                     if (id == "timeremap") {
                         if (const Node* p = param("speed")) {
                             const double v = p->at("value").toDouble() / 100.0;
-                            if (v != 0) {
-                                it.speed = std::abs(v);
+                            if (v != 0 && std::isfinite(v)) { // within the speeds a project file keeps
+                                it.speed = std::clamp(std::abs(v), Retime::kMinSpeed, Retime::kMaxSpeed);
                                 it.reverse = v < 0;
                             }
                         }

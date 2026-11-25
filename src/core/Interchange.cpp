@@ -200,7 +200,8 @@ Timeline toTimeline(const Sequence& seq, const std::function<int()>& newId, cons
                 c.start = it.start;
                 c.in = it.in;
                 c.out = it.in + it.length - 1;
-                c.speed = it.speed > 0 ? it.speed : 1.0;
+                // within the speeds a project file keeps: else the clip shows other frames after save + reopen
+                c.speed = it.speed > 0 ? std::clamp(it.speed, Retime::kMinSpeed, Retime::kMaxSpeed) : 1.0;
                 c.reverse = it.reverse;
                 c.enabled = it.enabled;
                 if (it.link > 0) {
