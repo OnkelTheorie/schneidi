@@ -129,6 +129,8 @@ public:
     std::function<void(int, int)> binDropped;
     std::function<bool(int, int)> canMoveBin; // (bin, target)
 
+    void forgetHover() { m_hover = nullptr; } // before clear(): the highlighted item is freed with the others
+
     explicit BinTree(QWidget* parent = nullptr) : QTreeWidget(parent)
     {
         setDragEnabled(true);
@@ -1119,6 +1121,7 @@ void MediaPool::rebuildBins()
         if (!(*it)->isExpanded() && (*it)->childCount() > 0) collapsed.insert((*it)->data(0, Qt::UserRole).toInt());
 
     const QSignalBlocker block(m_bins);
+    static_cast<BinTree*>(m_bins)->forgetHover();
     m_bins->clear();
     const QIcon folder = style()->standardIcon(QStyle::SP_DirIcon);
     // Bins a watch folder fills: marked, the folders in the tooltip
