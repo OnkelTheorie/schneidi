@@ -279,6 +279,8 @@ QJsonObject transitionStyleJson(const TransitionStyle& st);
 QString paramName(AnimParam p);
 QJsonObject keyframesJson(const Clip& c);
 QString editHelp();
+// The rules every op follows (times, relative positions, tracks, linked clips, why), without the ops
+QString editRules();
 QJsonArray editOpsHelp();
 void applyOp(Session& s, const QJsonObject& op);
 

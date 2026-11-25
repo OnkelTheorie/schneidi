@@ -8,6 +8,12 @@ description: Edit videos with schneidi, the open-source video editor that AI can
 schneidi is a video editor whose every function also works without a window. You edit `.schneidi` project files
 (or the project open in the app), look at the result as still images and numbers, and render the final video.
 
+**Call `help` before you use a command or an edit op for the first time**: `help` with command `render`, or with
+command `edit` and op `title` (`schneidi-cli help edit --op title`). The tool list shows only what each tool is for,
+its common parameters and the names of the edit ops; `help` has every parameter with its default, the answer fields
+and the errors, always for the installed version. A guessed key costs a failed call (the error then names the right
+ones and the `help` call to make).
+
 ## Two ways in, same commands
 
 - **MCP tools** (preferred when they are there): `new`, `info`, `edit`, `render`, `probe`, `frames`, … The tool names
@@ -21,10 +27,7 @@ schneidi is a video editor whose every function also works without a window. You
   to see only the answer. Plain numbers as times in edit ops are frames in the project's rate (`"hold":0.3` is
   refused) - seconds are written `"0.3s"`.
 
-Both take the same parameters. When you are unsure how a command or edit op works, ask schneidi instead of guessing:
-`help` (command `edit`, op `title`) or `schneidi-cli help edit --op title`. `effects` lists effect ids, LUTs and
-transition types. These answers come from the installed version and are always current; guesses about parameter
-names cost a failed call.
+Both take the same parameters. `effects` lists effect ids, LUTs and transition types.
 
 ## How to work
 

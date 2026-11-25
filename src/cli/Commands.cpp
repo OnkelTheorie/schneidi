@@ -6,6 +6,7 @@
 #include "cli/Live.h"
 #include "cli/Sandbox.h"
 #include "cli/Serve.h"
+#include "cli/ToolText.h"
 
 #include "core/ChannelLayout.h"
 #include "core/CodeTrust.h"
@@ -1106,8 +1107,10 @@ const QVector<Command>& commands()
          cmdExportTimeline},
         {"edit", "Apply edit operations to a project and save it (a backup of the previous state is kept). If the "
                  "project is open in the schneidi app, the app's project changes instead (one undo step, not saved). "
-                 "Answer: 'changes' (added clips and subtitles as `info` shows them, with their new ids; changed "
-                 "ones with id, track, start, end and the values that changed, keyframes as a count per parameter; "
+                 "Answer: 'changes' (added clips and subtitles as `info` shows them, with their new ids - a linked partner "
+                 "added with them as its id, track and what differs, same_as = the clip it equals otherwise; changed "
+                 "ones with id, track, start, end and the values that changed, keyframes as a count per parameter, effect "
+                 "parameters at their default left out; "
                  "removed ids) and the timeline as a summary. Plan first (the user decides): plan:true changes "
                  "nothing and answers plan {id, steps:[{n, op, why, summary, changes}]}; then edit with plan_id and "
                  "run:[step numbers] or \"all\" (one edit, one undo step) or discard:true. A plan is void once the "
@@ -1474,7 +1477,10 @@ const QVector<Command>& commands()
           {"window", T::Time, "length of a stretch (default: about 1/20 of the whole, on whole seconds)"},
           {"timeline", T::String, "for a project: which timeline (default: the open one)"},
           {"audio_stream", T::Integer, "for a media file: which audio stream, 0 = first"},
-          {"project", T::Path, "count frames in this project's frame rate"}},
+          {"project", T::Path, "count frames in this project's frame rate"},
+          {"numbers", T::Boolean, "also 'windows': each stretch as numbers - from/to (frames), sound_db, peak_db, "
+                                  "silent_percent, motion, cuts, brightness (media file) or clips (ids, project); "
+                                  "default: only the text, which says the same"}},
          cmdOverview},
         {"scenes", "Find scene changes (cuts) in a video file. Returns the 'cuts' and the 'scenes' between them as "
                    "ranges [from, to) in source frames, e.g. to pick shots for 'keep' or to look at them with `frames`. "
@@ -1940,6 +1946,8 @@ QJsonObject inputSchema(const Command& cmd)
         case ParamType::Object: s["type"] = QJsonArray{"object", "string"}; break;
         case ParamType::Data: s["type"] = QJsonArray{"string", "array", "object"}; break;
         }
+        if (const QStringList values = ToolText::choices(cmd.name, p.name); !values.isEmpty())
+            s["enum"] = QJsonArray::fromStringList(values);
         props[p.name] = s;
         if (p.required) required << p.name;
     }
@@ -2006,14 +2014,22 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
     }
     QStringList names;
     for (const Param& p : cmd.params) names << p.name;
+    // Errors teach: the parameter meant (a typing error, another word), every parameter, and where the details are
+    const QString helpCall = QString("help {command:'%1'}").arg(cmd.name);
     for (auto it = raw.begin(); it != raw.end(); ++it)
-        if (!has(it.key()))
-            fail("BAD_ARGUMENT", QString("unknown parameter '%1' for %2 (parameters: %3)")
-                                     .arg(it.key(), cmd.name, names.join(", ")));
+        if (!has(it.key())) {
+            const QStringList close = ToolText::nearest(it.key(), names, 2);
+            fail("BAD_ARGUMENT", QString("unknown parameter '%1' for %2%3 (parameters: %4; details: %5)")
+                                     .arg(it.key(), cmd.name,
+                                          close.isEmpty() ? QString() : QString(" - did you mean '%1'?").arg(close.join("' or '")),
+                                          names.join(", "), helpCall));
+        }
     QJsonObject out;
     for (const Param& p : cmd.params) {
         if (!raw.contains(p.name) || raw[p.name].isNull()) {
-            if (p.required) fail("BAD_ARGUMENT", QString("missing parameter '%1' for %2").arg(p.name, cmd.name));
+            if (p.required)
+                fail("BAD_ARGUMENT", QString("missing parameter '%1' for %2 (%3; details: %4)")
+                                         .arg(p.name, cmd.name, p.help.section(" (", 0, 0).left(80), helpCall));
             continue;
         }
         const QJsonValue v = raw[p.name];
@@ -2183,7 +2199,24 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
             }
             break;
         }
-        if (!ok) fail("BAD_ARGUMENT", QString("parameter '%1' has a wrong value: %2").arg(p.name, v.toVariant().toString()));
+        if (!ok) {
+            const auto takes = [](ParamType t) -> QString {
+                switch (t) {
+                case ParamType::Path: return "a file path";
+                case ParamType::Integer: return "a whole number";
+                case ParamType::Number: return "a number";
+                case ParamType::Time: return "a time: frames, \"4.5s\" or \"MM:SS\"";
+                case ParamType::Object: return "an object or a text";
+                case ParamType::Data: return "a file, a list or an object";
+                default: return "another value";
+                }
+            };
+            const QString given = v.isObject()  ? QString::fromUtf8(QJsonDocument(v.toObject()).toJson(QJsonDocument::Compact)).left(60)
+                                  : v.isArray() ? QString::fromUtf8(QJsonDocument(v.toArray()).toJson(QJsonDocument::Compact)).left(60)
+                                                : v.toVariant().toString();
+            fail("BAD_ARGUMENT", QString("parameter '%1' has a wrong value: %2 (it takes %3; details: %4)")
+                                     .arg(p.name, given, takes(p.type), helpCall));
+        }
     }
     return out;
 }
@@ -2225,6 +2258,9 @@ QString firstSentence(const QString& text)
     return out;
 }
 
+// Ops one `help` call with an op list answers (op:'all' gives every op)
+constexpr int kHelpOps = 10;
+
 QJsonObject cmdHelp(const QJsonObject& a, Context&)
 {
     // The servers are not commands of the table: their options
@@ -2242,13 +2278,42 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
         if (c.name == "edit" && a.contains("command")) {
             QJsonArray ops = editOpsHelp();
             if (!a.contains("op")) {
-                // What each op is for; the details of all of them are ~40 KB, an AI asks for the ones it uses
-                for (QJsonValueRef v : ops) {
-                    QJsonObject op = v.toObject();
-                    op.remove("details");
-                    v = op;
+                // What each op is for, one line each by group (the usage and details of every op were 26 KB in one
+                // answer: an AI asks for the ones it uses, op:'all' gives everything)
+                QHash<QString, QString> lines;
+                for (const QJsonValue& v : ops) {
+                    QString line = v["summary"].toString();
+                    if (line.isEmpty()) line = v["usage"].toString();
+                    line = firstSentence(line);
+                    if (line.size() > 72) line = line.left(line.lastIndexOf(QLatin1Char(' '), 70)) + QStringLiteral("…");
+                    lines.insert(v["op"].toString(), v["op"].toString() + ": " + line);
                 }
-                o["details"] = "help with op:'<name>' (or a comma list, \"all\" = every op) shows the details of ops";
+                QJsonObject grouped;
+                QStringList seen;
+                for (const auto& [group, names] : ToolText::editOpGroups()) {
+                    QJsonArray g;
+                    for (const QString& n : names)
+                        if (lines.contains(n)) g << lines.value(n);
+                    grouped[group] = g;
+                    seen << names;
+                }
+                QJsonArray other;
+                for (const QJsonValue& v : ops)
+                    if (!seen.contains(v["op"].toString())) other << lines.value(v["op"].toString());
+                if (!other.isEmpty()) grouped["other"] = other;
+                o["ops"] = grouped;
+                o["details"] = QString("an op's keys and details: help {command:'edit', op:'name'} (up to %1 ops as a "
+                                       "comma list); every op in full: op:'all' (~45 KB)").arg(kHelpOps);
+                // The parameter text keeps only the rules (it had every op a second time)
+                QJsonObject schema = o["params"].toObject();
+                QJsonObject props = schema["properties"].toObject();
+                QJsonObject opsParam = props["ops"].toObject();
+                opsParam["description"] = editRules() + " Not with plan_id: a plan runs its own ops.";
+                props["ops"] = opsParam;
+                schema["properties"] = props;
+                o["params"] = schema;
+                list << o;
+                continue;
             } else if (a["op"].toString() != "all") {
                 // Only the asked ops (the full list is long); the parameter list of `edit` itself is left out too
                 const QStringList wanted = a["op"].toString().split(',', Qt::SkipEmptyParts);
@@ -2265,7 +2330,21 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
                             break;
                         }
                 }
-                if (only.isEmpty()) fail("NOT_FOUND", "no op " + a["op"].toString() + " (ops: " + names.join(", ") + ")");
+                if (only.isEmpty()) {
+                    const QStringList close = ToolText::nearest(a["op"].toString().trimmed(), names);
+                    fail("NOT_FOUND", "no op " + a["op"].toString()
+                                          + (close.isEmpty() ? QString() : " - did you mean " + close.join(", ") + "?")
+                                          + " (ops: " + names.join(", ") + ")");
+                }
+                // At most kHelpOps ops in one answer (a list of every op was ~45 KB): the rest named for the next call
+                if (only.size() > kHelpOps) {
+                    QStringList rest;
+                    for (qsizetype i = kHelpOps; i < only.size(); ++i) rest << only.at(i).toObject().value("op").toString();
+                    while (only.size() > kHelpOps) only.removeLast();
+                    o["more"] = QString("only the first %1 ops here; ask again for: %2 (or op:'all' for every op)")
+                                    .arg(kHelpOps)
+                                    .arg(rest.join(","));
+                }
                 ops = only;
                 o.remove("params");
             }
@@ -2273,7 +2352,19 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
         }
         list << o;
     }
-    if (list.isEmpty()) fail("NOT_FOUND", "no command " + a["command"].toString());
+    if (list.isEmpty()) {
+        QStringList names;
+        for (const Command& c : commands()) names << c.name;
+        const QStringList close = ToolText::nearest(a["command"].toString(), names, 2);
+        // An edit op asked as a command (help {command:'title'}): its details are under edit
+        const bool op = std::any_of(editOps().begin(), editOps().end(),
+                                    [&a](const OpDef& d) { return d.name == a["command"].toString(); });
+        fail("NOT_FOUND", "no command " + a["command"].toString()
+                              + (op ? QString(" - it is an edit op: help {command:'edit', op:'%1'}").arg(a["command"].toString())
+                                 : close.isEmpty() ? QString()
+                                                   : " - did you mean " + close.join(" or ") + "?")
+                              + " (commands: " + names.join(", ") + ")");
+    }
     QJsonObject o{{"program", "schneidi-cli"}, {"version", QCoreApplication::applicationVersion()},
                   {"api_version", ApiVersion}, {"commands", list}};
     if (a.contains("command")) return o; // one command (or op): only that, an AI asks for it in the middle of work

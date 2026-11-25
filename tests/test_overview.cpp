@@ -38,7 +38,7 @@ int main(int argc, char** argv)
         }
     };
 
-    QJsonObject r = run("overview", {{"file", media}, {"window", "2s"}});
+    QJsonObject r = run("overview", {{"file", media}, {"window", "2s"}, {"numbers", true}});
     QJsonArray w = r["windows"].toArray();
     if (CHECK_EQ(w.size(), 4)) {
         CHECK(std::as_const(w)[0]["motion"].toInt() > 0);
@@ -59,18 +59,21 @@ int main(int argc, char** argv)
     // Default window: about 1/20 of 8 s = whole seconds; a rest of 0.5 s joins the last window
     r = run("overview", {{"file", media}});
     CHECK_EQ(r["window_s"].toDouble(), 1.0);
+    CHECK(!r.contains("windows")); // the text says it (the numbers doubled the answer)
+    CHECK_EQ(r["text"].toString().split('\n').size(), 8);
+    r = run("overview", {{"file", media}, {"numbers", true}});
     CHECK_EQ(r["windows"].toArray().size(), 8);
-    r = run("overview", {{"file", media}, {"window", "3s"}});
+    r = run("overview", {{"file", media}, {"window", "3s"}, {"numbers", true}});
     w = r["windows"].toArray();
     if (CHECK_EQ(w.size(), 3)) CHECK_EQ(std::as_const(w)[2]["to"].toInt(), 200); // 6..8 s, not 6..9
-    r = run("overview", {{"file", media}, {"window", "2.5s"}});
+    r = run("overview", {{"file", media}, {"window", "2.5s"}, {"numbers", true}});
     CHECK_EQ(r["windows"].toArray().size(), 3); // 7.5..8 s (0.5 s) joins 5..7.5
 
     // A project: which clips, how loud
     const QString project = dir.filePath("p.schneidi");
     run("new", {{"project", project}, {"width", 320}, {"height", 180}, {"media", QJsonArray{media}}});
     run("edit", {{"project", project}, {"ops", QString(R"([{"op":"place","media":"%1","at":0}])").arg(media)}});
-    r = run("overview", {{"file", project}, {"window", "4s"}});
+    r = run("overview", {{"file", project}, {"window", "4s"}, {"numbers", true}});
     w = r["windows"].toArray();
     if (CHECK_EQ(w.size(), 2)) {
         CHECK_EQ(std::as_const(w)[0]["clips"].toArray().size(), 1);

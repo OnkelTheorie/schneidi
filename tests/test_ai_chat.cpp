@@ -623,7 +623,8 @@ void test(const QString& dir)
     CHECK_EQ(r1.body["tools"].toArray().size(), chat->tools()->tools().size());
     for (const QJsonValue& t : r1.body["tools"].toArray())
         if (t["name"].toString() == "edit")
-            CHECK(t["input_schema"]["properties"]["ops"]["description"].toString().contains("A timeline position"));
+            // the op names by group (cli/ToolText.h); keys and rules of each op: one `help` call
+            CHECK(t["input_schema"]["properties"]["ops"]["description"].toString().contains("help {command:'edit', op:'name'}"));
     CHECK(fake.probes.isEmpty());
     const qint64 fullChars = system.size() + QJsonDocument(r1.body["tools"].toArray()).toJson(QJsonDocument::Compact).size();
     if (const QString d = qEnvironmentVariable("AI_CHAT_DUMP"); !d.isEmpty()) {
@@ -996,7 +997,8 @@ void test(const QString& dir)
         CHECK_EQ(names, tools);
         const qint64 compactChars = sys.size() + QJsonDocument(o1.body["tools"].toArray()).toJson(QJsonDocument::Compact).size();
         std::printf("       request: full %lld, short %lld characters\n", (long long)fullChars, (long long)compactChars);
-        CHECK(compactChars * 2 < fullChars);
+        // The short request saves mainly the guide now (the tool list itself is short since cli/ToolText.h)
+        CHECK(compactChars * 3 < fullChars * 2);
         if (const QString d = qEnvironmentVariable("AI_CHAT_DUMP"); !d.isEmpty()) {
             QFile f(d + "/request-compact.json");
             if (f.open(QIODevice::WriteOnly)) f.write(QJsonDocument(o1.body).toJson());
@@ -1220,7 +1222,7 @@ void test(const QString& dir)
                     ops = t["function"]["parameters"]["properties"]["ops"]["description"].toString();
             CHECK(!ops.isEmpty());
             QProcess cli;
-            cli.start(Check::cliPath(), {"help", "edit"});
+            cli.start(Check::cliPath(), {"help", "edit", "--op", "all"}); // every op with its usage
             CHECK(cli.waitForFinished(30000));
             const QJsonArray all = QJsonDocument::fromJson(cli.readAllStandardOutput()).object()["commands"][0]["ops"].toArray();
             CHECK(all.size() > 50);
@@ -1249,10 +1251,14 @@ void test(const QString& dir)
                 if (!CHECK_EQ(signatures.value(name), Ai::shortUsage(usages.value(name))))
                     std::printf("       core op %s not whole\n", qPrintable(name));
             for (const QString& name : Ai::kRareOps) CHECK(rare.contains(name) && !signatures.contains(name));
-            cli.start(Check::cliPath(), {"help", "edit", "--op", names.join(',')});
-            CHECK(cli.waitForFinished(30000));
-            const QJsonArray detail = QJsonDocument::fromJson(cli.readAllStandardOutput()).object()["commands"][0]["ops"].toArray();
-            CHECK_EQ(detail.size(), names.size()); // `help` has every one of them
+            // `help` has every one of them (an op list answers 10 at a time, so in steps)
+            int found = 0;
+            for (qsizetype i = 0; i < names.size(); i += 10) {
+                cli.start(Check::cliPath(), {"help", "edit", "--op", names.mid(i, 10).join(',')});
+                CHECK(cli.waitForFinished(30000));
+                found += int(QJsonDocument::fromJson(cli.readAllStandardOutput()).object()["commands"][0]["ops"].toArray().size());
+            }
+            CHECK_EQ(found, int(names.size()));
         }
         // AI_SHORT_DUMP=file.json: the short request as sent (system prompt, tools), to see where its characters go
         if (const QString dump = qEnvironmentVariable("AI_SHORT_DUMP"); !dump.isEmpty()) {
@@ -1280,7 +1286,7 @@ void test(const QString& dir)
     {
         chat->clear();
         fake.gets["/api/show"] = R"({"parameters":"num_ctx                        16384","model_info":{}})";
-        const QJsonObject help{{"command", "edit"}}; // ~39,000 characters, capped to kMaxToolText
+        const QJsonObject help{{"command", "edit"}, {"op", "all"}}; // ~45,000 characters, capped to kMaxToolText
         fake.script = {openAiTool("call_h1", "help", help), openAiTool("call_h2", "help", help),
                        openAiTool("call_h3", "help", help), openAiTool("call_h4", "help", help),
                        openAiText("Fertig.", 16000)};
@@ -1342,7 +1348,8 @@ void test(const QString& dir)
         fake.gets["/api/show"] = R"({"parameters":"num_ctx                        12288","model_info":{}})";
         fake.script = {openAiTool("call_r1", "help", help), openAiText("Weiter geht's.", 9000)};
         int sent2 = int(fake.requests.size());
-        panel->sendText("Lies die Hilfe zu edit");
+        // (a long wish: the tool list alone got small enough that request + capped result fit 12288 otherwise)
+        panel->sendText("Lies die Hilfe zu edit." + QString(" Bitte alles genau lesen.").repeated(160));
         CHECK(waitFor([&] { return !chat->busy(); }));
         CHECK_EQ(int(fake.requests.size()), sent2 + 1); // the request with the result is not sent
         if (const AiChat::Entry* e = lastOf(chat, AiChat::Entry::Kind::Error); CHECK(e)) CHECK(e->text.contains("12288"));

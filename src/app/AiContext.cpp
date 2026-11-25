@@ -275,7 +275,12 @@ QString compactOps(const QJsonArray& editOps)
 QString compactInstructions(const QString& instructions)
 {
     // The app (the only one that asks for the short request) says how its project works live in its own part
-    static const QString live = " If the project is open in the schneidi app, all tools work live";
+    static const QString atApp = " \"@app\" as project = the project open in the schneidi app";
+    if (const qsizetype from = instructions.indexOf(atApp); from >= 0) {
+        const qsizetype to = instructions.indexOf(". ", from);
+        return compactInstructions(instructions.left(from) + (to < 0 ? QString() : instructions.mid(to + 1)));
+    }
+    static const QString live =" If the project is open in the schneidi app, all tools work live";
     if (const qsizetype from = instructions.indexOf(live); from >= 0) {
         static const QString end = "the project open in the running app.";
         if (const qsizetype to = instructions.indexOf(end, from); to > from)
@@ -387,8 +392,8 @@ QString compactGuide(const QString& topics)
         "(cuts), `peaks`/`highlights` (loud or exciting moments), `beats` (a song).\n"
         "2. Say the plan in one or two sentences, then do it; ask only when the answer changes the result a lot.\n"
         "3. Edit in small steps with `edit`. Take clip ids from `info` or the answer of the last `edit`, never guess "
-        "them. Unsure about an op or tool: ask `help` (command 'edit' + op '<name>', or command '<tool>'), never "
-        "guess; `effects` lists effects and transitions.\n"
+        "them. Before using a tool or an op the first time, call `help` (command '<tool>', or command 'edit' + op "
+        "'<name>'), never guess; `effects` lists effects and transitions.\n"
         "4. Check with `check` and `info`, look with `frames`; check rendered files too.\n"
         "5. Times in seconds (\"4.5s\") are the safest. Never overwrite the user's files: renders get new names. Do "
         "what was asked, with good defaults (-14 LUFS for the web, H.264 MP4). Downloads "
