@@ -1643,7 +1643,7 @@
  "In Pixeln: positiv lässt die Alphamaske wachsen, negativ schrumpfen": "In pixels: positive grows the matte, negative shrinks it",
  "In Schneiden öffnen": "Open in Edit",
  "In Timeline öffnen": "Open in Timeline",
- "In Timeline, Vorschau, Studio, Trim-Ansicht und Media Pool. Eingabefelder verstehen jede Schreibweise, „4,5s“ sind immer Sekunden und „112f“ immer Frames. Dateien (EDL, FCPXML) behalten den Timecode.": "In the timeline, viewer, Studio, trim view and Media Pool. Input fields read every notation, “4.5s” is always seconds and “112f” always frames. Files (EDL, FCPXML) keep the timecode.",
+ "In Timeline, Vorschau, Studio, Trim-Ansicht, Media Pool und Export. Eingabefelder verstehen jede Schreibweise, „4,5s“ sind immer Sekunden und „112f“ immer Frames. Dateien (EDL, FCPXML) behalten den Timecode.": "In the timeline, viewer, Studio, trim view, Media Pool and Deliver. Input fields read every notation, “4.5s” is always seconds and “112f” always frames. Files (EDL, FCPXML) keep the timecode.",
  "In den Einstellungen des KI-Servers die Kontextlänge auf mindestens %1 Token stellen – schneidis Werkzeuge und Anleitung allein brauchen etwa %2 (Ollama: OLLAMA_CONTEXT_LENGTH, LM Studio, AtomicChat und andere: Kontextlänge des Modells).": "Set the context length to at least %1 tokens in the AI server's settings – schneidi's tools and guide alone need about %2 (Ollama: OLLAMA_CONTEXT_LENGTH; LM Studio, AtomicChat and others: the model's context length).",
  "In den Medienpool": "Into the Media Pool",
  "In den Medienpool importieren": "Import into Media Pool",

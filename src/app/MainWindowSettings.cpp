@@ -23,6 +23,8 @@
 #include "core/I18n.h"
 #include "core/StartTemplates.h"
 #include "engine/Background.h"
+#include "ui/DeliverPanel.h"
+#include "ui/RenderQueuePanel.h"
 #include "ui/timeline/TimelineOptions.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
@@ -183,6 +185,7 @@ void MainWindow::applyTimelineOptions()
     m_viewer->refreshTimeDisplay();
     m_mediaPool->refreshTimes();
     m_inspector->refreshTimes();
+    if (m_deliver) m_deliver->refreshTimes();
 }
 
 void MainWindow::setTrackHeightStep(TimelineOptions::TrackHeight height)

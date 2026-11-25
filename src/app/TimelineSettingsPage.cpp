@@ -67,7 +67,7 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
                              int(TimelineOptions::timeFormat()));
     }
     display->addRow(T("Zeit anzeigen als"), m_timeFormat);
-    display->addRow(hint(T("In Timeline, Vorschau, Studio, Trim-Ansicht und Media Pool. Eingabefelder verstehen jede "
+    display->addRow(hint(T("In Timeline, Vorschau, Studio, Trim-Ansicht, Media Pool und Export. Eingabefelder verstehen jede "
                            "Schreibweise, „4,5s“ sind immer Sekunden und „112f“ immer Frames. Dateien (EDL, FCPXML) "
                            "behalten den Timecode.")));
 

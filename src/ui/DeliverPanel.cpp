@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+#include "ui/timeline/TimelineOptions.h"
 #include "ui/DeliverPanel.h"
 #include "core/NestedLoop.h"
 #include "ui/WheelGuard.h"
@@ -9,7 +10,6 @@
 #include "core/ExportCheck.h"
 #include "core/SourceBitrate.h"
 #include "core/Project.h"
-#include "core/Timecode.h"
 #include "core/TimelineOps.h"
 #include "core/TranscriptCut.h"
 #include "engine/AudioAnalysis.h"
@@ -290,6 +290,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent, RenderQueue* queue
                            "sind ins Bild eingebrannt. Die Datei bekommt den Zusatz „Prüf-Render“; der normale Export "
                            "bleibt ohne Markierungen."));
     m_range = new QComboBox;
+    m_range->setObjectName("renderRange");
     m_range->addItem(T("Ganze Timeline"));
     m_range->addItem(T("In/Out-Bereich"));
     connect(project, &Project::timelineChanged, this, &DeliverPanel::updateRange);
@@ -831,16 +832,22 @@ void DeliverPanel::updateName()
     m_autoName = name;
 }
 
+void DeliverPanel::refreshTimes()
+{
+    updateRange();
+    if (m_queuePanel) m_queuePanel->refreshTimes();
+}
+
 void DeliverPanel::updateRange()
 {
     // Range only selectable if In or Out is set; then preselected automatically
     const Timeline& tl = m_project->timeline();
     const bool has = tl.markIn >= 0 || tl.markOut >= 0;
-    const int fps = m_project->fps();
+    const double fps = m_project->frameRate();
     m_range->setItemText(1, has ? T("In/Out-Bereich") : T("In/Out-Bereich (nicht gesetzt)"));
     m_range->setToolTip(has ? QString("%1 – %2")
-                                  .arg(tl.markIn >= 0 ? Timecode::format(tl.markIn, fps) : T("Anfang"),
-                                       tl.markOut >= 0 ? Timecode::format(tl.markOut, fps) : T("Ende"))
+                                  .arg(tl.markIn >= 0 ? TimelineOptions::formatTime(tl.markIn, fps) : T("Anfang"),
+                                       tl.markOut >= 0 ? TimelineOptions::formatTime(tl.markOut, fps) : T("Ende"))
                             : T("In/Out mit I und O in der Timeline setzen"));
     auto* model = qobject_cast<QStandardItemModel*>(m_range->model());
     if (auto* item = model ? model->item(1) : nullptr) item->setEnabled(has);
@@ -1070,10 +1077,10 @@ bool DeliverPanel::runCheck()
     std::stable_sort(issues.begin(), issues.end(), [](const ExportCheck::Issue& a, const ExportCheck::Issue& b) {
         return a.severity != b.severity ? int(a.severity) < int(b.severity) : a.from < b.from;
     });
-    const int fps = m_project->fps();
+    const double fps = m_project->frameRate();
     for (const ExportCheck::Issue& i : issues) {
-        // Time first: the message may wrap
-        const QString at = i.from >= 0 ? Timecode::format(i.from, fps) + "  " : QString();
+        // Time first (as the user shows times, Settings › Timeline): the message may wrap
+        const QString at = i.from >= 0 ? TimelineOptions::formatTime(i.from, fps) + "  " : QString();
         auto* item = new QListWidgetItem(QString::fromUtf8("● ") + at + i.message, m_checkList);
         item->setToolTip(i.message);
         item->setForeground(i.severity == ExportCheck::Severity::Error     ? Theme::warning

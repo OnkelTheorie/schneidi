@@ -27,6 +27,8 @@ public:
     // Deletes the selected jobs. Its keys (InputBindings "render_queue_delete", default Del and Backspace) only count
     // while the queue has the focus, there they win over the timeline's Del (the panel checks them itself)
     QAction* deleteAction() const { return m_deleteAction; }
+    // The time format changed (Settings › Timeline): the job cards' In/Out anew
+    void refreshTimes() { rebuild(); }
 
 signals:
     void loadJobRequested(int id); // double-click on a job that is not finished: its settings into the render settings

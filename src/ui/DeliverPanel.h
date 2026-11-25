@@ -35,6 +35,9 @@ public:
     ~DeliverPanel() override;
 
     RenderQueuePanel* queuePanel() const { return m_queuePanel; }
+    // The time format changed (Settings › Timeline): the range's tip and the queue's job cards anew (the check list
+    // takes it with its next run)
+    void refreshTimes();
     // Where exports go at first: the folder the user chose last (Browse or typed; setting render/folder), else the
     // videos folder (Android: the shared Movies folder)
     static QString defaultFolder();
