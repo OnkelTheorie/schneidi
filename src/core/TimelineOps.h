@@ -30,8 +30,8 @@ QVector<TrackRef> tracksOf(const Timeline& tl, const QVector<int>& clipIds);
 // If a track would overwrite a clip that stays (or slide before frame 0), it stays
 // entirely put - never overwrite.
 // What happens to timeline markers and notes in time a ripple takes out: only removing real content (ripple delete,
-// ripple trim of a clip, deleting ranges / a transcript cut) deletes them; closing an empty gap or trimming clips for
-// a transition moves them to the cut point (they mark a moment, not the removed content). Story sections get shorter
+// ripple trim of a clip, deleting ranges / a transcript cut) deletes them; closing an empty gap, trimming clips for
+// a transition or speeding a clip up moves them to the cut point (they mark a moment, not the removed content). Story sections get shorter
 // either way (see rippleAnnotations).
 enum class MarkerCut { Delete, MoveToCut };
 // Timeline markers, notes and story sections follow (rippleAnnotations) with `markerShifts` if given (ripple trim:

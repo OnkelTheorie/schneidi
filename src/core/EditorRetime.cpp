@@ -73,7 +73,8 @@ std::optional<TrackRef> rippleRetimed(Timeline& tl, const QVector<RetimedTrack>&
         Automation::rippleTrack(t, together ? shifts : tracks[i].own);
         edited << tracks[i].ref;
     }
-    TimelineOps::rippleTracks(tl, shifts, edited);
+    // A retime takes no content out (it compresses it): markers and notes over a shortened tail land on its new end
+    TimelineOps::rippleTracks(tl, shifts, edited, nullptr, TimelineOps::MarkerCut::MoveToCut);
     return std::nullopt;
 }
 
