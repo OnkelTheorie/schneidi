@@ -86,6 +86,8 @@ public:
     void addZoomActions(const QList<QAction*>& actions);
     class FrameView* screen() const { return m_screen; }
     // Phone layout (ui/phone/PhoneShell): a transport bar that fits a phone's width (fewer buttons, not centered)
+    // Phone: the zoom button says "Fit" with its symbol (the word was cut to "Einpass…" beside the transport)
+    void setShortZoomText(bool on);
     void setCompact(bool on);
     // Height of the whole viewer (bars included) at which the picture fills `width` (0 = no frame size known)
     int heightFor(int width) const;
@@ -155,6 +157,7 @@ private:
     int m_length = 0, m_in = -1, m_out = -1;
     bool m_recording = false;
     bool m_compact = false;
+    bool m_shortZoom = false; // setShortZoomText
     QLabel* m_notice = nullptr;       // showNotice
     void placeNotice();               // its size (wrapped when the viewer is narrow) and place at the top
     class QTimer* m_noticeTimer = nullptr;

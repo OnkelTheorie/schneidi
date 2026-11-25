@@ -322,6 +322,7 @@ void MainWindow::setLayoutForm(LayoutForm form)
         disableShell();
     } else if (m_phone) { // phone <-> tablet: the same shell, another arrangement
         m_phone->setTablet(form == LayoutForm::Tablet);
+        phoneRows();
         if (form == LayoutForm::Tablet && m_phone->sheet().isEmpty()) m_phone->openSheet("inspector");
         if (form == LayoutForm::Phone) m_phone->closeSheet(); // (the phone shows its timeline; a tool opens a panel)
     } else {
@@ -391,7 +392,7 @@ QWidget* MainWindow::buildPhoneTopBar()
     };
     auto* menuButton = new QToolButton(bar);
     menuButton->setObjectName("phoneMenu");
-    menuButton->setText(QStringLiteral("⋮"));
+    menuButton->setText(QStringLiteral("☰")); // (three lines: a phone's sign for "the menu")
     menuButton->setToolTip(T("Menü"));
     menuButton->setPopupMode(QToolButton::InstantPopup);
     menuButton->setStyleSheet("QToolButton::menu-indicator { image: none; width: 0; }");
@@ -471,6 +472,17 @@ void MainWindow::phoneArrangeTopBar(bool landscape)
     if (jobs) lay->addWidget(jobs, row++, 0, 1, 3, Qt::AlignHCenter);
 }
 
+void MainWindow::phoneRows()
+{
+    // The phone (not the tablet form): the timeline's tool row with five controls at most (blade switch, snapping,
+    // magnetic V1, linked selection, the timeline list; voice-over is in the bottom bar, the rest in the menus) and
+    // the zoom button's "Fit" as its symbol. Again after each change of form or arrangement (buttons added later)
+    const bool phone = m_phone && !m_phone->tablet();
+    m_timeline->setPhoneRow(phone, {InputBindings::instance().action("magnetic_main"),
+                                    InputBindings::instance().action("linked_selection")});
+    m_viewer->setShortZoomText(phone);
+}
+
 void MainWindow::enableShell(bool tablet)
 {
     if (m_phone) return;
@@ -508,6 +520,7 @@ void MainWindow::enableShell(bool tablet)
         // Landscape: the timeline's tool row goes (the height is the picture's), the timeline as tall as its first
         // rows (PhoneShell::setTimelineHeightHint), measured again once the row is gone
         m_timeline->setBarShown(!landscape);
+        phoneRows();
         QTimer::singleShot(0, m_phone, [this] { if (m_phone) m_phone->refreshTimelineHeight(); });
 #ifdef Q_OS_ANDROID
         // Landscape: the height is scarce, the status bar goes (a swipe from the edge shows it for a moment);
@@ -551,6 +564,7 @@ void MainWindow::enableShell(bool tablet)
     updateAddMediaButton();
     m_viewer->screen()->setMinimumSize(160, 72);
     m_viewer->setCompact(true);
+
     // The large viewer: nothing beside the viewer to hide (full screen stays)
     if (auto* large = m_viewer->findChild<QToolButton*>("viewer_large")) large->hide();
 
@@ -648,6 +662,8 @@ void MainWindow::enableShell(bool tablet)
     connect(m_phone, &PhoneShell::sheetChanged, this, syncToggles);
     syncToggles({});
     if (m_backgroundJobs) phoneAdoptBackgroundJobs(); // (a window built before: tests)
+    phoneRows();
+    QTimer::singleShot(0, this, [this] { if (m_phone) phoneRows(); }); // (tool buttons added after the shell)
     // The window's minimum from the phone layout now (the desktop's was set when its layout first ran): a resize to
     // the phone's size before the first show must not be held at the desktop's minimum
     if (tablet) m_phone->openSheet("inspector"); // the tablet's docked panel: the Inspector first
@@ -695,6 +711,8 @@ void MainWindow::disableShell()
         w->setVisible(!h.hidden);
     }
     // The desktop's own state
+    m_timeline->setPhoneRow(false);
+    m_viewer->setShortZoomText(false);
     m_timeline->setCompact(false);
     if (m_chatPanel) m_chatPanel->setCompact(false);
     m_timeline->setBarShown(true);

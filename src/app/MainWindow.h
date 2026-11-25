@@ -864,6 +864,7 @@ private:
     void phoneAdoptBackgroundJobs();
     QWidget* m_phoneTopBar = nullptr; // the phone's top bar: a row in portrait, the rail's head in landscape
     void phoneArrangeTopBar(bool landscape);
+    void phoneRows(); // the phone's (not the tablet's) timeline tool row and zoom text (MainWindowPhone.cpp)
     void enableShell(bool tablet);  // the phone/tablet arrangement from the desktop's
     void disableShell();            // back to the desktop's, everything where it was
     struct ShellHomes* m_shellHomes = nullptr; // where the shell's widgets live on the desktop (MainWindowPhone.cpp)
