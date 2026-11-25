@@ -19,6 +19,7 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <map>
 #include <mutex>
 #include <utility>
 #include <vector>
@@ -197,42 +198,66 @@ QJsonObject regionChanges(const MediaSource& m, const QJsonObject& a, Context& c
                                .arg(w)
                                .arg(h);
     const qsizetype frameBytes = qsizetype(w) * h * 3;
-    std::vector<std::vector<uchar>> samples;
+    const double sensitivity = a.contains("threshold") ? a["threshold"].toDouble() : 0.3;
+    if (sensitivity <= 0 || sensitivity >= 1) fail("BAD_ARGUMENT", "threshold must be between 0 and 1 (default 0.3)");
+    const double minShare = 0.01 + sensitivity * 0.1; // share of the region that must change (default 4 %)
+    const auto diff = [](const uchar* x, const uchar* y) {
+        return std::max({std::abs(x[0] - y[0]), std::abs(x[1] - y[1]), std::abs(x[2] - y[2])});
+    };
+    constexpr int kSteady = 12, kChanged = 40;
+    // score(t): share of pixels steady over t-2..t-1, changed from t-1 to t+2 (overlays slide in for a few
+    // frames), steady over t+2..t+3. Scored as soon as those four samples are there; a sample is dropped once every
+    // score that reads it is done (keeping all of them was 1-3 GB per hour). Samples arrive out of order (several
+    // decoding threads)
+    std::map<int, std::vector<uchar>> samples;
+    std::vector<char> present, scored;
+    std::vector<double> score;
     std::mutex mutex;
+    const auto scoreAt = [&](int t) {
+        if (t < 2 || (size_t(t) < scored.size() && scored[size_t(t)])) return;
+        for (int k : {t - 2, t - 1, t + 2, t + 3})
+            if (!samples.count(k)) return;
+        const uchar *a0 = samples[t - 2].data(), *a1 = samples[t - 1].data(), *b0 = samples[t + 2].data(),
+                    *b1 = samples[t + 3].data();
+        int hits = 0;
+        for (int i = 0; i < w * h; ++i)
+            if (diff(a0 + i * 3, a1 + i * 3) < kSteady && diff(b0 + i * 3, b1 + i * 3) < kSteady
+                && diff(a1 + i * 3, b0 + i * 3) > kChanged)
+                ++hits;
+        if (size_t(t) >= scored.size()) {
+            scored.resize(size_t(t) + 1, 0);
+            score.resize(size_t(t) + 1, 0.0);
+        }
+        scored[size_t(t)] = 1;
+        score[size_t(t)] = double(hits) / (w * h);
+    };
+    // Sample j is read by the scores of j+2, j+1, j-2 and j-3
+    const auto done = [&](int j) {
+        for (int t : {j - 3, j - 2, j + 1, j + 2})
+            if (t >= 2 && !(size_t(t) < scored.size() && scored[size_t(t)])) return false;
+        return true;
+    };
     pictureSamples(
         m, part, QSize(w, h), kRate, filter,
         [&](int sample, const uchar* rgb) {
             std::vector<uchar> copy(rgb, rgb + frameBytes);
             std::lock_guard lock(mutex);
-            if (size_t(sample) >= samples.size()) samples.resize(size_t(sample) + 1);
-            samples[size_t(sample)] = std::move(copy);
+            if (size_t(sample) >= present.size()) present.resize(size_t(sample) + 1, 0);
+            present[size_t(sample)] = 1;
+            samples[sample] = std::move(copy);
+            for (int t = sample - 3; t <= sample + 2; ++t) scoreAt(t);
+            for (int j = sample - 5; j <= sample + 5; ++j)
+                if (auto it = samples.find(j); it != samples.end() && done(j)) samples.erase(it);
         },
         [&ctx](double p) {
             if (ctx.progress) ctx.progress(p);
         },
         true); // every picture: uneven spacing (B-frames skipped) looked like changes in moving content
-    // Samples in time order up to the first missing one (a read error inside the file)
+    // Samples in time order up to the first missing one (a read error inside the file): scores beyond it do not count
     int n = 0;
-    while (n < int(samples.size()) && !samples[size_t(n)].empty()) ++n;
-    const auto px = [&](int frame, int i) { return samples[size_t(frame)].data() + i * 3; };
-    const auto diff = [](const uchar* x, const uchar* y) {
-        return std::max({std::abs(x[0] - y[0]), std::abs(x[1] - y[1]), std::abs(x[2] - y[2])});
-    };
-    constexpr int kSteady = 12, kChanged = 40;
-    const double sensitivity = a.contains("threshold") ? a["threshold"].toDouble() : 0.3;
-    if (sensitivity <= 0 || sensitivity >= 1) fail("BAD_ARGUMENT", "threshold must be between 0 and 1 (default 0.3)");
-    const double minShare = 0.01 + sensitivity * 0.1; // share of the region that must change (default 4 %)
-    // score(t): share of pixels steady over t-2..t-1, changed from t-1 to t+2 (overlays slide in for a few
-    // frames), steady over t+2..t+3
-    std::vector<double> score(size_t(std::max(n, 0)), 0.0);
-    for (int t = 2; t + 3 < n; ++t) {
-        int hits = 0;
-        for (int i = 0; i < w * h; ++i)
-            if (diff(px(t - 2, i), px(t - 1, i)) < kSteady && diff(px(t + 2, i), px(t + 3, i)) < kSteady
-                && diff(px(t - 1, i), px(t + 2, i)) > kChanged)
-                ++hits;
-        score[size_t(t)] = double(hits) / (w * h);
-    }
+    while (n < int(present.size()) && present[size_t(n)]) ++n;
+    score.resize(size_t(std::max(n, 0)), 0.0);
+    for (int t = std::max(0, n - 3); t < n; ++t) score[size_t(t)] = 0;
     const int minGap = std::max(1, int(std::lround((a.contains("min") ? parseTime(a["min"], f, "min") / f.rate.fps() : 0.5) * kRate)));
     QJsonArray changes;
     int last = -minGap;

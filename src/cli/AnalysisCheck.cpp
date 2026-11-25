@@ -759,6 +759,12 @@ QJsonObject cmdCheck(const QJsonObject& a, Context& ctx)
             Clip c;
             c.mediaPath = m.info.path;
             c.out = m.info.length - 1;
+            // The first stream that plays (stream 0 may be empty or of a codec this build lacks); none: stream 0, the
+            // decode error below says so
+            try {
+                c.audioStream = audioStreamArg(m.info, a);
+            } catch (const Error&) {
+            }
             const double start = m.info.hasVideo ? 0.5 : 0;
             const auto peaks = AudioAnalysis::clipFramePeaks(f, c, progress(start, start + (1 - start) / 2));
             const auto loud = AudioAnalysis::clipLoudness(f, c, progress(start + (1 - start) / 2, 1));

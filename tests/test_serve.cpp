@@ -97,6 +97,15 @@ void sandboxRules(const QString& base)
     CHECK_EQ(codeOf([] { resolve("clips/.config/autostart/x.desktop"); }), QString("HIDDEN"));
     CHECK_EQ(codeOf([&] { Cli::normalize(*exportTl, {{"project", "a.schneidi"}, {"out", ".bashrc"}}); }), QString("HIDDEN"));
     CHECK_EQ(codeOf([&] { Cli::normalize(*probe, {{"file", ".hidden/key.mp4"}}); }), QString("HIDDEN"));
+    // ... also through a link to a hidden folder ("keys" -> .ssh): the real path counts
+    QDir(root).mkpath(".ssh");
+    QFile(root + "/.ssh/id_rsa").open(QIODevice::WriteOnly);
+    QFile::link(root + "/.ssh", root + "/keys");
+    if (QFileInfo(root + "/keys").isSymLink()) {
+        CHECK_EQ(codeOf([] { resolve("keys/id_rsa"); }), QString("HIDDEN"));
+        CHECK_EQ(codeOf([] { resolve("keys/new.mp4"); }), QString("HIDDEN"));
+        CHECK_EQ(codeOf([] { resolve("keys"); }), QString("HIDDEN"));
+    }
     // Files that make MLT/FFmpeg read other files or addresses (MLT XML, playlists) are no media here, by name or
     // content; other XML (a timeline of another program) is fine
     const auto write = [&](const QString& rel, const QByteArray& data) {

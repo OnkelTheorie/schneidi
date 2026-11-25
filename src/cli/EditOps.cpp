@@ -214,10 +214,6 @@ QColor colorOf(const QJsonValue& v, const QString& what)
 
 namespace {
 
-// The last frame a project file keeps (ProjectFile's intOf): a clip beyond it came back cut on loading, and the sum of
-// two times near int's end (a still at 2 billion frames with 2 billion frames of length) overflowed
-constexpr qint64 kMaxFrame = qint64(1) << 30;
-
 // Source range [in, out) of a media file: defaults to the whole file
 void sourceRange(Session& s, const QJsonObject& op, const MediaInfo& m, int* in, int* out)
 {
@@ -531,8 +527,13 @@ void opKeep(Session& s, const QJsonObject& op)
     for (const QJsonValue& r : ranges) {
         QJsonObject sub;
         const QJsonObject o = r.toObject();
+        // "2s-5s", ["5s"] or {from} without to had no in/out: the whole file was placed, silently
+        if (!(r.isArray() && r.toArray().size() == 2) && !(o.contains("start") && o.contains("end"))
+            && !(o.contains("from") && o.contains("to")))
+            fail("BAD_ARGUMENT", QString("keep: %1 is no range - ranges are [from, to] pairs (or {from, to})")
+                                     .arg(jsonSnippet(r)));
         if (r.isArray()) sub = {{"in", r.toArray().at(0)}, {"out", r.toArray().at(1)}};
-        else if (o.contains("start")) sub = {{"in", o.value("start")}, {"out", o.value("end")}}; // as answers name ranges
+        else if (o.contains("start") && o.contains("end")) sub = {{"in", o.value("start")}, {"out", o.value("end")}}; // as answers name ranges
         else sub = {{"in", o.value("from")}, {"out", o.value("to")}};
         int in = 0, out = 0;
         sourceRange(s, sub, m, &in, &out);
@@ -581,6 +582,11 @@ void opAlign(Session& s, const QJsonObject& op)
         first = secs("first") * fps;
         every = secs("every") * fps;
         if (every < 1) fail("BAD_ARGUMENT", "to.every must be at least one frame");
+        // Unchecked seconds (every:1e12) made the casts to int below undefined
+        if (!std::isfinite(first) || first < 0 || first > double(kMaxFrame))
+            fail("BAD_ARGUMENT", "to.first must be a time from 0 up to the project's limit");
+        if (!std::isfinite(every) || every > double(kMaxFrame))
+            fail("BAD_ARGUMENT", "to.every must be a time up to the project's limit");
     } else {
         fail("BAD_ARGUMENT", "'to' is a list of times or a grid {first:<s>, every:<s>}: `beats` on the project (its "
                              "music track) gives beat_phase.s/beat_period.s, or downbeats.s/every_s for bar ones");
@@ -711,12 +717,22 @@ void opEnable(Session& s, const QJsonObject& op, bool on)
 void opMove(Session& s, const QJsonObject& op)
 {
     const QJsonValue by = op.value("by");
-    int delta = 0;
-    if (by.isDouble()) delta = by.toInt();
-    else if (by.isString() && by.toString().startsWith('-')) delta = -parseTime(by.toString().mid(1), s.format(), "by");
-    else if (by.isString()) delta = parseTime(by, s.format(), "by");
-    const QVector<int> ids = clipIds(s, op);
-    if (op.contains("to")) delta = timeOf(s, op, "to") - clipOf(s, {{"clip", ids.first()}}).start;
+    int delta = parseSignedTime(by, s.format(), "by");
+    // Subtitle ids too: Editor::moveClips moves them along in time (clipIds puts them behind the clips)
+    const QVector<int> ids = clipIds(s, op, true);
+    const Timeline& tl = s.project.timeline();
+    if (op.contains("to")) {
+        // 'to' places the first id given, a clip or a subtitle
+        const QJsonValue v = op.value("clips");
+        const int given = (v.isArray() ? v.toArray().first() : v.isDouble() ? v : op.value("clip")).toVariant().toInt();
+        const SubtitleCue* cue = Subtitles::find(tl, given);
+        delta = timeOf(s, op, "to") - (cue ? cue->start : clipOf(s, {{"clip", given}}).start);
+    }
+    qint64 lastEnd = 0;
+    for (int id : ids)
+        if (const Clip* c = TimelineOps::findClip(tl, id)) lastEnd = std::max<qint64>(lastEnd, c->end());
+        else if (const SubtitleCue* q = Subtitles::find(tl, id)) lastEnd = std::max<qint64>(lastEnd, q->end);
+    checkFrameLimit(lastEnd + delta, "move: the last clip");
     const int trackDelta = op.value("track_delta").toInt();
     TrackRef from;
     const Clip* first = TimelineOps::findClip(s.project.timeline(), ids.first(), &from);
@@ -774,11 +790,12 @@ void opSubtitle(Session& s, const QJsonObject& op)
     }
     const SubtitleCue c = *Subtitles::find(s.project.timeline(), id);
     const int start = op.contains("at") ? timeOf(s, op, "at") : c.start;
-    int stop = op.contains("to") ? timeOf(s, op, "to") : start + c.length();
-    if (op.contains("duration")) stop = start + timeOf(s, op, "duration");
+    qint64 stop = op.contains("to") ? timeOf(s, op, "to") : qint64(start) + c.length();
+    if (op.contains("duration")) stop = qint64(start) + timeOf(s, op, "duration");
     if (stop <= start) fail("BAD_ARGUMENT", "'to' must be after 'at'");
+    checkFrameLimit(stop, "subtitle");
     if (start == c.start && stop == c.end) return;
-    ed.setSubtitleTiming(id, start, stop); // stops at the neighbours
+    ed.setSubtitleTiming(id, start, int(stop)); // stops at the neighbours
     // Cues never overlap: say where it stopped (a merge has to delete the next cue before it extends this one)
     const SubtitleCue* now = Subtitles::find(s.project.timeline(), id);
     if (now && (now->start != start || now->end != stop))
@@ -1157,7 +1174,8 @@ QVector<OpDef> makeOps()
              const bool ripple = op.value("ripple").toBool(true);
              s.editor.deleteRanges(ranges, ripple, ripple ? "Delete ranges with ripple" : "Delete ranges");
          }},
-        {"move", "{op:'move', clips, by|to, track_delta?}", {}, {}, opMove, kClipKeys},
+        {"move", "{op:'move', clips, by|to, track_delta?}", "clips may hold subtitle ids too (they move in time only); "
+         "'to' places the first id given", {}, opMove, kClipKeys},
         {"fade", "{op:'fade', clips, in?, out?, linked?}", "fade handles (video: to the track below/black, audio: volume); "
          "a video clip's sound fades along unless linked:false; sound alone fades without its picture unless linked:true",
          {}, opFade, kClipKeys},

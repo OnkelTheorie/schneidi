@@ -297,15 +297,15 @@ QJsonObject cmdNew(const QJsonObject& a, Context&)
         p.addMedia(info);
     }
     QDir().mkpath(QFileInfo(path).absolutePath());
-    // Replacing: like every writing command under the write lock, and the old state goes into the backups
-    // (`restore` brings it back)
-    std::unique_ptr<QLockFile> lock;
+    // Like every writing command under the write lock, also for a new file: two `new` (two direct/short applies)
+    // to one free name take turns, and the later one sees the file the first one made instead of replacing it.
+    // Replacing: the old state goes into the backups (`restore` brings it back)
+    const std::unique_ptr<QLockFile> lock = ProjectFile::lock(path, ProjectFile::kCliLockWaitMs);
+    if (!lock) fail("PROJECT_LOCKED", "the project is being saved by someone else (schneidi app?), try again: " + path);
+    if (!replaces && QFileInfo::exists(path) && !a["overwrite"].toBool())
+        fail("EXISTS", "project already exists (made meanwhile by another command?); pass overwrite to replace it: " + path);
     QString backup;
-    if (replaces) {
-        lock = ProjectFile::lock(path, ProjectFile::kCliLockWaitMs);
-        if (!lock) fail("PROJECT_LOCKED", "the project is being saved by someone else (schneidi app?), try again: " + path);
-        backup = ProjectFile::backup(path);
-    }
+    if (QFileInfo::exists(path)) backup = ProjectFile::backup(path);
     QString error;
     if (!ProjectFile::save(p.data(), path, &error)) fail("SAVE_FAILED", error);
     QJsonObject o = projectJson(p, path);

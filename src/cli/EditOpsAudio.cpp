@@ -1170,6 +1170,7 @@ void opSpeak(Session& s, const QJsonObject& op)
         track = parseTrack(op.value("track"), &k);
         if (k != TrackKind::Audio) fail("BAD_ARGUMENT", "track must be an audio track (A1 …)");
     }
+    checkFrameLimit(qint64(at) + m.length, "speak");
     track = Speech::freeAudioTrack(s.project.timeline(), at, at + m.length, track);
     const int len = s.editor.placeSourceRange(m.path, 0, m.length - 1, at, track);
     if (len <= 0) fail("FAILED", QString("could not place the speech on A%1 (locked?)").arg(track + 1));
@@ -1254,6 +1255,7 @@ void opVoiceover(Session& s, const QJsonObject& op)
     const MediaInfo& m = s.media(absolute(file));
     if (!m.hasAudio || m.length <= 0) fail("BAD_ARGUMENT", "the file has no sound: " + file);
     const int at = op.contains("at") ? timeOf(s, op, "at") : s.app.value("playhead").toInt(0);
+    checkFrameLimit(qint64(at) + m.length, "voiceover");
     const Timeline& tl = s.project.timeline();
     int track = -1;
     if (op.value("track").toString() == "new") {

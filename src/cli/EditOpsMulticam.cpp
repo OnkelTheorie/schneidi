@@ -465,6 +465,18 @@ void opMulticamNudge(Session& s, const QJsonObject& op)
         return first;
     };
     const int before = firstStart();
+    {
+        const Sequence* x = s.project.sequence(seq);
+        const MulticamAngle& a = x->angles[angle];
+        qint64 last = 0;
+        const auto ends = [&](const Track& t) {
+            for (const Clip& c : t.clips) last = std::max<qint64>(last, c.end());
+        };
+        if (a.videoTrack >= 0 && a.videoTrack < x->timeline.video.size()) ends(x->timeline.video[a.videoTrack]);
+        for (int i : a.audioTracks)
+            if (i >= 0 && i < x->timeline.audio.size()) ends(x->timeline.audio[i]);
+        checkFrameLimit(last + by, "multicam_nudge: the angle");
+    }
     s.editor.nudgeMulticamAngle(seq, angle, by);
     if (const int moved = firstStart() - before; before != INT_MAX && moved != by)
         s.notes << QString("angle %1 moved by %2 frame(s) only: it cannot start before the multicam clip").arg(angle + 1).arg(moved);
@@ -480,9 +492,10 @@ void opAddAngle(Session& s, const QJsonObject& op)
     Multicam::Angle angle{name, {}};
     if (op.contains("offset")) {
         // Placed by hand: the first file `offset` after the reference's start, the others right after each other
-        int at = signedTime(s, op.value("offset"), "offset");
+        qint64 at = signedTime(s, op.value("offset"), "offset");
         for (const QString& f : files) {
-            angle.files << Multicam::FilePlacement{f, at, true, SyncMethod::Start};
+            checkFrameLimit(at + s.media(f).length, "add_angle");
+            angle.files << Multicam::FilePlacement{f, int(at), true, SyncMethod::Start};
             at += s.media(f).length;
         }
     } else {

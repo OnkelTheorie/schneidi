@@ -222,6 +222,18 @@ int runTests(int argc, char** argv)
         CHECK(at("1,5s, 3s,2,25s") == (QJsonArray{"1.5s", "3s", "2.25s"}));
         CHECK(at("6,95") == (QJsonArray{"6", "95"}));
         CHECK(at("10, 20s") == (QJsonArray{"10", "20s"}));
+        // One number is a one-element list (loudness clips:12 measured the whole mix); broken JSON is an error
+        CHECK(Cli::normalize(*frames, {{"source", g_path}, {"at", 12}})["at"].toArray() == (QJsonArray{12}));
+        for (const QJsonValue& bad : {QJsonValue("[1,2"), QJsonValue(true), QJsonValue(QJsonObject{{"at", 1}})}) {
+            QString code;
+            try {
+                Cli::normalize(*frames, {{"source", g_path}, {"at", bad}});
+            } catch (const Cli::Error& e) {
+                code = e.code;
+            }
+            CHECK_EQ(code, QString("BAD_ARGUMENT"));
+        }
+        CHECK(at("[1, \"2s\"]") == (QJsonArray{1, "2s"}));
         // Numbers as text: no thousands separators ("1,500" was 1500); a lone comma is a decimal comma
         {
             const Cli::Command* newCmd = Cli::find("new");
@@ -255,6 +267,21 @@ int runTests(int argc, char** argv)
             }
         }
         CHECK_EQ(Cli::detail::parseTime(QJsonValue("6,95s"), ProjectFormat{}, "at"), int(std::lround(6.95 * ProjectFormat{}.rate.fps())));
+        // Audio tracks by plain number as documented ("2" = A2; was "no audio track 2"); V2 stays refused
+        {
+            Project tp;
+            Timeline tl;
+            tl.audio.resize(3);
+            CHECK(Cli::detail::audioTracksOf(tp, tl, "2") == (QVector<int>{1}));
+            CHECK(Cli::detail::audioTracksOf(tp, tl, "A3,1") == (QVector<int>{2, 0}));
+            QString code;
+            try {
+                Cli::detail::audioTracksOf(tp, tl, "V2");
+            } catch (const Cli::Error& e) {
+                code = e.code;
+            }
+            CHECK_EQ(code, QString("BAD_ARGUMENT"));
+        }
         // A file name with a comma stays one path in a comma-separated string; other pieces still split
         {
             const QString comma = dir.filePath("clip, take 2.mp4");
@@ -314,6 +341,24 @@ int runTests(int argc, char** argv)
             CHECK_EQ(code, QString("BAD_ARGUMENT"));
         }
         CHECK_EQ(Cli::normalize(*check, {{"source", g_path}, {"target_lufs", "-16"}})["target_lufs"].toDouble(), -16.0);
+        // A list where a string is due became "" silently (brand colors wiped, tracks:['A2'] measured the whole
+        // mix): joined into the comma list; objects and nested lists are refused
+        {
+            const auto tracks = [&](const QJsonValue& v) {
+                try {
+                    return Cli::normalize(*loudness, {{"source", g_path}, {"tracks", v}})["tracks"].toString();
+                } catch (const Cli::Error& e) {
+                    return e.code;
+                }
+            };
+            CHECK_EQ(tracks(QJsonArray{"A2"}), QString("A2"));
+            CHECK_EQ(tracks(QJsonArray{"A2", "Mikrofon"}), QString("A2,Mikrofon"));
+            CHECK_EQ(tracks(QJsonArray{2, 3}), QString("2,3"));
+            CHECK_EQ(tracks("A3"), QString("A3"));
+            CHECK_EQ(tracks(QJsonObject{{"track", "A2"}}), QString("BAD_ARGUMENT"));
+            CHECK_EQ(tracks(QJsonArray{QJsonArray{"A2"}}), QString("BAD_ARGUMENT"));
+            CHECK_EQ(tracks(QJsonArray{QJsonObject{}}), QString("BAD_ARGUMENT"));
+        }
     }
     // Times beyond int: an error, not an undefined cast
     {
@@ -559,6 +604,10 @@ int runTests(int argc, char** argv)
         CHECK_EQ(gap["changes"]["added"][0]["start"].toInt(), 45);
         CHECK_EQ(saved(), before);
     }
+    // align with a huge grid (every:1e12 seconds): refused, the casts to int were undefined
+    for (const char* grid : {R"({"first":0,"every":1e12})", R"({"first":1e15,"every":1})", R"({"first":-1,"every":1})"})
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"align","events":[{"media":"/x/a.mp4","source":10}],"to":%1}])").arg(grid)}})
+                  .contains("(align): to."));
     // keep with one range written another way (small models): taken with a note; no range at all: a whole example
     for (const char* op : {R"({"op":"keep","media":"/x/a.mp4","ranges":[0,10]})", R"({"op":"keep","media":"/x/a.mp4","range":[0,10]})",
                             R"({"op":"keep","media":"/x/a.mp4","from":0,"to":10})"}) {
@@ -570,6 +619,13 @@ int runTests(int argc, char** argv)
                        {"dry_run", true}})["changes"]["added"].toArray().size() == 2);
     CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"keep","media":"/x/a.mp4"}])"}})
               .contains(R"("ranges":[["2s","5.5s"],["10s","12s"]])"));
+    // A range that is no pair ("2s-5s", ["5s"], {from} without to) placed the whole file, silently: refused
+    for (const char* ranges : {R"(["0-10","20-30","40-45"])", R"([["5"]])", R"([{"from":5}])", R"([{"start":5}])",
+                               R"([[0,10],[20,30,40]])"}) {
+        const QString msg = messageOf(
+            "edit", {{"project", g_path}, {"ops", QString(R"([{"op":"keep","media":"/x/a.mp4","ranges":%1}])").arg(ranges)}});
+        Check::report(msg.startsWith("BAD_ARGUMENT") && msg.contains("is no range"), qPrintable(msg), __FILE__, __LINE__);
+    }
     const QJsonObject info = run("info", {{"project", g_path}});
     const int secondId = info["timeline"]["tracks"][0]["clips"][1]["id"].toInt();
     edit(QString(R"([{"op":"delete","clips":[%1],"ripple":true}])").arg(secondId).toUtf8().constData());
@@ -614,6 +670,16 @@ int runTests(int argc, char** argv)
     CHECK_EQ(tl["tracks"][0]["clips"][0]["effects"][0]["params"]["strength"].toDouble(), 100.0); // clamped
     CHECK_EQ(tl["subtitles"][0]["cues"].toArray().size(), 2);
     CHECK_EQ(tl["subtitles"][0]["cues"][0]["text"].toString(), QString("Two!"));
+    // move takes subtitle ids too (its comment said so, it answered "no clip with id"); 'to' places the first id given
+    {
+        const int cue = tl["subtitles"][0]["cues"].toArray().last()["id"].toInt();
+        const QJsonObject moved = run("edit", {{"project", g_path}, {"dry_run", true},
+                                               {"ops", QString(R"([{"op":"move","clips":[%1],"to":5000}])").arg(cue)}});
+        int start = -1;
+        for (const QJsonValue& c : moved["timeline"]["subtitles"][0]["cues"].toArray())
+            if (c["id"].toInt() == cue) start = c["start"].toInt();
+        CHECK_EQ(start, 5000);
+    }
 
     // Restore = undo of the last edit (and restore again = redo)
     run("restore", {{"project", g_path}});
@@ -956,6 +1022,22 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK(!subs.last()["style"]["box"].toBool());
         ed(QString(R"([{"op":"track","track":"V2","lock":false},{"op":"remove_track","track":"ST%1"}])").arg(subs.size()));
         CHECK_EQ(run("info", {{"project", g_path}})["timeline"]["subtitles"].toArray().size(), int(subs.size()) - 1);
+        // move_to and lock together: the moved track is locked, not the one that slid into its place
+        {
+            const QJsonObject moved = run("edit", {{"project", g_path}, {"dry_run", true},
+                                                   {"ops", R"([{"op":"track","track":"V1","move_to":"V2","lock":true}])"}});
+            const QJsonArray tracks = moved["timeline"]["tracks"].toArray();
+            CHECK_EQ(tracks[0]["name"].toString(), QString("Titles"));
+            CHECK(!tracks[0]["locked"].toBool());
+            CHECK(tracks[1]["name"].toString() != QString("Titles"));
+            CHECK(tracks[1]["locked"].toBool());
+        }
+        // trim/move 'by' as 2.5 (meant: seconds) or true did nothing and answered ok: refused like other times
+        for (const char* op : {R"({"op":"trim","clip":%1,"by":2.5})", R"({"op":"trim","clip":%1,"by":true})",
+                               R"({"op":"move","clips":[%1],"by":-1.5})"}) {
+            const QString msg = messageOf("edit", {{"project", g_path}, {"ops", QString("[%1]").arg(QString(op).arg(ids()[0]))}});
+            Check::report(msg.startsWith("BAD_ARGUMENT") && msg.contains("by"), qPrintable(msg), __FILE__, __LINE__);
+        }
         // Unlink: moving the video leaves the audio
         c = ids();
         ed(QString(R"([{"op":"unlink","clips":[%1]},{"op":"move","clips":[%1],"by":5}])").arg(c[0]));
@@ -2374,6 +2456,22 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         }
         run("edit", {{"project", proj}, {"ops", QString(R"([{"op":"place","media":"%1","at":0,"duration":536870912,"track":"V3"}])").arg(still)}});
         CHECK_EQ(run("info", {{"project", proj}})["timeline"]["tracks"][2]["clips"][0]["end"].toInt(), 536870912);
+        // The other ops that place or move by a time keep the same limit (a title at 1.5 billion came back at 2^30)
+        {
+            const int last = run("info", {{"project", proj}})["timeline"]["tracks"][1]["clips"][0]["id"].toInt();
+            const QByteArray kept = [&] { QFile f(proj); return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray(); }();
+            for (const char* op : {R"({"op":"title","text":"x","at":1500000000,"duration":10})",
+                                   R"({"op":"title","text":"x","at":0,"duration":1500000000})",
+                                   R"({"op":"subtitle","text":"x","at":2000000000})",
+                                   R"({"op":"shape","kind":"star","at":1073741820,"duration":10})",
+                                   R"({"op":"move","clips":[%1],"by":1})", R"({"op":"move","clips":[%1],"to":2000000000})",
+                                   R"({"op":"copy","clips":[%1],"at":1073741810})"}) {
+                const QString msg = messageOf("edit", {{"project", proj}, {"ops", QString("[%1]").arg(QString(op).arg(last))}});
+                Check::report(msg.startsWith("BAD_ARGUMENT") && msg.contains("beyond the limit"), qPrintable(msg), __FILE__, __LINE__);
+                QFile f(proj);
+                CHECK(f.open(QIODevice::ReadOnly) && f.readAll() == kept);
+            }
+        }
     }
     // Subtitles only (format srt/vtt): the same checks as a video render - the extension must fit, and no subtitle
     // file may replace a source file of the project (it wrote SRT text over the clip with overwrite)

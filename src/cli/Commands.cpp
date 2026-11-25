@@ -191,6 +191,20 @@ int parseTime(const QJsonValue& v, const ProjectFormat& fmt, const QString& what
          QString("%1: '%2' is not a time (use frames, \"4.5s\", \"MM:SS\" or \"HH:MM:SS:FF\")").arg(what, s));
 }
 
+int parseSignedTime(const QJsonValue& v, const ProjectFormat& fmt, const QString& what)
+{
+    if (v.isUndefined()) return 0;
+    if (v.isDouble() && v.toDouble() < 0) return -parseTime(QJsonValue(-v.toDouble()), fmt, what);
+    if (v.isString() && v.toString().trimmed().startsWith('-')) return -parseTime(v.toString().trimmed().mid(1), fmt, what);
+    return parseTime(v, fmt, what);
+}
+
+void checkFrameLimit(qint64 end, const QString& what)
+{
+    if (end > kMaxFrame)
+        fail("BAD_ARGUMENT", QString("%1 would end at frame %2, beyond the limit of %3 a project keeps").arg(what).arg(end).arg(kMaxFrame));
+}
+
 QString tc(int frames, const ProjectFormat& fmt) { return Timecode::format(frames, fmt.rate.timebase()); }
 double seconds(int frames, const ProjectFormat& fmt) { return std::round(frames / fmt.rate.fps() * 1000) / 1000; }
 
@@ -1957,7 +1971,18 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
         const QString str = v.isString() ? v.toString() : QString();
         const auto list = [&](const QString& text) {
             if (v.isArray()) return v.toArray();
-            if (text.trimmed().startsWith('[')) return QJsonDocument::fromJson(text.toUtf8()).array();
+            if (v.isDouble()) return QJsonArray{v}; // clips:12 is that one clip (was an empty list: the whole mix)
+            if (!v.isString())
+                fail("BAD_ARGUMENT", QString("parameter '%1' takes a list (or a comma-separated string), not %2")
+                                         .arg(p.name, v.isBool() ? QString("true/false") : QString("an object")));
+            if (text.trimmed().startsWith('[')) {
+                // "[1,2" was an empty list without an error
+                QJsonParseError err;
+                const QJsonDocument doc = QJsonDocument::fromJson(text.toUtf8(), &err);
+                if (err.error != QJsonParseError::NoError || !doc.isArray())
+                    fail("BAD_ARGUMENT", QString("%1: invalid JSON list (%2)").arg(p.name, err.errorString()));
+                return doc.array();
+            }
             QJsonArray arr;
             for (const QString& x : text.split(',', Qt::SkipEmptyParts)) arr << x.trimmed();
             return arr;
@@ -1991,7 +2016,25 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
         };
         bool ok = true;
         switch (p.type) {
-        case ParamType::String: out[p.name] = v.isString() ? str : v.toVariant().toString(); break;
+        case ParamType::String:
+            if (v.isArray()) {
+                // A list where a string is due (colors:['#fc0','#202020'], tracks:['A2']) became "" - every list-like
+                // string parameter is a comma list, so the pieces are joined; objects and nested lists are refused
+                QStringList parts;
+                for (const QJsonValue& x : v.toArray()) {
+                    if (!x.isString() && !x.isDouble())
+                        fail("BAD_ARGUMENT", QString("parameter '%1' takes a string or a list of strings, not %2")
+                                                 .arg(p.name, QString::fromUtf8(QJsonDocument(v.toArray()).toJson(QJsonDocument::Compact)).left(80)));
+                    parts << x.toVariant().toString();
+                }
+                out[p.name] = parts.join(',');
+            } else if (v.isObject()) {
+                fail("BAD_ARGUMENT", QString("parameter '%1' takes a string, not %2")
+                                         .arg(p.name, QString::fromUtf8(QJsonDocument(v.toObject()).toJson(QJsonDocument::Compact)).left(80)));
+            } else {
+                out[p.name] = v.isString() ? str : v.toVariant().toString();
+            }
+            break;
         case ParamType::Path:
             out[p.name] = absolute(str);
             ok = v.isString() && !str.isEmpty();

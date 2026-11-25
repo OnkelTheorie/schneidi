@@ -328,6 +328,7 @@ void opTitle(Session& s, const QJsonObject& op)
         const Clip& c = clipOf(s, op);
         if (!c.isTitle()) fail("BAD_ARGUMENT", QString("clip %1 is not a title").arg(c.id));
         id = c.id;
+        checkFrameLimit(qint64(c.start) + length, "title");
         if (length > c.length()) {
             TrackRef ref;
             TimelineOps::findClip(s.project.timeline(), id, &ref);
@@ -343,6 +344,7 @@ void opTitle(Session& s, const QJsonObject& op)
         const bool wholeTimeline = op.value("kind").toString() == "progress" && !op.contains("at") && length <= 0;
         const int at = wholeTimeline ? 0 : timeOf(s, op, "at", 0);
         const int track = op.contains("track") ? parseTrack(op.value("track")) : -1;
+        checkFrameLimit(qint64(std::max(0, at)) + (length > 0 ? length : 5 * s.project.fps()), "title");
         const QHash<int, Clip> before =
             clipsIn(s, track, std::max(0, at), std::max(0, at) + (length > 0 ? length : 5 * s.project.fps()));
         s.selection.clear();
@@ -374,10 +376,7 @@ void opTrim(Session& s, const QJsonObject& op)
     if (edgeName != "start" && edgeName != "end") fail("BAD_ARGUMENT", "edge must be 'start' or 'end'");
     const TimelineOps::Edge edge = edgeName == "start" ? TimelineOps::Edge::Start : TimelineOps::Edge::End;
     const QJsonValue by = op.value("by");
-    int delta = 0;
-    if (by.isDouble()) delta = by.toInt();
-    else if (by.isString() && by.toString().startsWith('-')) delta = -parseTime(by.toString().mid(1), s.format(), "by");
-    else if (by.isString()) delta = parseTime(by, s.format(), "by");
+    int delta = parseSignedTime(by, s.format(), "by");
     if (mode == "normal") {
         if (op.contains("to")) delta = timeOf(s, op, "to") - (edge == TimelineOps::Edge::Start ? c.start : c.end());
         const int id = c.id, startBefore = c.start, endBefore = c.end();
@@ -611,7 +610,7 @@ void opTrack(Session& s, const QJsonObject& op)
     TrackKind k = TrackKind::Video;
     const int index = parseTrackIn(s.project.timeline(), op.value("track"), &k);
     if (index >= s.project.timeline().tracks(k).size()) fail("NOT_FOUND", "no track " + name);
-    const TrackRef ref{k, index};
+    TrackRef ref{k, index};
     const auto state = [&] { return s.project.timeline().track(ref); };
     if (op.contains("name")) ed.renameTrack(ref, op.value("name").toString());
     if (op.contains("color")) {
@@ -629,7 +628,10 @@ void opTrack(Session& s, const QJsonObject& op)
         TrackKind k2 = k;
         const int to = parseTrack(op.value("move_to"), &k2);
         if (k2 != k || to >= s.project.timeline().tracks(k).size()) fail("BAD_ARGUMENT", "move_to must be an existing track of the same kind");
+        const QVector<Track> before = s.project.timeline().tracks(k);
         ed.moveTrack(k, index, to);
+        // The lock below is for the moved track: at `index` now lies another one
+        if (s.project.timeline().tracks(k) != before) ref.index = std::clamp(to, 0, int(before.size()) - 1);
     }
     if (op.contains("lock") && op.value("lock").toBool() != state().locked) ed.toggleTrackLock(ref); // last: blocks the rest
 }
@@ -995,10 +997,18 @@ void opRemoveMedia(Session& s, const QJsonObject& op)
 void opCopy(Session& s, const QJsonObject& op)
 {
     const QVector<int> ids = clipIds(s, op);
+    const int at = timeOf(s, op, "at");
+    qint64 first = kMaxFrame, last = 0;
+    for (int id : ids)
+        if (const Clip* c = TimelineOps::findClip(s.project.timeline(), id)) {
+            first = std::min<qint64>(first, c->start);
+            last = std::max<qint64>(last, c->end());
+        }
+    checkFrameLimit(at + std::max<qint64>(0, last - first), "copy: the last clip");
     s.selection.set(QSet<int>(ids.begin(), ids.end()));
     s.editor.copySelection();
     s.selection.clear();
-    s.editor.paste(timeOf(s, op, "at"));
+    s.editor.paste(at);
 }
 
 // Source edits like F9–F12 in the app; `at` (and for fit_to_fill `to`) instead of playhead and timeline In/Out

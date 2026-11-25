@@ -88,6 +88,7 @@ QVector<int> audioTracksOf(const Project& p, const Timeline& tl, const QJsonValu
         if (trackRef.match(t).hasMatch()) {
             TrackKind k;
             index = parseTrack(t, &k);
+            if (t.front().isDigit()) k = TrackKind::Audio; // a bare number counts the audio tracks ("2" = A2)
             if (k != TrackKind::Audio || index >= tl.audio.size()) fail("BAD_ARGUMENT", "no audio track " + t);
         }
         QStringList names;

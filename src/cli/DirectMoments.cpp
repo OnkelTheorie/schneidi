@@ -125,8 +125,11 @@ QJsonArray pictureMoments(const MediaSource& m, double length, QString* status)
     failIfCanceled();
     *status = "done";
     if (scores.size() < 10) return out;
-    // Mean score per second
-    std::vector<double> sum(size_t(std::ceil(length)) + 1, 0.0);
+    // Mean score per second, as far as the decoded picture goes (a broken header's length of millions of seconds
+    // sized these arrays at several GB)
+    double lastSecond = 0;
+    for (const PictureScore& p : scores) lastSecond = std::max(lastSecond, p.seconds);
+    std::vector<double> sum(size_t(std::ceil(std::max(0.0, std::min(length, lastSecond)))) + 1, 0.0);
     std::vector<int> count(sum.size(), 0);
     for (const PictureScore& p : scores) {
         const size_t s = std::min(sum.size() - 1, size_t(std::max(0.0, p.seconds)));
