@@ -1290,9 +1290,14 @@ void Project::setHistoryAside(bool aside)
         connect(m_asideUndo.get(), &QUndoStack::cleanChanged, this, [this] { emit modifiedChanged(isModified()); });
         m_undo = m_asideUndo.get();
         m_asideMediaDirty = std::exchange(m_mediaDirty, false);
+        m_asideLastBinId = m_lastBinId;
+        m_asideBinsUndone = m_binsUndone;
     } else {
         m_undo = &m_ownUndo;
         m_mediaDirty = m_asideMediaDirty;
+        // Bin ids are never reused: one a step still on the user's stack removed is not handed out again
+        m_lastBinId = std::max(m_lastBinId, m_asideLastBinId);
+        m_binsUndone = std::exchange(m_asideBinsUndone, {});
         m_asideUndo.reset(); // the practice steps go
     }
     emit undoStackChanged();

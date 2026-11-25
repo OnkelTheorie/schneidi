@@ -251,7 +251,9 @@ void opFormat(Session& s, const QJsonObject& op)
     }
     const FrameRate oldRate = s.project.format().rate;
     s.project.setFormat(f);
-    if (f.rate == oldRate) return;
+    // The app counts the Media Pool anew on every frame rate change (MainWindow::onFormatChanged: the dialog, undo,
+    // redo and this op alike); a second count here scaled source In/Out, markers and still lengths twice
+    if (f.rate == oldRate || s.inApp()) return;
     s.project.recountMedia(oldRate, [&f](const QString& path) { return Engine::probe(f, path).length; });
 }
 

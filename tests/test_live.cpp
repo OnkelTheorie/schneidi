@@ -848,5 +848,76 @@ int main(int argc, char* argv[])
         CHECK_EQ(videoClips(fake.project), clipsBefore + 1);
     }
 
+    // Commands that change nothing keep the user's redo steps and the saved state (the undo macro opened before the
+    // command deleted both at once): a failing edit, an edit that changes nothing. A successful edit with several ops
+    // is still one step; one that fails after a change is taken back completely and leaves no step.
+    {
+        QUndoStack* undo = fake.project.undoStack();
+        const auto run = [&](const char* ops) {
+            return server.runForChat("edit", {{"project", fake.path}, {"ops", QJsonDocument::fromJson(ops).array()}});
+        };
+        const int index = undo->index();
+        CHECK(run(R"([{"op":"split","at":20},{"op":"split","at":25},{"op":"marker","at":5}])")["ok"].toBool());
+        CHECK_EQ(undo->index(), index + 1);
+        CHECK(undo->undoText().startsWith("KI: split, marker"));
+        fake.project.markSaved();
+        const int clipsSaved = videoClips(fake.project);
+        undo->undo(); // the user steps back to compare
+        const int count = undo->count();
+        const QString redoText = undo->redoText();
+        CHECK(!run(R"([{"op":"split","at":"nonsense"}])")["ok"].toBool());
+        CHECK(undo->canRedo() && undo->redoText() == redoText && undo->count() == count);
+        CHECK(run(QString(R"([{"op":"timeline","timeline":%1}])").arg(fake.project.currentSequence()).toUtf8())["ok"].toBool());
+        CHECK(undo->canRedo() && undo->redoText() == redoText && undo->count() == count);
+        CHECK_EQ(undo->index(), index);
+        undo->redo(); // back at the saved state: not modified
+        CHECK(undo->isClean());
+        CHECK_EQ(videoClips(fake.project), clipsSaved);
+        // A change, then a failing op: all of it taken back, no step and no redo step that brings it back
+        CHECK(!run(R"([{"op":"split","at":30},{"op":"split","at":"nonsense"}])")["ok"].toBool());
+        CHECK_EQ(videoClips(fake.project), clipsSaved);
+        CHECK_EQ(undo->index(), index + 1);
+        CHECK(!undo->canRedo());
+    }
+
+    // A new frame rate in the app: the Media Pool is counted anew once. The app does it on formatChanged
+    // (MainWindow::onFormatChanged, mirrored here) for every path; the op counted again (In/Out, markers and the
+    // lengths of stills and missing files x4 for 25 -> 50), and undo only halved it
+    {
+        ProjectData d;
+        d.timeline = emptyTimeline();
+        fake.project.load(d);
+        MediaInfo clip{"/x/a.mp4", "a.mp4", 100, true, true, false}; // not on disk: its length is scaled too
+        clip.markIn = 10;
+        clip.markOut = 40;
+        clip.markers = {20};
+        fake.project.addMedia(clip);
+        fake.project.addMedia({"/x/s.png", "s.png", 125, true, false, true});
+        FrameRate engineRate = fake.project.format().rate;
+        const QMetaObject::Connection recount = QObject::connect(&fake.project, &Project::formatChanged, [&] {
+            const FrameRate old = engineRate;
+            engineRate = fake.project.format().rate;
+            if (engineRate != old) fake.project.recountMedia(old, {});
+        });
+        const auto counts = [&] {
+            const MediaInfo* a = fake.project.mediaInfo("/x/a.mp4");
+            const MediaInfo* s = fake.project.mediaInfo("/x/s.png");
+            return QVector<int>{a->length, a->markIn, a->markOut, a->markers.value(0), s->length};
+        };
+        const QVector<int> before = counts();
+        CHECK_EQ(fake.project.format().rate.fps(), 25.0);
+        const QJsonArray ops = QJsonDocument::fromJson(R"([{"op":"format","fps":50}])").array();
+        const QJsonObject r = server.runForChat("edit", {{"project", fake.path}, {"ops", ops}});
+        CHECK(r["ok"].toBool());
+        CHECK_EQ(fake.project.format().rate.fps(), 50.0);
+        CHECK_EQ(counts(), QVector<int>({200, 20, 80, 40, 250}));
+        fake.project.undoStack()->undo();
+        CHECK_EQ(fake.project.format().rate.fps(), 25.0);
+        CHECK_EQ(counts(), before);
+        fake.project.undoStack()->redo();
+        CHECK_EQ(counts(), QVector<int>({200, 20, 80, 40, 250}));
+        QObject::disconnect(recount);
+    }
+
     return Check::result();
 }

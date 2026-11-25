@@ -337,6 +337,10 @@ private:
     std::unique_ptr<QUndoStack> m_asideUndo; // while the user's history is aside: the one in use
     QUndoStack* m_undo = &m_ownUndo;
     bool m_asideMediaDirty = false;
+    // The user's bin counter and m_binsUndone while the history is aside: the load() of the practice project and of
+    // the user's project after it recount them, while the user's undo steps (with removed bins) stay
+    int m_asideLastBinId = 0;
+    QHash<QString, int> m_asideBinsUndone;
     quint64 m_generation = 0;
     int m_lastClipId = 0;
     int m_lastLinkId = 0;

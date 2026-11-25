@@ -56,10 +56,18 @@ CompOverlay::CompOverlay(Editor* editor, QObject* parent)
     : ViewerOverlay(parent), m_editor(editor),
       m_tolerance(std::clamp(QSettings().value("comp/pickTolerance", RegionPick::kDefaultTolerance).toDouble(), 0.0, 1.0))
 {
-    // Any other change of the undo stack (an edit, undo, redo) ends the run of repicks that merge into one step
-    connect(m_editor->project()->undoStack(), &QUndoStack::indexChanged, this, [this] {
-        if (!m_inRepick) m_repickIndex = -1;
-    });
+    // Any other change of the undo stack (an edit, undo, redo) ends the run of repicks that merge into one step. The
+    // history in use, also after a tour (the page built during one listened to the practice history, then to none:
+    // a repick took back an unrelated step of the user as if it were the previous repick)
+    const auto followUndo = [this] {
+        disconnect(m_undoIndex);
+        m_repickIndex = -1;
+        m_undoIndex = connect(m_editor->project()->undoStack(), &QUndoStack::indexChanged, this, [this] {
+            if (!m_inRepick) m_repickIndex = -1;
+        });
+    };
+    followUndo();
+    connect(m_editor->project(), &Project::undoStackChanged, this, followUndo);
 }
 
 void CompOverlay::setTarget(int clipId, int node, int playhead)

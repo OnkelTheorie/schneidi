@@ -96,6 +96,7 @@ private:
     int m_repickNode = 0;
     QPointF m_repickPlaced{-1, -1}; // m_last.placed before that step
     bool m_inRepick = false;
+    QMetaObject::Connection m_undoIndex; // to the history in use (Project::undoStackChanged: a tour's own one)
     QString m_pickStatus;
     std::function<QImage(int, int)> m_source;
     QString m_sourceKey;

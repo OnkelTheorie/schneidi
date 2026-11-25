@@ -25,8 +25,35 @@ bool AutomationWriter::jumpFrom(const QPair<int, int>& k, int frame) const
     return isJump(it->heard.last().first, frame, since);
 }
 
+void AutomationWriter::dropStale()
+{
+    const Project* p = m_editor->project();
+    const QVector<Track>& audio = p->timeline().audio;
+    bool dropped = false;
+    for (auto it = m_owners.begin(); it != m_owners.end();) {
+        const int track = it.key().first;
+        if (it->sequence == p->currentSequence() && track < audio.size() && audio[track].uid.value == it->track) {
+            ++it;
+            continue;
+        }
+        m_touches.remove(it.key());
+        m_recorded.remove(it.key());
+        it = m_owners.erase(it);
+        dropped = true;
+    }
+    if (!dropped) return;
+    const auto keys = m_touches.keys();
+    for (const auto& k : keys) {
+        const Automation::Touch& t = m_touches[k];
+        release(k.first, AutoTarget(k.second), t.heard.isEmpty() ? 0 : t.heard.last().first);
+    }
+    if (!m_mergeKey.isEmpty()) m_editor->project()->closeMerge();
+    m_mergeKey.clear();
+}
+
 void AutomationWriter::move(int track, AutoTarget target, int frame, double heard)
 {
+    dropStale();
     const Timeline& tl = m_editor->project()->timeline();
     if (track < 0 || track >= tl.audio.size() || tl.audio[track].locked) return;
     const auto k = key(track, target);
@@ -42,6 +69,7 @@ void AutomationWriter::move(int track, AutoTarget target, int frame, double hear
             m_mergeKey = QString("automation-write-%1").arg(++m_passes);
         }
         it = m_touches.insert(k, Automation::beginTouch(m_editor->project()->timeline().audio[track], target));
+        m_owners.insert(k, {m_editor->project()->currentSequence(), tl.audio[track].uid.value});
     }
     Automation::record(*it, frame, heard);
     m_recorded[k].start();
@@ -50,6 +78,7 @@ void AutomationWriter::move(int track, AutoTarget target, int frame, double hear
 
 void AutomationWriter::release(int track, AutoTarget target, int frame)
 {
+    dropStale();
     const auto k = key(track, target);
     const auto it = m_touches.find(k);
     if (it == m_touches.end()) return;
@@ -59,12 +88,14 @@ void AutomationWriter::release(int track, AutoTarget target, int frame)
     const Automation::Touch touch = *it;
     m_touches.erase(it);
     m_recorded.remove(k);
+    m_owners.remove(k);
     m_editor->setTrackAutomation(track, Automation::releasedCurve(touch, frame, fps()), T("Automation schreiben"),
                                  m_mergeKey, target);
 }
 
 void AutomationWriter::hold(int frame)
 {
+    dropStale();
     for (auto it = m_touches.begin(); it != m_touches.end(); ++it) {
         Automation::Touch& t = it.value();
         if (t.heard.isEmpty()) continue;
@@ -79,6 +110,7 @@ void AutomationWriter::hold(int frame)
 
 void AutomationWriter::jumped()
 {
+    dropStale();
     const auto keys = m_touches.keys();
     for (const auto& k : keys) {
         const Automation::Touch& t = m_touches[k];
@@ -88,6 +120,7 @@ void AutomationWriter::jumped()
 
 void AutomationWriter::endPass(int frame)
 {
+    dropStale();
     const auto keys = m_touches.keys();
     for (const auto& k : keys) release(k.first, AutoTarget(k.second), frame);
     if (!m_mergeKey.isEmpty()) m_editor->project()->closeMerge();
