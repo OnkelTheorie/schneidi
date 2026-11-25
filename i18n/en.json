@@ -1401,7 +1401,7 @@
  "Frage": "Question",
  "Frage den Anbieter …": "Asking the provider …",
  "Fragen": "Ask",
- "Fragt GitHub nach der neuesten Version; mit geht nur die Versionsnummer, nichts über deine Projekte. Neue Versionen gibt es auf der Download-Seite.": "Asks GitHub for the latest version; only the version number is sent, nothing about your projects. New versions are on the release page.",
+ "Fragt GitHub nach der neuesten Version; mitgeschickt wird nur die Versionsnummer, nichts über deine Projekte. Neue Versionen gibt es auf der Download-Seite.": "Asks GitHub for the latest version; only the version number is sent, nothing about your projects. New versions are on the release page.",
  "Framerate": "Frame rate",
  "Frames": "Frames",
  "Frames (%1)": "Frames (%1)",
