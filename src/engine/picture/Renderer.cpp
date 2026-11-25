@@ -1785,9 +1785,11 @@ struct Renderer::Impl {
         if (crop)
             shares[0] = val(AnimParam::CropLeft) / fit.width(), shares[1] = val(AnimParam::CropTop) / fit.height(),
             shares[2] = val(AnimParam::CropRight) / fit.width(), shares[3] = val(AnimParam::CropBottom) / fit.height();
+        // The shape as shown (fit: pixel aspect, Clip::pictureAspect), not the pixel buffer's: an anamorphic picture
+        // took a part of the wrong width
         if (blurFill)
             bg = std::make_unique<BlurFill::Background>(BlurFill::makeBackground(
-                src.data(), src.w, src.h, double(src.w) / src.h, shares, ctx.PW / ctx.PH, c.transform.fillBlur,
+                src.data(), src.w, src.h, fit.width() / fit.height(), shares, ctx.PW / ctx.PH, c.transform.fillBlur,
                 c.transform.fillDim));
         // The full-frame picture the source stands for (a title drawn at text size is a part of it)
         const int fullW = partial ? W : src.w, fullH = partial ? H : src.h;
@@ -2669,7 +2671,8 @@ struct Renderer::Impl {
                 op.gradeLut = std::move(l);
             }
         }
-        if ((transform || crop) && c.transform.hasBlurFill()) return blurFillOp(c, ctx, shares, op);
+        if ((transform || crop) && c.transform.hasBlurFill())
+            return blurFillOp(c, ctx, shares, fit.width() / fit.height(), op);
         KeepFrame kf;
         if (!c.keepRegion.isEmpty() && crop
             && keepFrame(op.m, op.crop, kKeepFrame * std::min(ctx.W, ctx.H), QSize(ctx.W, ctx.H), kf)) {
@@ -2691,14 +2694,13 @@ struct Renderer::Impl {
     // Blurred fill behind a gpuClip's draw (as clipLayer: BlurFill::makeBackground from the graded, uncropped picture,
     // the picture over it, then opacity): the small background is made here from a shrunk copy of the picture (the
     // fill is blurred anyway; the full picture never needs converting) and scaled up on the card. op becomes a Group.
-    bool blurFillOp(const Clip& c, const Ctx& ctx, const double shares[4], GpuOp& op)
+    // aspect: the picture's shape as shown (pixel aspect, Clip::pictureAspect)
+    bool blurFillOp(const Clip& c, const Ctx& ctx, const double shares[4], double aspect, GpuOp& op)
     {
         constexpr int kMost = 640; // longer side of the shrunk picture (the background is at most 640 x 360)
         Image small;
-        double aspect = 0;
         if (op.still) {
             const QImage& img = op.still->image;
-            aspect = double(img.width()) / std::max(1, img.height());
             const double k = std::min(1.0, double(kMost) / std::max(img.width(), img.height()));
             small = Image(std::max(1, int(std::lround(img.width() * k))), std::max(1, int(std::lround(img.height() * k))));
             Compose::Affine m;
@@ -2707,7 +2709,6 @@ struct Renderer::Impl {
             Compose::draw(small.data(), small.w, small.h, img.constBits(), img.width(), img.height(), m, 1.0);
         } else {
             const int w = op.picture->frame->width, h = op.picture->frame->height;
-            aspect = double(w) / std::max(1, h);
             const double k = std::min(1.0, double(kMost) / std::max(w, h));
             small = Image(std::max(2, int(std::lround(w * k))), std::max(2, int(std::lround(h * k))));
             if (!Video::toRgba(*op.picture, op.info, small.data(), small.w, small.h, true)) return false;

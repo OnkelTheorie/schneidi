@@ -22,8 +22,8 @@ enum class Result { Unchanged, Moved, Refused };
 // in start order). Clips linked to them (the same linkId, on other tracks: their sound, a kill feed copy) move by the
 // same frames - only where that keeps everything: not before frame 0, not on a locked track, not onto another clip;
 // else nothing moves (Refused, *why says why, translated). When the clips keep their order the unlocked subtitle
-// tracks and the timeline's markers, notes and sections follow like a ripple (TimelineOps::rippleTracks: the time of
-// a closed gap is taken out, markers in it land on the cut). A locked `ref` is Unchanged. `keep` (clip id -> frames):
+// tracks, the automation of the tracks whose clips move and the timeline's markers, notes and sections follow like a
+// ripple (TimelineOps::rippleTracks: the time of a closed gap is taken out, markers in it land on the cut). A locked `ref` is Unchanged. `keep` (clip id -> frames):
 // the gap left before that clip (keptGaps: the gaps that were there before an edit stay); empty = no gaps at all.
 Result pack(Timeline& tl, TrackRef ref, const QVector<int>& order = {}, QString* why = nullptr,
             const QHash<int, int>& keep = {});

@@ -13,6 +13,9 @@ struct Moment {
     double from = 0;    // seconds in that file
     double to = 0;
     double score = 0;   // from `highlights`; higher = better
+    // How far growing may reach (seconds in the file; < 0 = up to the recording's edge): a kill's lead-in is short
+    // (lo = its start: padding goes after it, never before), its end where the player died (hi)
+    double lo = -1, hi = -1;
     bool operator==(const Moment&) const = default;
 };
 
@@ -24,7 +27,8 @@ struct Options {
 };
 
 // candidates: best first; durations: seconds of each recording. Result: in order of file and time, no overlaps,
-// together between minS and maxS where the recordings are long enough (all of them when shorter than minS).
+// together between minS and maxS where the recordings are long enough (all of them when shorter than minS); moments
+// grow only within their lo/hi, so a short whose moments cannot reach minS without dead footage stays shorter.
 // Without candidates: the end of each recording (a clip tool saves the moment that just happened).
 QVector<Moment> pick(const QVector<Moment>& candidates, const QVector<double>& durations, const Options& o = {});
 double total(const QVector<Moment>& moments);
@@ -39,8 +43,8 @@ QVector<QVector<Moment>> variants(const QVector<Moment>& candidates, const QVect
 // Helpers of pick (also for core/ReelPick):
 // sorted by file and time, overlapping or close ones (gap below `gap`) of the same file joined (the better score kept)
 QVector<Moment> joined(QVector<Moment> list, double gap);
-// grows [from, to) by `by` seconds, a bit more after than before (the reaction), within [0, duration); what one side
-// cannot take goes to the other
+// grows [from, to) by `by` seconds, a bit more after than before (the reaction), within [0, duration) and the moment's
+// lo/hi; what one side cannot take goes to the other (what neither can take is left: the moment stays shorter)
 void widen(Moment& m, double by, double duration);
 
 } // namespace ShortPick

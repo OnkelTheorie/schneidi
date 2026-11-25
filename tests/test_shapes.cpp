@@ -1084,6 +1084,59 @@ void testPasteFollow()
             if (c.start >= 200 && c.isTitle()) CHECK_EQ(c.title.shape.followClip, m.id);
 }
 
+// ---- Review 2026-11-25 (F8): a shape keeps following when the tracked clip's id changes - blade it and delete the
+// left piece (the right piece has the new id), duplicate the timeline (every clip of the copy has a new id) ----
+void testFollowNewIds()
+{
+    std::printf("follow new ids\n");
+    Project p;
+    ProjectData d;
+    d.timeline = timelineOf({});
+    d.format = kFormat;
+    p.load(d);
+    Selection sel;
+    Editor e(&p, &sel);
+    Clip m = trackedClip();
+    m.id = p.newClipId();
+    Clip shape = shapeClip(p.newClipId(), ShapeKind::Ellipse, 40, 40);
+    shape.title.shape.followClip = m.id;
+    shape.title.shape.followNode = 2;
+    p.edit("setup", [&](Timeline& tl) {
+        tl.video[0].clips << m;
+        tl.video[1].clips << shape;
+    });
+    const auto followed = [&](const Timeline& tl) {
+        for (const Clip& c : tl.video.value(1).clips)
+            if (c.isTitle()) return c.title.shape.followClip;
+        return -1;
+    };
+    // Duplicate: the copy's shape follows the copy's clip
+    const int copy = p.duplicateSequence(p.currentSequence());
+    const Sequence* seq = p.sequence(copy);
+    if (CHECK(seq && seq->timeline.video.value(0).clips.size() == 1)) {
+        const int copied = seq->timeline.video[0].clips[0].id;
+        CHECK(copied != m.id);
+        CHECK_EQ(followed(seq->timeline), copied);
+    }
+    CHECK_EQ(followed(p.timeline()), m.id); // (the original keeps its own)
+    // Blade at 10, delete the left piece: the shape follows the right one
+    e.bladeAt(m.id, 10);
+    int right = 0;
+    for (const Clip& c : p.timeline().video[0].clips)
+        if (c.start == 10) right = c.id;
+    CHECK(right > 0 && right != m.id);
+    CHECK_EQ(followed(p.timeline()), m.id); // both pieces there: the renderer finds the right one by the track
+    sel.set({m.id});
+    e.deleteSelection();
+    CHECK(!TimelineOps::findClip(p.timeline(), m.id));
+    CHECK_EQ(followed(p.timeline()), right);
+    // A clip of another file under it is never followed instead: deleting the last piece leaves the shape as it was
+    p.edit("other", [&](Timeline& tl) { tl.video[0].clips << media(p.newClipId(), "/x/other.mp4", 5); });
+    sel.set({right});
+    e.deleteSelection();
+    CHECK_EQ(followed(p.timeline()), right);
+}
+
 // ---- check: a shape following a tracker that is gone ----
 void testFollowCheck()
 {
@@ -1202,6 +1255,7 @@ int main(int argc, char** argv)
     testFollowSplit();
     testLineBounds();
     testPasteFollow();
+    testFollowNewIds();
     testFollowCheck();
     return Check::result();
 }

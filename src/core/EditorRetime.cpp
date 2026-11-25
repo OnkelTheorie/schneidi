@@ -73,7 +73,8 @@ std::optional<TrackRef> rippleRetimed(Timeline& tl, const QVector<RetimedTrack>&
         Automation::rippleTrack(t, together ? shifts : tracks[i].own);
         edited << tracks[i].ref;
     }
-    TimelineOps::rippleTracks(tl, shifts, edited);
+    // A retime takes no content out (it compresses it): markers and notes over a shortened tail land on its new end
+    TimelineOps::rippleTracks(tl, shifts, edited, nullptr, TimelineOps::MarkerCut::MoveToCut);
     return std::nullopt;
 }
 
@@ -246,6 +247,10 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
             const RetimeMap oldMap(c, L), newMap(n, L);
             const int startFile = r.reverse != c.reverse ? oldMap.pictureFrame(c.out) : oldMap.pictureFrame(c.in);
             *avail = std::max(1, int(L / r.speed));
+            // `in` itself still shows that picture (the same speed - the dialog closed with OK -, or a slow motion's in
+            // point that is not the first of the frames showing its picture): it stays - else every such call grew the
+            // head by a few frames and rippled the timeline
+            if (r.reverse == c.reverse && c.in < *avail && newMap.pictureFrame(c.in) == startFile) return c.in;
             return std::clamp(newMap.materialForPicture(startFile), 0, *avail - 1);
         };
         const auto retimable = [&](const Clip& c) -> const MediaInfo* {
@@ -278,6 +283,11 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
                 const RetimeMap oldMap(c, L), newMap(n, L);
                 int avail = 0;
                 const int newIn = ins.in(c, ownIn(c, L, &avail)); // in sync with its partners (SyncedIns)
+                // The frame a freeze shows: a clip that stays frozen keeps its picture (a head trim or a blade moved
+                // `in` away from it); else the one at the new start
+                const int still = r.freeze && c.freeze
+                                      ? std::clamp(newMap.materialForPicture(oldMap.pictureFrame(c.stillFrame())), 0, avail - 1)
+                                      : newIn;
                 const int oldLen = c.length();
                 int newLen = oldLen;
                 if (ripple && !r.freeze && !c.freeze) {
@@ -307,7 +317,7 @@ void Editor::setClipSpeed(const QVector<int>& ids, const Retime& r, bool ripple)
                 c.slot.ownSpeed = 0; // the user's speed is the slot's own one now (not a fill's slow motion)
                 c.reverse = r.reverse;
                 c.freeze = r.freeze;
-                c.freezeFrame = r.freeze ? newIn : -1; // frame at the clip start (stays when splitting/trimming)
+                c.freezeFrame = r.freeze ? still : -1; // (stays when splitting/trimming)
                 c.keepPitch = r.keepPitch;
                 if (r.interpolate) c.interpolate = *r.interpolate;
                 c.ramp.clear();

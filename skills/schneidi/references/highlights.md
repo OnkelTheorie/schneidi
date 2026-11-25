@@ -34,6 +34,12 @@ A fixed shape the user wants every time (title, five clips with the Edit look, s
   of the game sound).
 - CS2 teamkills (the victim's name in the player's own team colour) are not kills: they are listed in `teamkills`
   (seconds), and a candidate with one has `teamkills` + `teamkill_s` and a lower score. Don't put a kill accent on them.
+- `direct` (recipe short) and `short` read more of a game recording than `highlights` does: the player's death in
+  CS2 (the red tint over the whole picture fading into the black screen with the killer's card; a moment ends 0.7 s
+  after it, the spectating after it is never shown - label `death`), laughter and shouts in a voice stream
+  (Mikrofon, Discord: `voice_laughter`, `voice_shout`) and, for a replay clip of up to 60 s without a kill, its end
+  (`clip_end_death` / `clip_end_loud` / `clip_end` - clip tools save right after the moment). Cutting by hand: end a
+  kill's moment before the death screen too, and start it at most ~1.5 s before the first `hit_s`.
 - CS2 assists ("A + player  weapon  victim": a teammate killed, the player helped) are not the player's kills
   either: listed in `assists` (seconds), not counted, no moment of their own.
 - Look at the top candidates (`frames` with `at` around each kill time, or a cropped sheet) before you trust them.

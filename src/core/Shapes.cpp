@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/Shapes.h"
 
+#include "core/CompGraph.h"
 #include "core/EffectRegistry.h"
 #include "core/Keyframes.h"
+#include "core/TimelineOps.h"
 
 #include <QColor>
 #include <QSet>
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <numbers>
 
@@ -246,6 +249,44 @@ void remapFollow(Timeline& tl, const QHash<int, int>& ids)
         for (Clip& c : t.clips)
             if (copies.contains(c.id) && c.isTitle() && (c.title.isShape() || c.title.isDrawing()) && ids.contains(c.title.shape.followClip))
                 c.title.shape.followClip = ids.value(c.title.shape.followClip);
+}
+
+void keepFollowing(const Timeline& before, Timeline& after)
+{
+    const auto following = [](const Clip& c) {
+        return c.isTitle() && (c.title.isShape() || c.title.isDrawing()) && c.title.shape.followClip > 0
+               && c.title.shape.followNode > 0;
+    };
+    QHash<int, int> repoint; // gone clip id -> its piece
+    for (const Track& t : std::as_const(after).video)
+        for (const Clip& c : t.clips) {
+            if (!following(c)) continue;
+            const int gone = c.title.shape.followClip;
+            if (repoint.contains(gone) || TimelineOps::findClip(after, gone)) continue;
+            TrackRef ref;
+            const Clip* was = TimelineOps::findClip(before, gone, &ref);
+            if (!was || ref.index >= after.tracks(ref.kind).size()) continue;
+            const int node = c.title.shape.followNode;
+            const Clip* best = nullptr;
+            int bestDistance = INT_MAX;
+            for (const Clip& o : after.track(ref).clips) {
+                if (o.mediaPath != was->mediaPath || o.speed != was->speed || o.reverse != was->reverse
+                    || o.freeze != was->freeze || o.ramp != was->ramp)
+                    continue;
+                const EffectInstance* e = EffectRegistry::instance(o, Comp::kEffectId);
+                CompGraph g;
+                if (!e || !Comp::graphOf(*e, &g) || !g.node(node)) continue;
+                const int distance = std::max({0, o.in - (was->out + 1), was->in - (o.out + 1)}); // (in the file)
+                if (distance < bestDistance) {
+                    best = &o;
+                    bestDistance = distance;
+                }
+            }
+            if (best) repoint.insert(gone, best->id);
+        }
+    if (repoint.isEmpty()) return;
+    TimelineOps::changeClips(after, [&](const Clip& c) { return following(c) && repoint.contains(c.title.shape.followClip); },
+                             [&](Clip& c) { c.title.shape.followClip = repoint.value(c.title.shape.followClip); });
 }
 
 bool clipShapeAt(const Clip& c, double t, ClipShape* out)

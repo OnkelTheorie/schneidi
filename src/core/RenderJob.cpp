@@ -10,6 +10,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QLocale>
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <algorithm>
@@ -253,7 +254,13 @@ QString RenderSettings::qualityLabel() const
 
 bool RenderSettings::sourceQuality() const
 {
-    return quality == kQualitySource && renderFormat(format).hasQuality() && !audioOnly();
+    return quality == kQualitySource && renderFormat(format).hasQuality() && !audioOnly() && !hasMaxMb();
+}
+
+bool RenderSettings::hasMaxMb() const
+{
+    const RenderFormatInfo& f = renderFormat(format);
+    return maxMb > 0 && f.kind == RenderKind::Video && f.hasQuality();
 }
 
 QString RenderSettings::summary(QSize output, int sourceBitrateK) const
@@ -261,7 +268,9 @@ QString RenderSettings::summary(QSize output, int sourceBitrateK) const
     const RenderFormatInfo& f = renderFormat(format);
     QStringList parts{T(f.label)};
     if (!audioOnly()) parts << resolutionLabel(output.width(), output.height());
-    if (sourceQuality())
+    if (hasMaxMb())
+        parts << T("max. %1 MB").arg(QLocale().toString(maxMb, 'g', 4));
+    else if (sourceQuality())
         parts << (sourceBitrateK > 0 ? qualityLabel() + ' ' + SourceBitrate::label(sourceBitrateK) : qualityLabel());
     else if (f.hasQuality()) parts << (quality == kQualityWeb && !f.webQuality ? T("Hoch") : qualityLabel());
     if (hasEncoderChoice() && encoder != VideoEncoder::Auto && encoder != VideoEncoder::Software)
@@ -297,6 +306,7 @@ QJsonObject RenderSettings::toJson() const
     if (embedSubtitles) o["embedSubtitles"] = true;
     o["encoder"] = videoEncoderId(encoder);
     if (!smartRender) o["smartRender"] = false;
+    if (maxMb > 0) o["maxMb"] = maxMb;
     if (size.isValid() && !size.isEmpty()) {
         o["width"] = size.width();
         o["height"] = size.height();
@@ -332,6 +342,7 @@ RenderSettings RenderSettings::fromJson(const QJsonObject& o)
     // Older files know only the software encoder: keep it, so nothing changes for them
     s.encoder = videoEncoderFromId(o.value("encoder").toString(), VideoEncoder::Software);
     s.smartRender = o.value("smartRender").toBool(true);
+    if (const double mb = o.value("maxMb").toDouble(); mb > 0 && mb <= 1e6) s.maxMb = mb;
     return s;
 }
 
@@ -346,7 +357,7 @@ bool RenderSettings::operator==(const RenderSettings& o) const
     return format == o.format && shortSide == o.shortSide && normSize(size) == normSize(o.size)
            && quality == o.quality && audioBitrateK == o.audioBitrateK && subtitles == o.subtitles
            && embedSubtitles == o.embedSubtitles
-           && audioBits == o.audioBits && audioChannels == o.audioChannels && audioFormat == o.audioFormat && encoder == o.encoder && smartRender == o.smartRender && maxFps == o.maxFps && rateNum == o.rateNum && (rateNum <= 0 || rateDen == o.rateDen);
+           && audioBits == o.audioBits && audioChannels == o.audioChannels && audioFormat == o.audioFormat && encoder == o.encoder && smartRender == o.smartRender && maxMb == o.maxMb && maxFps == o.maxFps && rateNum == o.rateNum && (rateNum <= 0 || rateDen == o.rateDen);
 }
 
 // --- Presets

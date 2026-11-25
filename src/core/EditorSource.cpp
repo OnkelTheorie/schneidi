@@ -444,10 +444,13 @@ int Editor::sourceEdit(SourceEditMode mode, const QString& path, int srcPos, int
         const int tIn = cur.markIn, tOut = cur.markOut;
         if (tIn < 0 || tOut < tIn) return -1;
         const int target = tOut - tIn + 1;
-        speed = double(len) / target;
+        // Within the speeds a clip may have (the project file clamps any other on loading, without converting in/out:
+        // the reopened clip showed another part): beyond them the timeline range is filled at the closest speed, from
+        // the source in on
+        speed = std::clamp(double(len) / target, ::Retime::kMinSpeed, ::Retime::kMaxSpeed);
         if (std::abs(speed - 1.0) < 1e-9) speed = 1.0;
-        // in/out count in the converted material (Clip::speed)
-        const int avail = std::max(1, int(m.length / speed));
+        // in/out count in the converted material (Clip::speed); in double first (a long file at a slow speed)
+        const int avail = int(std::clamp(std::floor(m.length / speed), 1.0, double(INT_MAX)));
         if (avail < target) return -1;
         sIn = std::clamp(RetimeMap::materialForPicture(sIn, speed), 0, avail - target);
         len = target;

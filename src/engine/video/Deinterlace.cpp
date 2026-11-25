@@ -4,6 +4,7 @@
 extern "C" {
 #include <libavutil/frame.h>
 #include <libavutil/pixdesc.h>
+#include <libavutil/version.h>
 #ifdef SCHNEIDI_HAVE_AVFILTER
 #include <libavfilter/avfilter.h>
 #include <libavfilter/buffersink.h>
@@ -13,6 +14,7 @@ extern "C" {
 
 #include <QByteArray>
 
+#include <atomic>
 #include <memory>
 
 namespace Video {
@@ -30,6 +32,33 @@ const AVFilter* filter()
     return f;
 }
 
+std::atomic<int> g_neighboursFiltered{0};
+
+// FFmpeg 6.1-7.1 (FF_API_INTERLACED_FRAME): the decoders still fill AVFrame's deprecated interlaced_frame and
+// top_field_first, and buffersrc ORs them into the flags again - the picture before, decoded interlaced, was flagged
+// interlaced once more and deinterlaced too (twice the filter's cost per picture). The old fields follow the flags.
+void matchOldFields(AVFrame* f)
+{
+#if FF_API_INTERLACED_FRAME
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+    f->interlaced_frame = (f->flags & AV_FRAME_FLAG_INTERLACED) ? 1 : 0;
+    f->top_field_first = (f->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST) ? 1 : 0;
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+#else
+    (void)f;
+#endif
+}
+
 struct GraphFree {
     void operator()(AVFilterGraph* g) const { avfilter_graph_free(&g); }
 };
@@ -39,6 +68,11 @@ struct GraphFree {
 bool canDeinterlace()
 {
     return filter() != nullptr;
+}
+
+int neighboursFiltered()
+{
+    return g_neighboursFiltered.load(std::memory_order_relaxed);
 }
 
 AVFrame* deinterlace(const AVFrame* prev, const AVFrame* cur, const AVFrame* next, bool topFieldFirst)
@@ -86,12 +120,14 @@ AVFrame* deinterlace(const AVFrame* prev, const AVFrame* cur, const AVFrame* nex
         } else {
             f->flags &= ~AV_FRAME_FLAG_INTERLACED;
         }
+        matchOldFields(f);
         const int r = av_buffersrc_add_frame_flags(src, f, 0);
         av_frame_free(&f);
         if (r < 0) return nullptr;
     }
     // Out: the picture before (passed through), then `cur` deinterlaced (it needed the picture after it)
     AVFrame* out = nullptr;
+    const uint8_t* prevPlane = prev->data[0]; // passed through, the picture before keeps its buffer
     for (int n = 0;; ++n) {
         AVFrame* f = av_frame_alloc();
         if (!f) break;
@@ -99,6 +135,7 @@ AVFrame* deinterlace(const AVFrame* prev, const AVFrame* cur, const AVFrame* nex
             av_frame_free(&f);
             break;
         }
+        if (n == 0 && f->data[0] != prevPlane) g_neighboursFiltered.fetch_add(1, std::memory_order_relaxed);
         if (n == 1) {
             out = f;
             break;
@@ -108,6 +145,7 @@ AVFrame* deinterlace(const AVFrame* prev, const AVFrame* cur, const AVFrame* nex
     if (!out) return nullptr;
     av_frame_copy_props(out, cur);
     out->flags &= ~(AV_FRAME_FLAG_INTERLACED | AV_FRAME_FLAG_TOP_FIELD_FIRST);
+    matchOldFields(out); // progressive for whatever reads the old fields (a filter graph it is fed to)
     out->repeat_pict = 0;
     return out;
 }
@@ -122,6 +160,11 @@ bool canDeinterlace()
 AVFrame* deinterlace(const AVFrame*, const AVFrame*, const AVFrame*, bool)
 {
     return nullptr;
+}
+
+int neighboursFiltered()
+{
+    return 0;
 }
 
 #endif

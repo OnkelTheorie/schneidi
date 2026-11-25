@@ -106,8 +106,9 @@ int main(int argc, char** argv)
     }
 
     // --- The stdio MCP server of a running chat after an update: the program file on disk is not the one running.
-    // Every tool result then says so (restart the MCP server / the chat) instead of answering silently with the old
-    // build (report 9.11.)
+    // The first tool result after the change says so (restart the MCP server / the chat) instead of answering silently
+    // with the old build (report 9.11.); the next ones do not repeat it (it was appended to every answer), another
+    // change is said again
     {
         QTemporaryDir dir;
         const QString exe = dir.filePath(QFileInfo(Check::cliPath()).fileName());
@@ -164,6 +165,18 @@ int main(int argc, char** argv)
         CHECK(after.contains("topics")); // the tool still answers
         CHECK(after.contains("schneidi was updated"));
         CHECK(after.contains("restart"));
+        const QString again = texts(call(guideCall));
+        CHECK(again.contains("topics"));
+        CHECK(!again.contains("was updated")); // once per change
+        // Updated once more: said again
+        CHECK(QFile::copy(Check::cliPath(), fresh));
+        QFile g(fresh);
+        if (CHECK(g.open(QIODevice::Append))) g.write("yy");
+        g.close();
+        CHECK(QFile::rename(exe, exe + ".older"));
+        CHECK(QFile::rename(fresh, exe));
+        CHECK(texts(call(guideCall)).contains("schneidi was updated"));
+        CHECK(!texts(call(guideCall)).contains("was updated"));
         p.closeWriteChannel();
         if (!p.waitForFinished(10000)) p.kill();
     }

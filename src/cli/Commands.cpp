@@ -1245,6 +1245,20 @@ const QVector<Command>& commands()
                                  "source and visibly "
                                  "lossless; the answer's 'video_bitrate_k' is the rate aimed at, unknown = high and a "
                                  "note in 'encoder_note'. ProRes, DNxHR, GIF and images have a fixed quality"},
+          {"max_mb", T::Number, "file size limit in MB (1 MB = 1,000,000 bytes), e.g. 9 (Discord), 16 (WhatsApp), "
+                                "25 (mail): the video bit rate is computed from the length, the sound and the "
+                                "container (aiming ~3 % under the limit) and each encoder runs at that average rate "
+                                "(x264/x265/VP9/NVENC/VAAPI/QSV b+maxrate+bufsize, OpenH264 its bit rate mode, SVT-AV1 "
+                                "VBR, s264 two passes); no smart render. The sound gets 128 kbit/s (96/64 when it "
+                                "would take more than a fifth) unless audio_bitrate is given. When the rate is too "
+                                "low for the picture the size steps down 1080 -> 720 -> 540 -> 360 (not when "
+                                "height/size is given). A file over the limit is rendered once more at a lower rate. "
+                                "The answer has max_mb, size_mb (the real size), fits, video_bitrate_k, "
+                                "audio_bitrate_k, bits_per_pixel, width/height, tries (2 after a retry) and notes "
+                                "(scaled down, quality will be poor). Video formats with a quality choice only (h264, "
+                                "h265, av1, vp9, s264; BAD_ARGUMENT for prores/dnxhr, gif, images, audio only); not "
+                                "with quality or review; too small for the length = BAD_ARGUMENT with the MB a 360p "
+                                "would need"},
           {"height", T::Integer, "shorter image edge, e.g. 720: 16 to 8192, an odd one rounded down to even (default: timeline resolution)"},
           {"size", T::String, "fixed output size, e.g. 1080x1920 (portrait; the picture is fitted in)"},
           {"fps", T::Number, "output frame rate (default: the timeline's): 10, 12, 15, 23.976, 24, 25, 29.97, 30, 48, 50, "
@@ -1261,7 +1275,7 @@ const QVector<Command>& commands()
           {"speed", T::String, "only format s264: its speed stage - default, or fast (B pictures search fewer "
                                "partition layouts in dense texture: camera footage ~14 % less work for ~1 % larger "
                                "files at the same quality); the answer's s264_speed is the stage the encoder ran with"},
-          {"audio_bitrate", T::Integer, "kbit/s for AAC/MP3/Opus (default 320)"},
+          {"audio_bitrate", T::Integer, "kbit/s for AAC/MP3/Opus (default 320; with max_mb 128 or less)"},
           {"channels", T::String, "sound channels of the file: project (default: the project's mix, see `info` "
                                   "format.channels), stereo (a 5.1/7.1 mix downmixed, ITU), 5.1 or 7.1 (FL FR FC LFE "
                                   "Ls Rs [Lss Rss]; AAC, Opus, FLAC, WAV/AIFF, ALAC 5.1). MP3 has no 5.1: it writes the "
@@ -1312,18 +1326,24 @@ const QVector<Command>& commands()
                                      "\"off\""}},
          cmdRender},
         {"short", "A finished vertical short (YouTube Shorts, Instagram Reels, TikTok) of recordings in one call: "
-                  "finds the best moments (`highlights`: kills of the kill feed with a game hint, else loud moments), "
-                  "pads each to at least 6 s and keeps the best ones within min_s..max_s (a timeline 'Short-Schnitt' "
+                  "finds the best moments (`highlights`: kills of the kill feed with a game hint, else loud moments; "
+                  "in game recordings also laughter and shouts in a voice stream (microphone, voice chat), and the end "
+                  "of a replay clip of up to 60 s without any - below every other moment), "
+                  "keeps the best ones within min_s..max_s, each starting at most 1.5 s before its first hit and padded "
+                  "only after it - up to 6 s after its last hit, never past the player's death (CS2: its red death "
+                  "screen; the moment ends 0.7 s after it, before the spectating): rather shorter than min_s than "
+                  "padded with dead footage (note_keys short_shorter says so) - "
+                  "(a timeline 'Short-Schnitt' "
                   "in the recordings' shape), copies it into a 9:16 (1:1, 4:5) timeline 'Short' with every clip "
-                  "reframed, adds word captions from the speech (only when whisper is installed; else a note with "
+                  "reframed and a mild zoom punch on each kill's hit, adds word captions from the speech (only when whisper is installed; else a note with "
                   "the install command - never installs), runs `check` for the platform and applies its fixes "
                   "(master limiter, loudness to -14 LUFS), and renders with the platform's preset. Instead of "
                   "recordings: an existing timeline of a project (or \"@app\": the timelines appear in the app) as the "
                   "cut. Answer: out, length_s, the moments used, unused (each recording without a moment in the short "
                   "and why: reason no_moment = highlights found none in it, length = its moments did not fit after "
-                  "the better ones), done (each step), check (what it fixed, what is left: look at it), notes. The "
-                  "cut marks the first moment as the hook section and every other one as a section of its own. Takes a while (progress lines on stderr); look at the result with "
-                  "`frames` afterwards.",
+                  "the better ones), done (each step), check (what it fixed, what is left: look at it), notes, sheet "
+                  "(a contact sheet of the video: 8 frames, a JPEG next to out - look at it). The "
+                  "cut marks the first moment as the hook section and every other one as a section of its own. Takes a while (progress lines on stderr).",
          {{"files", T::Paths, "recordings (video files) to make the short of", false, true},
           {"project", T::Path, "project for the timelines: with files a new one next to out unless given (an existing "
                                "one or \"@app\" gets new timelines); without files: the project whose timeline is the cut"},
@@ -1340,12 +1360,19 @@ const QVector<Command>& commands()
           {"hook", T::String, "best (default: the best moment opens the short, as its hook section) or chronological"},
           {"sfx", T::String, "off (default) or mild: a soft whoosh on hard cuts (the computed whoosh, about 0.9 s; "
                                  "op sfx length '0s' takes the short recorded one), hits on kills"},
-          {"audio_stream", T::String, "sound of recordings with several audio streams: game (only the game sound - "
+          {"audio_stream", T::String, "sound of recordings with several audio streams: auto (the default for game "
+                                      "material - a known game, or a Mix next to voice chat/music: the game sound, plus "
+                                      "each voice stream (microphone, voice chat) that speaks or laughs inside a moment "
+                                      "of the short, the game ducked 6 dB under it; captions then come from it too), "
+                                      "game (only the game sound - "
                                       "no Mix, voice chat like Discord, microphone, music like Spotify, guests or "
-                                      "cameras - when such a stream is there; the default for game material: a known "
-                                      "game, or a Mix next to voice chat/music), all (every stream as the game template "
+                                      "cameras - when such a stream is there), all (every stream as the game template "
                                       "places it: the Mix muted; the default otherwise), or stream numbers/names like "
                                       "\"3\" or \"System Output,Mikrofon\""},
+          {"accents", T::String, "punch (default: a mild zoom punch on each kill's hit in the short - no flash, no "
+                                 "shake) or off"},
+          {"sheet", T::Boolean, "a contact sheet of the rendered video (default true: '<out>-sheet.jpg' next to it, "
+                                "numbered, never replacing a file; false = none)"},
           {"language", T::String, "spoken language for the captions: de, en, … (default: detect)"},
           {"game", T::String, "kill feed of this game for the moments, and kept readable at the top of the short "
                               "(reframe keep): cs2 or valorant (default: from the folder or file name, e.g. "
@@ -1357,7 +1384,10 @@ const QVector<Command>& commands()
         {"direct", "Suggests the moments of a short or highlight video, each with a reason, then applies the chosen "
                    "ones as one edit. Suggesting changes nothing; apply takes all, some, edges moved or another order. "
                    "Recipes: short (the best moments for a vertical short, up to 3 variants without shared moments: "
-                   "kills of a game's kill feed, else loud moments; with none of them sound events and picture "
+                   "kills of a game's kill feed, else loud moments, in game footage also laughter/shouts of a voice "
+                   "stream and a replay clip's end (<= 60 s, no kill); each from at most 1.5 s before its first hit, "
+                   "grown only after it and never past the player's death - shorter than min_s rather than padded, "
+                   "note short_shorter; with none of them sound events and picture "
                    "changes), highlights (a highlight video of any material: kills, loud, laughter, applause, cheering, "
                    "screams, lots of movement, scene changes - best first or in time, a target length or all, not the "
                    "same scene twice, music fitted and cuts on its beat), talk (the pauses and filler words of a timeline's "
@@ -1384,7 +1414,9 @@ const QVector<Command>& commands()
           {"options", T::Object, "suggest: the recipe's settings (seconds as 15 or \"15s\"; an option the recipe does not "
                                  "know is refused). short: for (shorts|reels|tiktok), min_s, max_s, "
                                  "aspect (9:16|1:1|4:5), variants (1-3), hook (best|chronological), "
-                                 "reframe, game (cs2, valorant, none), audio_stream, captions, sfx, language (for finish); highlights: length_s (seconds or "
+                                 "reframe, game (cs2, valorant, none), audio_stream (auto: the game sound plus the voice "
+                                 "streams heard in the moments, ducked under; game: only the game sound; all; names), "
+                                 "accents (punch: a mild zoom punch on each hit, or off), captions, sfx, language (for finish); highlights: length_s (seconds or "
                                  "'all'), aspect (16:9 keeps the recordings' shape), music ({file} or {mood} for the "
                                  "music bed, null = none), order (best|time), transitions (cut|soft), game; talk: "
                                  "min_pause_s, pad_s, fillers (whisper transcribes recordings without a transcript, "

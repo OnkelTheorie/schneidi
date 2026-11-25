@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/RenderQueue.h"
 
+#include "core/ChannelLayout.h"
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "engine/ExportWriter.h"
 #include "engine/HardwareEncoders.h"
 #include "engine/MediaProbe.h"
 #include "core/SourceBitrate.h"
+#include "core/TimelineOps.h"
 
 #include <QDir>
 #include <QFileInfo>
+#include <QLocale>
 #include <QThread>
 #include <QTimer>
 #include <algorithm>
@@ -119,7 +122,48 @@ ExportSettings RenderQueue::exportSettings(const RenderJob& job, const Project& 
 {
     ExportSettings s = exportSettings(job, project.sequenceFormat(job.sequence)); // the timeline's own resolution
     for (const MediaInfo& m : project.media()) s.mediaLengths.insert(m.path, m.length);
+    if (job.settings.hasMaxMb() && !job.review)
+        if (const TargetSize::Plan p = sizePlan(job, project); p.ok) applySizePlan(s, p);
     return s;
+}
+
+TargetSize::Plan RenderQueue::sizePlan(const RenderJob& job, const Project& project, bool scale, bool audioFixed)
+{
+    const ProjectFormat format = project.sequenceFormat(job.sequence);
+    const RenderFormatInfo& f = renderFormat(job.settings.format);
+    const Timeline tl = project.renderTimeline(job.sequence);
+    const int end = TimelineOps::endFrame(tl);
+    const int from = job.inOut ? std::clamp(job.from, 0, end) : 0;
+    const int to = job.inOut && job.to >= 0 ? std::clamp(job.to + 1, from, end) : end;
+    const FrameRate rate = job.settings.outputRate(format.rate);
+    TargetSize::Input in;
+    in.maxMb = job.settings.maxMb;
+    in.seconds = format.rate.fps() > 0 ? (to - from) / format.rate.fps() : 0;
+    in.fps = rate.fps();
+    in.size = job.size.isEmpty() ? job.settings.outputSize(format.size()) : job.size;
+    in.scale = scale;
+    in.sound = job.settings.hasAudio();
+    in.audioK = job.settings.audioBitrateK;
+    in.audioFixed = audioFixed;
+    if (job.settings.audioCodec() == QLatin1String("ac3")) { // fixed by the codec
+        const int channels = job.settings.audioChannels > 0 ? job.settings.audioChannels : ChannelLayout::valid(tl.audioChannels);
+        in.audioK = RenderSettings::ac3BitrateK(channels);
+        in.audioFixed = true;
+    }
+    in.extension = QFileInfo(job.path).suffix().toLower();
+    in.videoCodec = f.videoCodec;
+    return TargetSize::plan(in);
+}
+
+void RenderQueue::applySizePlan(ExportSettings& s, const TargetSize::Plan& plan)
+{
+    if (!plan.ok) return;
+    s.targetBitrateK = plan.videoK;
+    if (plan.audioK > 0) s.audioBitrateK = plan.audioK;
+    s.size = plan.size;
+    s.smartRender = false; // a copied stretch keeps the source's rate
+    s.sourceQuality = false;
+    s.maxBitrateK = 0;
 }
 
 int RenderQueue::sourceBitrateK(const RenderJob& job, const Project& project)
@@ -209,8 +253,12 @@ bool RenderQueue::launch()
     } else if (it->review && g_reviewMarks && !m_marksReady) {
         makeReviewMarks(*it); // launch() again when the marks are there
         return true;
+    } else if (it->settings.hasMaxMb() && !it->review && !sizePlan(*it, *m_project).ok) {
+        error = T("Passt nicht in %1 MB: für diese Länge bleibt zu wenig Bitrate fürs Bild. Bereich kürzen oder die "
+                  "Grenze erhöhen.").arg(QLocale().toString(it->settings.maxMb, 'g', 4));
     } else {
         ExportSettings es = exportSettings(*it, *m_project);
+        if (m_retryVideoK > 0 && es.targetBitrateK > 0) es.targetBitrateK = m_retryVideoK; // a size limit's second try
         // A review job renders the timeline its marks were made of (an edit while they were made would not fit them)
         const Timeline tl = it->review && m_marksTimeline ? *m_marksTimeline : m_project->renderTimeline(it->sequence);
         if (it->review) es.overlay = std::move(m_overlay);
@@ -220,6 +268,7 @@ bool RenderQueue::launch()
         // Preparing (opening the files) goes on in the background until the exporter reports started()
         if (m_exporter->start(tl, es, &error)) return true;
     }
+    m_retryVideoK = 0;
     m_marksReady = false;
     m_overlay = {};
     m_marksTimeline.reset();
@@ -257,10 +306,39 @@ void RenderQueue::makeReviewMarks(const RenderJob& job)
     t->start(QThread::LowPriority);
 }
 
+bool RenderQueue::retryForSize(int id)
+{
+    const auto& q = m_project->renderQueue();
+    const auto it = std::find_if(q.cbegin(), q.cend(), [id](const RenderJob& j) { return j.id == id; });
+    if (it == q.cend() || !it->settings.hasMaxMb() || it->review) return false;
+    const qint64 bytes = QFileInfo(it->path).size();
+    const TargetSize::Plan plan = sizePlan(*it, *m_project);
+    if (!plan.ok || bytes <= plan.limitBytes) return false;
+    m_retryVideoK = TargetSize::retryVideoK(plan, bytes);
+    qInfo("Render queue: job %d came out at %lld bytes, over its limit of %lld: once more at %d kbit/s", id,
+          static_cast<long long>(bytes), static_cast<long long>(plan.limitBytes), m_retryVideoK);
+    m_percent = 0;
+    m_preparing = true;
+    emit preparing(id);
+    // After the exporter has been cleaned up (as for the next job); a cancel meanwhile ends the job here
+    QTimer::singleShot(0, this, [this, id, run = m_run] {
+        if (run != m_run || m_current != id) return;
+        if (m_canceling) {
+            onExportFinished(false, {});
+            return;
+        }
+        if (!launch()) next();
+    });
+    return true;
+}
+
 void RenderQueue::onExportFinished(bool ok, const QString& message)
 {
     const int id = m_current;
     if (!id) return;
+    // A size limit missed: one more try (the first file is replaced)
+    if (ok && !m_canceling && m_retryVideoK == 0 && retryForSize(id)) return;
+    m_retryVideoK = 0;
     const int run = m_run; // cancel() from within jobFinished already ends the run itself
     m_current = 0;
     m_preparing = false;

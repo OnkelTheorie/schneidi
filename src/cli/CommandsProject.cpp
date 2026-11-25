@@ -27,6 +27,7 @@
 #include "core/Selection.h"
 #include "core/StartTemplates.h"
 #include "core/Subtitles.h"
+#include "core/TargetSize.h"
 #include "core/Timecode.h"
 #include "core/TimelineOps.h"
 #include "engine/AudioAnalysis.h"
@@ -1101,6 +1102,21 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
             fail("BAD_ARGUMENT", "quality must be high, medium, small, web or source (or 0-4)");
         job.settings.quality = i;
     }
+    // A file size limit (Discord, WhatsApp, mail): the video bit rate that fills it, the picture smaller when that rate
+    // is too low for it (core/TargetSize); planned below when the range is known
+    double maxMb = 0;
+    if (a.contains("max_mb")) {
+        maxMb = a["max_mb"].toVariant().toDouble();
+        if (!(maxMb >= 0.1 && maxMb <= 100000))
+            fail("BAD_ARGUMENT", "max_mb must be 0.1 to 100000 (MB = 1,000,000 bytes), e.g. 9 (Discord), 16 (WhatsApp), "
+                                 "25 (mail)");
+        if (srtOnly) fail("BAD_ARGUMENT", "max_mb needs a video format: srt/vtt write subtitle files only");
+        if (const QString why = TargetSize::refusal(renderFormat(formatId)); !why.isEmpty())
+            fail("BAD_ARGUMENT", "max_mb needs a video format with a bit rate: " + why);
+        if (a.contains("quality")) fail("BAD_ARGUMENT", "quality and max_mb exclude each other: max_mb sets the bit rate");
+        if (a.contains("review")) fail("BAD_ARGUMENT", "max_mb is not for review renders (they are small already)");
+        job.settings.maxMb = maxMb;
+    }
     // Review video: small (540 p) and the fastest encoder setting unless a size is given
     if (reviewVideo && !a.contains("height") && !a.contains("size")) {
         job.settings.shortSide = 540;
@@ -1274,24 +1290,23 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         return o;
     }
     if (Exporter::readsFile(tl, out)) fail("BAD_ARGUMENT", "the output would overwrite a source file of the project");
+    // The size limit's plan: rates and size for this range (the picture stays as asked when height/size is given, the
+    // sound as asked when audio_bitrate is)
+    TargetSize::Plan sizePlan;
+    if (maxMb > 0) {
+        sizePlan = RenderQueue::sizePlan(job, s.project, !a.contains("height") && !a.contains("size"),
+                                         a.contains("audio_bitrate"));
+        if (!sizePlan.ok) fail("BAD_ARGUMENT", sizePlan.error);
+    }
     QDir().mkpath(QFileInfo(out).absolutePath());
 
-    Exporter ex;
-    QEventLoop loop;
+    std::unique_ptr<Exporter> exporter;
     bool ok = false;
     QString message;
-    QObject::connect(&ex, &Exporter::progress, &loop, [&ctx](int percent) {
-        if (ctx.progress) ctx.progress(percent / 100.0);
-    });
-    QObject::connect(&ex, &Exporter::finished, &loop, [&](bool success, const QString& msg) {
-        ok = success;
-        message = msg;
-        loop.quit();
-    });
     QElapsedTimer timer;
     timer.start();
-    QString error;
     ExportSettings es = RenderQueue::exportSettings(job, s.project);
+    if (maxMb > 0) RenderQueue::applySizePlan(es, sizePlan);
     if (threads > 0) es.threads = threads;
     es.partId = ctx.partId;
     // Checked above, but another render to the same name may finish first: then this one must not replace it
@@ -1302,26 +1317,81 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         RenderQueue::makeReview(es);
     }
     if (fastS264 && ExportWriter::isOwnH264(es.videoCodec)) es.codecOptions << QStringLiteral("speed=1"); // (not a review's H.264)
-    detail::failIfCanceled();
-    if (!ex.start(tl, es, &error)) fail("RENDER_FAILED", error);
-    // Canceled from outside (Ctrl+C, a background job of the app): the exporter stops and removes its part file
-    QTimer poll;
-    if (const std::atomic<bool>* stop = detail::cancelFlag()) {
-        QObject::connect(&poll, &QTimer::timeout, &loop, [&ex, &poll, stop] {
-            if (!stop->load()) return;
-            poll.stop();
-            ex.cancel(); // (also while it builds or analyses for stabilizing)
+    const auto render = [&] {
+        exporter = std::make_unique<Exporter>();
+        Exporter& ex = *exporter;
+        QEventLoop loop;
+        QObject::connect(&ex, &Exporter::progress, &loop, [&ctx](int percent) {
+            if (ctx.progress) ctx.progress(percent / 100.0);
         });
-        poll.start(50);
+        QObject::connect(&ex, &Exporter::finished, &loop, [&](bool success, const QString& msg) {
+            ok = success;
+            message = msg;
+            loop.quit();
+        });
+        detail::failIfCanceled();
+        QString error;
+        if (!ex.start(tl, es, &error)) fail("RENDER_FAILED", error);
+        // Canceled from outside (Ctrl+C, a background job of the app): the exporter stops and removes its part file
+        QTimer poll;
+        if (const std::atomic<bool>* stop = detail::cancelFlag()) {
+            QObject::connect(&poll, &QTimer::timeout, &loop, [&ex, &poll, stop] {
+                if (!stop->load()) return;
+                poll.stop();
+                ex.cancel(); // (also while it builds or analyses for stabilizing)
+            });
+            poll.start(50);
+        }
+        loop.exec();
+        poll.stop();
+        detail::failIfCanceled();
+        if (!ok && !es.replace && job.settings.kind() != RenderKind::ImageSequence && QFileInfo::exists(out))
+            fail("EXISTS", "output appeared while rendering (another render to the same file?); kept it, this render "
+                           "is discarded (pass overwrite to replace it): " + out);
+        if (!ok) fail("RENDER_FAILED", message.isEmpty() ? QString("rendering failed") : message);
+    };
+    render();
+    // Over the size limit (an encoder lands a few percent off its average rate): once more, lower
+    qint64 bytes = maxMb > 0 ? QFileInfo(out).size() : 0;
+    const qint64 firstBytes = bytes;
+    const int firstVideoK = es.targetBitrateK;
+    if (maxMb > 0 && bytes > sizePlan.limitBytes) {
+        es.targetBitrateK = TargetSize::retryVideoK(sizePlan, bytes);
+        es.replace = true; // this render's own file
+        render();
+        bytes = QFileInfo(out).size();
     }
-    loop.exec();
-    poll.stop();
-    detail::failIfCanceled();
-    if (!ok && !es.replace && job.settings.kind() != RenderKind::ImageSequence && QFileInfo::exists(out))
-        fail("EXISTS", "output appeared while rendering (another render to the same file?); kept it, this render is "
-                       "discarded (pass overwrite to replace it): " + out);
-    if (!ok) fail("RENDER_FAILED", message.isEmpty() ? QString("rendering failed") : message);
+    Exporter& ex = *exporter;
     QJsonObject o{{"out", out}, {"format", formatId}, {"render_s", std::round(timer.elapsed() / 100.0) / 10}};
+    if (maxMb > 0) {
+        const auto mb = [](qint64 b) { return std::round(b / TargetSize::kBytesPerMb * 100) / 100; };
+        o["max_mb"] = maxMb;
+        o["size_mb"] = mb(bytes);
+        o["fits"] = bytes <= sizePlan.limitBytes;
+        o["video_bitrate_k"] = es.targetBitrateK;
+        if (sizePlan.audioK > 0) o["audio_bitrate_k"] = sizePlan.audioK;
+        const FrameRate rate = es.rate.num > 0 ? es.rate : s.project.timelineFormat().rate;
+        const double bpp = TargetSize::bitsPerPixel(es.targetBitrateK, es.size, rate.fps());
+        o["bits_per_pixel"] = std::round(bpp * 1000) / 1000;
+        if (firstBytes != bytes) {
+            o["tries"] = 2;
+            s.notes << QString("the first try came out at %1 MB (%2 kbit/s), over max_mb: rendered again at %3 kbit/s")
+                           .arg(mb(firstBytes)).arg(firstVideoK).arg(es.targetBitrateK);
+        }
+        if (sizePlan.scaled)
+            s.notes << QString("scaled down to %1x%2 to fit max_mb: %3 kbit/s were too few for %4x%5 (pass height or "
+                               "size to keep a size)")
+                           .arg(es.size.width()).arg(es.size.height()).arg(firstVideoK)
+                           .arg(job.size.width()).arg(job.size.height());
+        if (sizePlan.poor || bpp < sizePlan.floor)
+            s.notes << QString("quality will be poor: %1 kbit/s for %2x%3 is %4 bit per pixel (about %5 looks clean) - "
+                               "shorten the range, raise max_mb, lower fps or height, or use h265/av1")
+                           .arg(es.targetBitrateK).arg(es.size.width()).arg(es.size.height())
+                           .arg(bpp, 0, 'f', 3).arg(sizePlan.floor);
+        if (bytes > sizePlan.limitBytes)
+            s.notes << QString("still %1 MB over max_mb after a second try: render again with a lower max_mb")
+                           .arg(mb(bytes - sizePlan.limitBytes));
+    }
     if (!s.notes.isEmpty()) o["notes"] = s.notes;
     o["threads"] = ex.threads();
     if (ex.threadsLowMemory()) o["threads_reason"] = "low memory"; // fewer than the processors: little RAM free

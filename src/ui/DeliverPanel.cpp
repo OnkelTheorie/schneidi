@@ -26,6 +26,7 @@
 #include <QComboBox>
 #include <QStandardItemModel>
 #include <QDir>
+#include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -77,6 +78,7 @@ bool sameOutput(const RenderSettings& a, const RenderSettings& b, QSize timeline
     if (f.hasQuality() && a.quality != b.quality) return false;
     if (f.hardware && a.encoder != b.encoder) return false;
     if (f.hardware && smartQuality(a.quality) && a.smartRender != b.smartRender) return false;
+    if (a.hasMaxMb() != b.hasMaxMb() || (a.hasMaxMb() && a.maxMb != b.maxMb)) return false;
     if (a.hasAudioBitrate() && a.audioBitrateK != b.audioBitrateK) return false;
     if ((!a.audioBitChoices().isEmpty() || !a.audioFormatChoices().isEmpty()) && a.audioCodec() != b.audioCodec()) return false;
     if (a.audioSampleFormat() != b.audioSampleFormat()) return false;
@@ -261,6 +263,19 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent, RenderQueue* queue
                              "Verlust"),
                            Qt::ToolTipRole);
 
+    // File size limit (a messenger, mail): the bit rate that fills it instead of a quality (core/TargetSize)
+    m_maxMb = new QDoubleSpinBox;
+    m_maxMb->setObjectName("renderMaxMb");
+    m_maxMb->setRange(0, 100000);
+    m_maxMb->setDecimals(1);
+    m_maxMb->setSingleStep(1);
+    m_maxMb->setSuffix(QStringLiteral(" MB"));
+    m_maxMb->setSpecialValueText(T("Aus"));
+    m_maxMb->setToolTip(T("Die Datei bleibt unter dieser Größe (z. B. 9 MB für Discord, 16 MB für WhatsApp, 25 MB "
+                          "für E-Mail): die Bitrate wird aus Länge und Ton berechnet, ist sie fürs Bild zu niedrig, "
+                          "wird es kleiner (720p, 540p, 360p). Der Ton bekommt höchstens 128 kbit/s. Ersetzt die "
+                          "Qualität; nur H.264, H.265, AV1, VP9."));
+
     // Like DaVinci's "Encoder" (Auto / Native / NVIDIA …): only hardware encoders that work on this computer
     m_encoder = new QComboBox;
     m_encoder->setObjectName("renderEncoder");
@@ -360,6 +375,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent, RenderQueue* queue
     form->addRow(T("Auflösung"), m_resolution);
     form->addRow(T("Bildrate"), m_rate);
     form->addRow(T("Qualität"), m_quality);
+    form->addRow(T("Max. Dateigröße"), m_maxMb);
     form->addRow(T("Encoder"), m_encoder);
     m_betterRow = new QWidget;
     m_betterRow->setObjectName("renderBetterEncoder");
@@ -450,6 +466,10 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent, RenderQueue* queue
         if (!m_maxFps) return;
         m_maxFps = 0;
         updateRateLabel();
+        syncPresetToSettings();
+    });
+    connect(m_maxMb, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this] {
+        updateControls();
         syncPresetToSettings();
     });
     connect(m_smart, &QCheckBox::toggled, this, [this] { syncPresetToSettings(); });
@@ -655,6 +675,7 @@ RenderSettings DeliverPanel::settings() const
     }
     s.subtitles = m_subtitles->currentData().toInt();
     s.smartRender = m_smart->isChecked();
+    s.maxMb = m_maxMb->value();
     s.embedSubtitles = m_embed->isChecked() && s.canEmbedSubtitles();
     if (s.audioOnly() && s.subtitles == RenderSettings::BurnSubtitles) s.subtitles = RenderSettings::NoSubtitles;
     const QSize size = m_resolution->currentData().toSize();
@@ -685,6 +706,7 @@ void DeliverPanel::setSettings(const RenderSettings& s)
     m_rate->setCurrentIndex(s.rateNum > 0 ? std::max(0, m_rate->findData(QSize(s.rateNum, s.rateDen))) : 0);
     m_subtitles->setCurrentIndex(std::max(0, m_subtitles->findData(s.subtitles)));
     m_smart->setChecked(s.smartRender);
+    m_maxMb->setValue(s.maxMb);
     m_embed->setChecked(s.embedSubtitles);
     if (!s.audioOnly()) selectSize(s.outputSize(m_project->timelineFormat().size()));
     m_applying = wasApplying;
@@ -712,8 +734,13 @@ void DeliverPanel::updateControls()
     const RenderFormatInfo& f = renderFormat(m_format->currentData().toString());
     const bool video = *f.videoCodec;
     m_resolution->setEnabled(video);
-    m_quality->setEnabled(f.hasQuality());
-    m_quality->setToolTip(f.hasQuality() ? QString() : T("Bei diesem Format fest"));
+    // A size limit replaces the quality (formats with a quality choice only)
+    const bool sized = f.kind == RenderKind::Video && f.hasQuality();
+    m_maxMb->setEnabled(sized);
+    const bool limit = sized && m_maxMb->value() > 0;
+    m_quality->setEnabled(f.hasQuality() && !limit);
+    m_quality->setToolTip(limit ? T("Die maximale Dateigröße bestimmt die Bitrate")
+                          : f.hasQuality() ? QString() : T("Bei diesem Format fest"));
     // "Web" (bit rate cap) only for H.264/H.265
     if (auto* model = qobject_cast<QStandardItemModel*>(m_quality->model()))
         if (QStandardItem* item = model->item(RenderSettings::kQualityWeb)) item->setEnabled(f.webQuality);
@@ -722,7 +749,7 @@ void DeliverPanel::updateControls()
     updateSourceBitrate();
     updateEncoders();
     const bool copies = smartQuality(m_quality->currentIndex());
-    m_smart->setEnabled(f.hardware && copies); // H.264/H.265
+    m_smart->setEnabled(f.hardware && copies && !limit); // H.264/H.265 (a size limit encodes everything)
     m_smart->setToolTip(copies || !f.hardware
                             ? smartTip()
                             : T("Bei „Mittel“ und „Klein“ wird alles neu kodiert: kopierte Stellen behielten die Bitrate "

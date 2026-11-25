@@ -12,7 +12,9 @@
 #include <QStringList>
 #include <QVector>
 
+#include <array>
 #include <optional>
+#include <vector>
 
 namespace Cli::detail {
 
@@ -25,7 +27,15 @@ struct DirectMoment {
     QStringList labels;
     QString source;    // "highlights" (kill feed / loud), "events" (AudioEvents), "picture" (pictureScores)
     double first = -1; // highlights with kills: the first hit (seconds), before it only lead-in; -1 = unknown
+    // How far a short may grow it (seconds; -1 = up to the recording's edge): from shortly before its first hit,
+    // up to a little after its last one or the player's death (game footage)
+    double lo = -1, hi = -1;
+    QVector<double> hits; // the hits inside (kills' hit_s)
 };
+
+// The player's deaths in samples of the middle of a CS2 picture (mean R, G, B each, `rate` per second): the red
+// tint over everything that fades into a black screen -> [{s: the tint begins, end_s: where a moment ends}]
+QJsonArray deathScreensOf(const std::vector<std::array<double, 3>>& rgb, int rate);
 
 // The moments of one file (args: file, project?, game: id or "none", no_index?): its material line, the highlights'
 // candidates (best first, as `highlights` gives them) and, for material that is no game, the moments of sound events

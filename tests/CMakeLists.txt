@@ -126,6 +126,9 @@ schneidi_test(test_export_timing)
 # Export quality "Like source": target bit rate (weighting, scaling, fallback), probe, export within 25 %, CLI
 schneidi_test(test_source_bitrate)
 target_link_libraries(test_source_bitrate PRIVATE schneidi_cli_lib)
+# Render to a file size (max_mb): the plan, renders per software encoder under their limits, refusals, Deliver + queue
+schneidi_test(test_render_max_mb)
+target_link_libraries(test_render_max_mb PRIVATE schneidi_cli_lib)
 schneidi_test(test_smart_render)
 schneidi_test(test_storage_thumbs) # Media Storage thumbnails: key frame near 1 s decoded alone (rotation, VP9, 10-bit, MJPEG lowres), disk cache
 schneidi_test(test_filmstrips) # filmstrips + Media Storage previews with the own decoder: same pictures as the ffmpeg command

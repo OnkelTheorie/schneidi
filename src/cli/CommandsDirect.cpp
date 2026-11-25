@@ -67,7 +67,7 @@ const QStringList& recipeOptionKeys(const QString& recipe)
 {
     static const QHash<QString, QStringList> keys{
         {"short", {"for", "min_s", "max_s", "aspect", "variants", "hook", "reframe", "game", "audio_stream", "target_lufs",
-                   "captions", "sfx", "language"}},
+                   "captions", "sfx", "language", "accents"}},
         {"highlights", {"length_s", "aspect", "music", "order", "transitions", "game", "audio_stream", "target_lufs"}},
         {"talk", {"min_pause_s", "pad_s", "fillers", "language", "tracks", "threshold", "target_lufs", "room_tone"}},
         {"template", {"template", "auto", "game", "target_lufs"}},
@@ -177,6 +177,11 @@ Direction::Suggestion suggestionOf(const ShortPick::Moment& m, const QVector<Dir
         for (const QString& l : c.labels)
             if (!s.labels.contains(l)) s.labels << l;
     }
+    for (const DirectMoment& c : from)
+        if (c.file == m.file)
+            for (double h : c.hits)
+                if (h >= m.from && h < m.to && !s.hits.contains(h)) s.hits << h;
+    std::sort(s.hits.begin(), s.hits.end());
     if (best) {
         s.reason = best->reason;
         if (s.score <= 0) s.score = best->score;
@@ -186,10 +191,22 @@ Direction::Suggestion suggestionOf(const ShortPick::Moment& m, const QVector<Dir
     return s;
 }
 
-QVector<ShortPick::Moment> asMoments(const QVector<DirectMoment>& list)
+// bounded (recipe short): each moment within its lo/hi - from shortly before its first hit to a little after its last
+// one or the player's death - and growing only inside them
+QVector<ShortPick::Moment> asMoments(const QVector<DirectMoment>& list, bool bounded = false)
 {
     QVector<ShortPick::Moment> out;
-    for (const DirectMoment& m : list) out << ShortPick::Moment{m.file, m.from, m.to, m.score};
+    for (const DirectMoment& m : list) {
+        ShortPick::Moment x{m.file, m.from, m.to, m.score};
+        if (bounded) {
+            x.lo = m.lo;
+            x.hi = m.hi;
+            if (m.lo >= 0) x.from = std::max(x.from, m.lo);
+            if (m.hi >= 0) x.to = std::min(x.to, m.hi);
+            if (x.to <= x.from) x.to = m.hi >= 0 ? std::max(x.from, m.hi) : m.to;
+        }
+        out << x;
+    }
     return out;
 }
 
@@ -266,6 +283,14 @@ void startHookOnAction(Direction::Suggestion& x, const QVector<DirectMoment>& fo
     if (!x.labels.contains("hook_trimmed")) x.labels << "hook_trimmed";
 }
 
+// A short's accents on its hits: punch (default: a mild zoom punch) or off
+QString shortAccents(const QJsonObject& options)
+{
+    const QString a = options["accents"].toString("punch").trimmed().toLower();
+    if (a != QLatin1String("punch") && a != QLatin1String("off")) fail("BAD_ARGUMENT", "accents must be punch or off");
+    return a;
+}
+
 // ---------- Recipes ----------
 
 void suggestShort(Direction::Session& s, const CollectedMoments& found, const QStringList& files)
@@ -292,9 +317,16 @@ void suggestShort(Direction::Session& s, const CollectedMoments& found, const QS
         source = found.extra;
         s.notes << note("fallback");
     }
-    const QVector<QVector<ShortPick::Moment>> picked = ShortPick::variants(asMoments(source), durations, variants, pick);
+    const QVector<QVector<ShortPick::Moment>> picked =
+        ShortPick::variants(asMoments(source, true), durations, variants, pick);
     if (source.isEmpty()) s.notes << note("no_moments");
     else if (picked.size() < variants) s.notes << note("fewer_variants", {{"n", int(picked.size())}, {"asked", variants}});
+    // Shorter than min_s although the recordings are longer: the moments did not reach it without dead footage
+    double material = 0;
+    for (double d : durations) material += d;
+    if (!picked.isEmpty() && material > pick.minS + 0.5)
+        if (const double got = ShortPick::total(picked.first()); got < pick.minS - 0.5)
+            s.notes << note("short_shorter", {{"s", std::round(got * 10) / 10}, {"min", pick.minS}});
     int n = 0;
     for (int v = 0; v < picked.size(); ++v)
         for (const ShortPick::Moment& m : picked[v]) {
@@ -312,7 +344,7 @@ void suggestShort(Direction::Session& s, const CollectedMoments& found, const QS
     for (const DirectMoment& c : rest) {
         if (added >= 12) break;
         if (overlapsAny(c, taken, files)) continue;
-        ShortPick::Moment m{c.file, c.from, c.to, c.score};
+        ShortPick::Moment m = asMoments({c}, true).first();
         if (m.to - m.from < pick.minMomentS) ShortPick::widen(m, std::min(pick.minMomentS, durations.value(c.file)) - (m.to - m.from), durations.value(c.file));
         Direction::Suggestion x = suggestionOf(m, {c}, files);
         x.n = ++n;
@@ -366,7 +398,10 @@ void suggestHighlights(Direction::Session& s, const CollectedMoments& found, con
     QVector<double> durations;
     for (const Direction::Material& m : s.material) durations << m.length;
     // Everything that stands out counts here (holiday clips: laughter, cheering, movement, loud)
-    QVector<DirectMoment> all = found.highlights + found.extra;
+    // (not the end of a replay clip: a fallback of recipe short; this recipe offers the ends when few stood out)
+    QVector<DirectMoment> all;
+    for (const DirectMoment& m : found.highlights + found.extra)
+        if (m.source != QLatin1String("end")) all << m;
     std::stable_sort(all.begin(), all.end(), [](const DirectMoment& x, const DirectMoment& y) { return x.score > y.score; });
     QVector<ReelPick::Moment> picked = ReelPick::pick(asMoments(all), durations, pick);
     // The same pick without growing: which candidates it took (the others stay offered, see below)
@@ -581,36 +616,63 @@ bool sameProject(const QString& a, const QString& b)
     return key(a) == key(b);
 }
 
-// Sound of the recordings: audio_stream 'game' (default: only the game streams of game material with several
-// streams), 'all', or numbers/names - as `short` always chose (per file: undefined = all)
+// Sound of the recordings: audio_stream 'auto' (default: the game streams of game material with several streams,
+// plus each voice stream - microphone, voice chat - that is heard in a used moment of its recording), 'game' (only
+// the game streams, as before 0.26), 'all', or numbers/names - as `short` always chose (per file: undefined = all).
+// *voiced: per recording the voice streams placed and why
 QVector<QJsonValue> soundStreams(const Direction::Session& s, const QString& game, QStringList* said,
-                                 const QStringList& usedFiles, QStringList* dropped)
+                                 const QVector<const Direction::Suggestion*>& used, QStringList* dropped,
+                                 QStringList* voiced, QStringList* gameNames, QStringList* voiceNames)
 {
     const QString choice = s.options.contains("audio_stream") ? s.options["audio_stream"].toVariant().toString().trimmed()
-                                                              : QString("game");
+                                                              : QString(s.recipe == QLatin1String("short") ? "auto" : "game");
+    const bool autoVoice = choice.compare("auto", Qt::CaseInsensitive) == 0;
     QVector<QJsonValue> out(s.material.size());
     for (int i = 0; i < s.material.size(); ++i) {
         const QStringList& names = s.material[i].audioStreams;
         if (choice.compare("all", Qt::CaseInsensitive) == 0 || names.size() < 2) continue;
-        if (choice.compare("game", Qt::CaseInsensitive) != 0) {
+        if (!autoVoice && choice.compare("game", Qt::CaseInsensitive) != 0) {
             out[i] = choice;
             continue;
         }
         const bool mixAndChat = std::any_of(names.begin(), names.end(), StreamPresets::isMixTitle)
                              && std::any_of(names.begin(), names.end(), StreamPresets::isChatOrMusicTitle);
-        if (!s.options.contains("audio_stream") && game == QLatin1String("none") && !mixAndChat) continue;
+        if ((!s.options.contains("audio_stream") || autoVoice) && game == QLatin1String("none") && !mixAndChat) continue;
         const QVector<int> g = StreamPresets::gameStreams(names);
         if (g.isEmpty()) continue;
+        QVector<const Direction::Suggestion*> mine;
+        for (const Direction::Suggestion* x : used)
+            if (x->file == s.material[i].file) mine << x;
+        // The voice streams heard inside a used moment (Material::voice: where something is said or laughed)
+        QVector<int> voices;
+        QStringList heardIn;
+        if (autoVoice)
+            for (const QJsonValue& v : s.material[i].voice) {
+                const int k = v["stream"].toInt(-1);
+                if (k < 0 || k >= names.size() || g.contains(k)) continue;
+                double heard = 0;
+                for (const QJsonValue& span : v["s"].toArray())
+                    for (const Direction::Suggestion* x : mine)
+                        heard += std::max(0.0, std::min(span[1].toDouble(), x->to) - std::max(span[0].toDouble(), x->from));
+                if (heard < 0.3) continue; // a breath, a click
+                voices << k;
+                heardIn << QString("%1 (%2 s heard)").arg(names[k]).arg(std::round(heard * 10) / 10);
+            }
         QJsonArray list;
         QStringList kept, left;
         for (int k : g) list << k, kept << names[k];
+        for (int k : voices) list << k;
         for (int k = 0; k < names.size(); ++k)
-            if (!g.contains(k) && !StreamPresets::isMixTitle(names[k])) // the mix only repeats the others
+            if (!g.contains(k) && !voices.contains(k) && !StreamPresets::isMixTitle(names[k])) // the mix only repeats the others
                 left << (names[k].isEmpty() ? QString("stream %1").arg(k) : names[k]);
         out[i] = list;
         // Only the recordings in the cut are named (not a switched-off one, not one without a moment)
-        if (!usedFiles.contains(s.material[i].file)) continue;
+        if (mine.isEmpty()) continue;
+        for (int k : g) if (!gameNames->contains(names[k])) *gameNames << names[k];
+        for (int k : voices) if (!voiceNames->contains(names[k])) *voiceNames << names[k];
         *said << QString("%1: %2").arg(QFileInfo(s.material[i].file).fileName(), kept.join(", "));
+        if (!heardIn.isEmpty())
+            *voiced << QString("%1: %2").arg(QFileInfo(s.material[i].file).fileName(), heardIn.join(", "));
         if (!left.isEmpty()) *dropped << QString("%1 (%2)").arg(left.join(", "), QFileInfo(s.material[i].file).fileName());
     }
     return out;
@@ -681,6 +743,7 @@ Direction::Session directSuggest(const QJsonObject& a, Context& ctx, CollectedMo
     if (!reframe.isEmpty() && !QStringList{"auto", "center", "fit"}.contains(reframe))
         fail("BAD_ARGUMENT", "reframe must be auto, center or fit");
     levelTarget(s.options); // checked now, not only when applying
+    if (s.recipe == QLatin1String("short")) shortAccents(s.options);
     const QString game = gameOf(s.options, files);
     Context sub;
     sub.cancel = ctx.cancel;
@@ -898,16 +961,20 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
         created = true;
         done << QString("new project %1 (template %2)").arg(project, n["template"].toString());
     }
-    QStringList soundSaid, soundDropped, usedFiles;
-    for (const Direction::Suggestion* x : list) usedFiles << x->file;
-    const QVector<QJsonValue> soundOf = soundStreams(s, game, &soundSaid, usedFiles, &soundDropped);
+    QStringList soundSaid, soundDropped, voiced, gameNames, voiceNames;
+    const QVector<QJsonValue> soundOf = soundStreams(s, game, &soundSaid, list, &soundDropped, &voiced, &gameNames,
+                                                     &voiceNames);
     if (!soundSaid.isEmpty())
-        done << QString("sound: only the game streams (%1)").arg(soundSaid.join("; "));
+        done << QString("sound: the game streams (%1)").arg(soundSaid.join("; "));
+    if (!voiced.isEmpty())
+        done << QString("sound: voices heard in the moments placed too, the game sound ducked 6 dB under them (%1)")
+                    .arg(voiced.join("; "));
     // Said on its own, not only inside `done`: voice chat and the microphone are not in the video
     if (!soundDropped.isEmpty()) {
         soundDropped.removeDuplicates();
-        notes << QString("left out of the sound (voice chat, microphone, music): %1 - to keep them, suggest "
-                         "again with options.audio_stream 'all' or their names (\"System Output,Discord\")")
+        notes << QString("left out of the sound (voice chat, microphone, music not heard in the moments): %1 - to keep "
+                         "them, suggest again with options.audio_stream 'all' or their names (\"System Output,Discord\"); "
+                         "'game' = only the game sound")
                      .arg(soundDropped.join("; "));
     }
 
@@ -971,6 +1038,9 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
             from = to;
         }
     }
+    // The voices placed: the game sound (the bed) a little under them while they speak
+    if (!voiceNames.isEmpty() && !gameNames.isEmpty())
+        ops << QJsonObject{{"op", "duck"}, {"track", gameNames.join(',')}, {"by", voiceNames.join(',')}, {"amount_db", -6}};
     QString result = cut;
     if (isShort) {
         // The vertical copy, every clip following its subject; game footage keeps its kill feed readable at the top
@@ -984,6 +1054,19 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
         if (game != QLatin1String("none")) copy["game"] = game;
         else if (s.options["game"].toString().trimmed().compare("none", Qt::CaseInsensitive) == 0) copy["keep"] = "none";
         ops << copy;
+        // A mild zoom punch on every hit in it (only the punch: no flash, no shake), on the copy (new_timeline
+        // switched to it); accents:'off' leaves them out
+        if (shortAccents(s.options) != QLatin1String("off")) {
+            QJsonArray at;
+            for (const Direction::Suggestion* x : list)
+                for (double h : x->hits)
+                    if (h >= x->from && h < x->to)
+                        at << QJsonObject{{"media", x->file}, {"source", QString("%1s").arg(h, 0, 'f', 3)}};
+            if (!at.isEmpty()) {
+                ops << QJsonObject{{"op", "accent"}, {"at", at}, {"preset", "punch"}, {"strength", 0.5}};
+                done << QString("accents: a mild zoom punch on %1 hit%2").arg(at.size()).arg(at.size() == 1 ? "" : "s");
+            }
+        }
     } else if (!isScript) {
         // Highlights: soft cuts, music (a file cut to the length, or the music bed), the cuts on its beat
         if (s.options["transitions"].toString() == QLatin1String("soft"))

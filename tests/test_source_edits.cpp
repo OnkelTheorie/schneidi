@@ -4,6 +4,7 @@
 #include "core/Editor.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
+#include "core/Retime.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
 
@@ -12,6 +13,7 @@
 
 #include <QCoreApplication>
 #include <cmath>
+#include <tuple>
 
 using SE = Editor::SourceEditMode;
 using Check::dump;
@@ -237,6 +239,30 @@ int main(int argc, char** argv)
         CHECK(std::abs(c.speed - 4.0) < 1e-9);
         CHECK_EQ(c.in, 0);
         CHECK_EQ(c.length(), 10);
+    }
+    // Review 2026-11-25 (F4): a speed beyond 0.01..100 is clamped (the project file allows no more): the timeline range is
+    // filled at the closest speed from the source in on; saving and loading keeps the clip as it was cut
+    for (const auto& [mark, tIn, tOut, want] : {std::tuple{35999, 200, 319, Retime::kMaxSpeed}, // 300x: 100x
+                                                std::tuple{1, 0, 999, Retime::kMinSpeed}}) {  // 0.002x: 0.01x
+        Fixture f;
+        f.p.addMedia({"/x/long.mp4", "long.mp4", 36000, true, true, false});
+        f.ed.setSourceMarkIn("/x/long.mp4", 0);
+        f.ed.setSourceMarkOut("/x/long.mp4", mark);
+        f.ed.setMarkIn(tIn);
+        f.ed.setMarkOut(tOut);
+        CHECK_EQ(f.ed.sourceEdit(SE::FitToFill, "/x/long.mp4", 0, 0), tOut + 1);
+        const Clip* c = nullptr;
+        for (const Clip& x : f.p.timeline().video[0].clips)
+            if (x.mediaPath == "/x/long.mp4") c = &x;
+        if (!CHECK(c)) continue;
+        CHECK_EQ(c->speed, want);
+        CHECK_EQ(c->start, tIn);
+        CHECK_EQ(c->length(), tOut - tIn + 1);
+        CHECK_EQ(c->in, 0);
+        ProjectData d;
+        CHECK(ProjectFile::fromJson(ProjectFile::toJson(f.p.data(), "/x/p.schneidi"), "/x/p.schneidi", &d, nullptr));
+        const Clip* back = TimelineOps::findClip(d.timeline, c->id);
+        if (CHECK(back)) CHECK(back->speed == c->speed && back->in == c->in && back->out == c->out);
     }
     for (SE mode : {SE::Overwrite, SE::Insert}) {
         Fixture f; // directly behind a clip with fade out to black: the fade out stays (like DaVinci)

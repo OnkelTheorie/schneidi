@@ -50,6 +50,8 @@ Direction::Session example()
     m.height = 1080;
     m.audioStreams = {"Mix", "Game"};
     m.moments = 4;
+    // Where a voice stream is heard (a short places it when it speaks in a moment; 25.11.)
+    m.voice = QJsonArray{QJsonObject{{"stream", 1}, {"name", "Game"}, {"s", QJsonArray{QJsonArray{2.5, 4.25}}}}};
     s.material << m;
     Direction::Suggestion a;
     a.n = 1;
@@ -59,6 +61,7 @@ Direction::Session example()
     a.score = 31.5;
     a.reason = {"kills", {{"n", 2}, {"extra", "multi"}}};
     a.labels = {"kill", "loud"};
+    a.hits = {12.4, 13.125}; // the accents of a short go there
     a.variant = 1;
     Direction::Suggestion b = a;
     b.n = 2;
@@ -66,6 +69,7 @@ Direction::Session example()
     b.to = 31.2;
     b.reason = {"laughter", {{"s", 2.1}}};
     b.labels = {"laughter"};
+    b.hits.clear();
     b.on = false;
     b.variant = 2;
     Direction::Suggestion c = a;
@@ -97,6 +101,9 @@ int main(int argc, char** argv)
         CHECK_EQ(j["suggestions"][0]["reason"]["text"].toString(), QString("2 kills (multi kill)"));
         CHECK_EQ(j["suggestions"][1]["reason"]["text"].toString(), QString("laughter (2.1 s)"));
         CHECK_EQ(j["suggestions"][1]["variant"].toInt(), 2);
+        CHECK_EQ(j["suggestions"][0]["hit_s"][1].toDouble(), 13.125);
+        CHECK(!j["suggestions"][1].toObject().contains("hit_s"));
+        CHECK_EQ(j["material"][0]["voice"][0]["name"].toString(), QString("Game"));
         CHECK(!j["suggestions"][2].toObject().contains("variant"));
         CHECK_EQ(j["suggestions"][2]["track"].toString(), QString("A1"));
         CHECK_EQ(j["length_s"].toDouble(), 6.6 + 6.6); // the two switched on
@@ -132,9 +139,10 @@ int main(int argc, char** argv)
     }
     // ---- Every reason key has an English and a UI text; unknown keys show themselves
     {
-        CHECK_EQ(Direction::reasonKeys().size(), 15);
+        CHECK_EQ(Direction::reasonKeys().size(), 20); // + the end of a replay clip (3) and voices (2), 25.11.
         for (const QString& k : Direction::reasonKeys()) {
-            const QString en = Direction::reasonText({k, {{"n", 3}, {"s", 1.5}, {"word", "äh"}, {"slot", "Intro"}, {"sentence", 2}}});
+            const QString en = Direction::reasonText(
+                {k, {{"n", 3}, {"s", 1.5}, {"word", "äh"}, {"slot", "Intro"}, {"sentence", 2}, {"stream", "Mikrofon"}}});
             CHECK(!en.isEmpty() && en != k && !en.contains('{'));
             const QString ui = Direction::reasonText({k, {{"n", 3}, {"s", 1.5}}}, Direction::Lang::Ui);
             CHECK(!ui.isEmpty() && ui != k);
