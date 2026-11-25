@@ -1377,14 +1377,15 @@ const QVector<Command>& commands()
                                "in project_dir), and with timeline the material"},
           {"timeline", T::String, "suggest: the recordings of this timeline of the project as the material ('@current' = "
                                   "the open one)"},
-          {"options", T::Object, "suggest: the recipe's settings. short: for (shorts|reels|tiktok), min_s, max_s, "
+          {"options", T::Object, "suggest: the recipe's settings (seconds as 15 or \"15s\"; an option the recipe does not "
+                                 "know is refused). short: for (shorts|reels|tiktok), min_s, max_s, "
                                  "aspect (9:16|1:1|4:5), variants (1-3), hook (best|chronological), "
-                                 "reframe, game (cs2, valorant, none), audio_stream; highlights: length_s (seconds or "
+                                 "reframe, game (cs2, valorant, none), audio_stream, captions, sfx, language (for finish); highlights: length_s (seconds or "
                                  "'all'), aspect (16:9 keeps the recordings' shape), music ({file} or {mood} for the "
                                  "music bed, null = none), order (best|time), transitions (cut|soft), game; talk: "
                                  "min_pause_s, pad_s, fillers (whisper transcribes recordings without a transcript, "
                                  "verbatim), language, tracks, threshold, target_lufs, room_tone; template: template (id; "
-                                 "none = the project's own fields), game (the moments' kill feed, as highlights); script: script|script_file, takes, language. short, highlights "
+                                 "none = the project's own fields), auto, game (the moments' kill feed, as highlights); script: script|script_file, takes, language. short, highlights "
                                  "and script also: target_lufs (the result's loudness when applied, default -14, behind "
                                  "the master limiter; false = leave the sound as recorded)"},
           {"session", T::Object, "apply: the session id ('d3-7f2a') or the session object (as suggested, maybe changed)"},

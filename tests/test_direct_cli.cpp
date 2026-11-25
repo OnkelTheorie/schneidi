@@ -75,7 +75,7 @@ QJsonObject run(const QString& name, const QJsonObject& raw, const std::atomic<b
         return Cli::execute(*cmd, Cli::normalize(*cmd, raw), ctx);
     } catch (const Cli::Error& e) {
         std::printf("       %s: %s %s\n", qPrintable(name), qPrintable(e.code), qPrintable(e.message));
-        return {{"error", e.code}};
+        return {{"error", e.code}, {"message", e.message}};
     }
 }
 
@@ -585,6 +585,26 @@ int main(int argc, char** argv)
         run("edit", {{"project", talk}, {"ops", QJsonArray{QJsonObject{{"op", "split"}, {"at", "1s"}}}}});
         CHECK_EQ(run("direct", {{"session", again["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}}})["error"].toString(),
                  QString("SESSION_STALE"));
+    }
+    // ---- Options typed (review 25.11.): seconds as text ("0.6s") mean what the number means (were 0: every 1-frame
+    // pause cut), a misspelt option is refused naming the known ones, text that is no number is refused
+    {
+        const QString talk = twoMics(dir.path());
+        const QJsonObject num = run("direct", {{"recipe", "talk"}, {"project", talk},
+                                               {"options", QJsonObject{{"min_pause_s", 0.6}, {"pad_s", 0.15}, {"tracks", "A1,A2"}}}});
+        const QJsonObject text = run("direct", {{"recipe", "talk"}, {"project", talk},
+                                                {"options", QJsonObject{{"min_pause_s", "0.6s"}, {"pad_s", "0.15"}, {"tracks", "A1,A2"}}}});
+        CHECK(!text.contains("error"));
+        CHECK_EQ(text["session"]["suggestions"].toArray().size(), num["session"]["suggestions"].toArray().size());
+        CHECK_EQ(text["session"]["options"]["min_pause_s"].toDouble(), 0.6);
+        const QJsonObject typo = run("direct", {{"recipe", "talk"}, {"project", talk}, {"options", QJsonObject{{"min_pause", 0.6}}}});
+        CHECK_EQ(typo["error"].toString(), QString("BAD_ARGUMENT"));
+        CHECK(typo["message"].toString().contains("min_pause_s"));
+        const QJsonObject bad = run("direct", {{"recipe", "short"}, {"files", QJsonArray{clip}}, {"options", QJsonObject{{"min_s", "fifteen"}}}});
+        CHECK_EQ(bad["error"].toString(), QString("BAD_ARGUMENT"));
+        CHECK(bad["message"].toString().contains("min_s"));
+        CHECK_EQ(run("direct", {{"recipe", "short"}, {"files", QJsonArray{clip}}, {"options", QJsonObject{{"variants", "two"}}}})["error"]
+                     .toString(), QString("BAD_ARGUMENT"));
     }
     // ---- Review of part 3: talk on files is refused, tracks as a list, edges of a pause, two applies of one session
     {
