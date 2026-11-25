@@ -636,6 +636,20 @@ int main(int argc, char** argv)
         if (CHECK(s.video.size() == 1 && s.video[0].items.size() == 2))
             CHECK(s.video[0].items[0].length == 0 && s.video[0].items[1].start == 0 && s.video[0].items[1].length == 50);
     }
+    // A negative audio stream (a hand-edited file) becomes stream 0 like in the project loader; the stream names
+    // never index before the list
+    {
+        const Seq s = readOtio(R"({"OTIO_SCHEMA":"Timeline.1","tracks":{"children":[{"OTIO_SCHEMA":"Track.1","kind":"Audio",
+            "children":[{"OTIO_SCHEMA":"Clip.1","name":"a","media_reference":{"target_url":"file:///m/a.mp4"},
+            "metadata":{"schneidi":{"audio_stream":-1}},
+            "source_range":{"duration":{"rate":25,"value":50},"start_time":{"rate":25,"value":0}}}]}]}})");
+        if (CHECK(s.audio.size() == 1 && s.audio[0].items.size() == 1)) CHECK_EQ(s.audio[0].items[0].audioStream, 0);
+        MediaInfo m;
+        m.hasAudio = true;
+        m.audioStreams = {AudioStreamInfo{2, "game"}, AudioStreamInfo{2, "mic"}};
+        CHECK(m.audioStreamTrackLabel(-1).isEmpty());
+        CHECK(!m.audioStreamName(-1).isEmpty() && m.audioStreamName(-1) != "game" && m.audioStreamName(-1) != "mic");
+    }
     // Deeply nested files (an upload to `serve`): refused instead of overflowing the stack
     {
         QByteArray deep = "<xmeml><sequence>";

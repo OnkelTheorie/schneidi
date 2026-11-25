@@ -270,7 +270,7 @@ Sequence readOtio(const QByteArray& data)
             const QJsonObject meta = cv["metadata"]["schneidi"].toObject();
             it.volumeDb = meta["volume_db"].toDouble(0);
             it.opacity = meta["opacity"].toDouble(100);
-            it.audioStream = meta["audio_stream"].toInt(0);
+            it.audioStream = std::max(0, meta["audio_stream"].toInt(0)); // as the project loader
             it.link = meta["link"].toInt(0);
             for (const QJsonValue& k : meta[video ? "opacity_keys" : "volume_keys"].toArray())
                 (video ? it.opacityKeys : it.volumeKeys) << Key{k[0].toInt(), k[1].toDouble()};
