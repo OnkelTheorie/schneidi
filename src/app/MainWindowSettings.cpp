@@ -91,6 +91,11 @@ void MainWindow::settingsDialog(int tab)
         && (dlg.ownProjectFolder() != SettingsDialog::storedOwnFolder()
             || (dlg.ownProjectFolder() && dlg.projectFolder() != SettingsDialog::storedFolder())))
         SettingsDialog::store(dlg.ownProjectFolder(), dlg.projectFolder());
+    // The backup's interval: from now on (a test run has no backup and keeps the setting)
+    if (!m_autosaveDisabled && dlg.autosaveSeconds() != SettingsDialog::storedAutosaveSeconds()) {
+        SettingsDialog::setStoredAutosaveSeconds(dlg.autosaveSeconds());
+        m_autosaveTimer->start(SettingsDialog::storedAutosaveSeconds() * 1000);
+    }
     if (!m_autosaveDisabled && dlg.autoLinkNodes() != CompUi::autoLink()) CompUi::setAutoLink(dlg.autoLinkNodes());
     // Timeline tab: the timelines read the choices from the settings when they need them (no restart), so storing
     // is applying. A test run (disableAutosave) must not write the user's settings: there the tab is NOT applied

@@ -186,6 +186,7 @@ public:
     // of the project left is removed (false = not readable, message shown)
     bool openBackup(const QString& path);
     void disableAutosave();      // test runs: do not write/delete a backup
+    int autosaveIntervalMs() const; // how often the backup is written (Settings › General › Projects; tests)
     // The window's normal geometry on its screen before the first show (main.cpp, then maximized): most of the available
     // area (90 %, centred), so it never starts larger than the screen (1024x768, a scale factor) and is not small on a
     // big one. fitToScreen: a wanted geometry (a size given for a test run) shrunk/moved so that it and its frame

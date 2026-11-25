@@ -670,6 +670,8 @@ void MainWindow::autosave()
         QSettings().setValue(autosaveKey(), m_projectPath); // where the backup belongs
 }
 
+int MainWindow::autosaveIntervalMs() const { return m_autosaveTimer->interval(); }
+
 void MainWindow::disableAutosave()
 {
     m_autosaveTimer->stop();

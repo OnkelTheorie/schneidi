@@ -258,6 +258,25 @@ void testProjectFolder()
     CHECK_EQ(SettingsDialog::storedFolder(), QDir::fromNativeSeparators(QDir::toNativeSeparators("/tmp/meine-projekte")));
     CHECK(SettingsDialog(AiSettings{}).findChild<QCheckBox*>("project_own_folder")->isChecked());
     QSettings().remove("project");
+    // The backup copy: every minute by default (as before, not stored), each choice stored and shown again
+    {
+        CHECK_EQ(SettingsDialog::storedAutosaveSeconds(), 60);
+        SettingsDialog dlg(AiSettings{});
+        auto* box = dlg.findChild<QComboBox*>("project_autosave");
+        if (CHECK(box)) {
+            CHECK_EQ(box->currentData().toInt(), 60);
+            CHECK_EQ(box->count(), 5);
+            box->setCurrentIndex(box->findData(300));
+            SettingsDialog::setStoredAutosaveSeconds(dlg.autosaveSeconds());
+            CHECK_EQ(SettingsDialog::storedAutosaveSeconds(), 300);
+            CHECK_EQ(SettingsDialog(AiSettings{}).findChild<QComboBox*>("project_autosave")->currentData().toInt(), 300);
+            SettingsDialog::setStoredAutosaveSeconds(60);
+            CHECK(!QSettings().contains("project/autosaveSeconds"));
+            QSettings().setValue("project/autosaveSeconds", 2); // nonsense in the file: the default
+            CHECK_EQ(SettingsDialog::storedAutosaveSeconds(), 60);
+        }
+    }
+    QSettings().remove("project");
     // Compositing: new nodes linked at once, on by default
     QSettings().remove("comp");
     SettingsDialog dlg(AiSettings{});
@@ -504,7 +523,10 @@ void testMainWindow()
     QString err;
     if (!CHECK(engine.init(&err))) return;
     std::setlocale(LC_NUMERIC, "C");
+    QSettings().setValue("project/autosaveSeconds", 120); // the backup's interval reaches the timer at the start
     MainWindow w(&engine);
+    QSettings().remove("project/autosaveSeconds");
+    CHECK_EQ(w.autosaveIntervalMs(), 120 * 1000);
     w.disableAutosave(); // a test run: settings apply, but are not saved
     QStringList calls;
     QList<int> limits;
