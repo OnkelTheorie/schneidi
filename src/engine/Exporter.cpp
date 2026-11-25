@@ -417,7 +417,8 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
     m_from = std::clamp(s.from, 0, std::max(0, end - 1));
     const int to = s.to < 0 ? end - 1 : std::min(s.to, end - 1);
     m_length = to - m_from + 1;
-    if (end <= 0 || m_length <= 0) {
+    // (a range that starts behind the end holds nothing; one that only ends behind it is cut to the timeline)
+    if (end <= 0 || m_length <= 0 || s.from >= end) {
         if (error) *error = end <= 0 ? T("Die Timeline ist leer.") : T("Der In/Out-Bereich enthält nichts.");
         return false;
     }

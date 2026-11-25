@@ -398,6 +398,31 @@ void testImageSequence(const QString& dir)
             }
         diff /= 3.0 * ((png.height() + 1) / 2) * ((png.width() + 1) / 2);
         if (!CHECK(diff < 2.5)) std::printf("       %s: mean difference to the PNG %.2f\n", file, diff);
+        if (std::strcmp(format, "jpeg") == 0) {
+            // The format's quality (qscale 2) reaches the encoder: fine quantisation tables in the last picture too.
+            // (It was dropped as an unknown option - mjpeg then runs a rate control at 200 kbit/s and ends near q 31.)
+            QFile last(QDir(imageSequenceDir(k.path)).filePath(QFileInfo(first).fileName().replace("00001", "00010")));
+            CHECK(last.open(QIODevice::ReadOnly));
+            const QByteArray data = last.readAll();
+            const qsizetype dqt = data.indexOf(QByteArray::fromHex("ffdb"));
+            int coarsest = 0;
+            if (CHECK(dqt >= 0 && dqt + 5 + 64 <= data.size()))
+                for (int i = 0; i < 64; ++i)
+                    coarsest = std::max(coarsest, int(uchar(data[dqt + 5 + i])));
+            if (!CHECK(coarsest > 0 && coarsest <= 32)) std::printf("       jpeg: coarsest quantiser step %d\n", coarsest);
+        }
+    }
+    {
+        // A range that starts behind the timeline's end holds nothing (it rendered the last frame as "done")
+        Exporter ex;
+        RenderJob k = job(dir + "/behind.mp4", "h264");
+        k.inOut = true;
+        k.from = kFrames + 100;
+        k.to = kFrames + 200;
+        QString error;
+        CHECK(!ex.start(timeline(), RenderQueue::exportSettings(k, kFmt), &error));
+        CHECK(!error.isEmpty());
+        CHECK(!QFileInfo::exists(k.path));
     }
 }
 

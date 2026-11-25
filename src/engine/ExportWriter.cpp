@@ -127,6 +127,20 @@ AVColorSpace matrixOf(int colorspace, int height)
 // prefix (the names of the export formats, from the time MLT's consumer read them). Unknown names are left out.
 void applyOption(void* ctx, const QByteArray& key, const QByteArray& value, int flags)
 {
+    // "qscale" / "q" (a fixed quantiser, the JPEG sequence's quality) is an option of the ffmpeg program, not of the
+    // library: there it is this flag and the quality as a lambda. Left out, mjpeg runs a rate control at 200 kbit/s.
+    if ((flags & AV_OPT_FLAG_VIDEO_PARAM) && (key == "qscale" || key == "q")) {
+        bool ok = false;
+        const double q = value.toDouble(&ok);
+        if (ok && q > 0) {
+            auto* codec = static_cast<AVCodecContext*>(ctx);
+            codec->flags |= AV_CODEC_FLAG_QSCALE;
+            codec->global_quality = int(std::lround(FF_QP2LAMBDA * q));
+        } else {
+            qWarning("Export: option %s=%s not accepted", key.constData(), value.constData());
+        }
+        return;
+    }
     const char* name = key.constData();
     const AVOption* o = av_opt_find(ctx, name, nullptr, flags, AV_OPT_SEARCH_CHILDREN);
     if (!o && ((name[0] == 'v' && (flags & AV_OPT_FLAG_VIDEO_PARAM)) || (name[0] == 'a' && (flags & AV_OPT_FLAG_AUDIO_PARAM))))
