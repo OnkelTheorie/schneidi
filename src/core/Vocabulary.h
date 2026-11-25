@@ -29,6 +29,12 @@ bool gameTermsOn();
 void setGameTermsOn(bool on);
 // A call's game_terms (true/false) or else the setting
 bool useGameTerms(const QJsonValue& given);
+// Automatic captions (short, direct finish) only where two whisper models agree: the setting
+// "transcribe/captionsCheck" (default true = "auto": when it is cheap; false = "off")
+bool captionsCheckOn();
+void setCaptionsCheckOn(bool on);
+// A call's captions_check ("auto", "on", "off"; other values or none: the setting's "auto"/"off")
+QString captionsCheck(const QJsonValue& given);
 
 // whisper reads at most this many prompt tokens (half its text context of 448); more are cut by whisper itself
 constexpr int kMaxPromptTokens = 224;

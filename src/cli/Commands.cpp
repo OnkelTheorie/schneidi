@@ -1341,7 +1341,8 @@ const QVector<Command>& commands()
                   "recordings: an existing timeline of a project (or \"@app\": the timelines appear in the app) as the "
                   "cut. Answer: out, length_s, the moments used, unused (each recording without a moment in the short "
                   "and why: reason no_moment = highlights found none in it, length = its moments did not fit after "
-                  "the better ones), done (each step), check (what it fixed, what is left: look at it), notes, sheet "
+                  "the better ones), done (each step), check (what it fixed, what is left: look at it), notes, "
+                  "captions_left_out (caption lines two whisper models heard differently, with both readings), sheet "
                   "(a contact sheet of the video: 8 frames, a JPEG next to out - look at it). The "
                   "cut marks the first moment as the hook section and every other one as a section of its own. Takes a while (progress lines on stderr).",
          {{"files", T::Paths, "recordings (video files) to make the short of", false, true},
@@ -1360,6 +1361,10 @@ const QVector<Command>& commands()
           {"hook", T::String, "best (default: the best moment opens the short, as its hook section) or chronological"},
           {"sfx", T::String, "off (default) or mild: a soft whoosh on hard cuts (the computed whoosh, about 0.9 s; "
                                  "op sfx length '0s' takes the short recorded one), hits on kills"},
+          {"captions_check", T::String, "captions only where two whisper models (large-v3 and turbo, if both are "
+                                        "installed) hear the same words: auto (default: when whisper has a graphics "
+                                        "card or there is under 60 s of voice to check; the app's setting can turn it "
+                                        "off), on or off. Lines left out are in captions_left_out with both readings"},
           {"game_terms", T::Boolean, "captions: also give whisper a few terms of the game (cs2: Headshot, AWP, Eco, "
                                      "Long …) - fixes their spelling, but may pull other words towards them. Default: "
                                      "the app's setting (File > Settings > Transcription), off"},
@@ -1420,7 +1425,8 @@ const QVector<Command>& commands()
                                  "reframe, game (cs2, valorant, none), audio_stream (auto: the game sound plus the voice "
                                  "streams heard in the moments, ducked under; game: only the game sound; all; names), "
                                  "accents (punch: a mild zoom punch on each hit, or off), captions, sfx, language, game_terms (true: the game's "
-                                 "terms to whisper; default the app's setting, off) (for finish); highlights: length_s (seconds or "
+                                 "terms to whisper; default the app's setting, off), captions_check (auto|on|off: "
+                                 "captions only where two whisper models agree) (for finish); highlights: length_s (seconds or "
                                  "'all'), aspect (16:9 keeps the recordings' shape), music ({file} or {mood} for the "
                                  "music bed, null = none), order (best|time), transitions (cut|soft), game; talk: "
                                  "min_pause_s, pad_s, fillers (whisper transcribes recordings without a transcript, "
@@ -1435,7 +1441,7 @@ const QVector<Command>& commands()
           {"dry_run", T::Boolean, "apply: what the edit would do, nothing saved"},
           {"project_dir", T::Path, "apply: the folder for a new project it makes (default: the folder for projects of the settings, "
                                     "else <Videos>/schneidi - never the recordings' folder)"},
-          {"finish", T::Object, "after a short's apply: {timeline, captions?, sfx?, game?, language?, game_terms?, words?} puts word "
+          {"finish", T::Object, "after a short's apply: {timeline, captions?, sfx?, game?, language?, game_terms?, captions_check?, words?} puts word "
                                 "captions (whisper) and mild effect sounds on it as one more edit"}},
          cmdDirect},
         {"probe", "Media file details: duration, frames, resolution, frame rate, audio streams (audio_channels: count "

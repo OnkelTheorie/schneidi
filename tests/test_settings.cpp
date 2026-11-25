@@ -234,6 +234,21 @@ void testVocabulary()
         CHECK(box && box->isChecked());
     }
     Vocabulary::setGameTermsOn(false);
+    // The second model's check of automatic captions: on by default, the checkbox, stored
+    CHECK(Vocabulary::captionsCheckOn());
+    {
+        SettingsDialog dlg(AiSettings{});
+        auto* box = dlg.findChild<QCheckBox*>("transcribe_captions_check");
+        if (CHECK(box)) {
+            CHECK(box->isChecked() && dlg.captionsCheck());
+            box->setChecked(false);
+            CHECK(!dlg.captionsCheck());
+        }
+    }
+    Vocabulary::setCaptionsCheckOn(false);
+    CHECK(!Vocabulary::captionsCheckOn() && QSettings().contains("transcribe/captionsCheck"));
+    Vocabulary::setCaptionsCheckOn(true);
+    CHECK(!QSettings().contains("transcribe/captionsCheck"));
     // Game terms: CS2 and Valorant have a few, other games none
     CHECK(Vocabulary::gameTerms("cs2").contains("Headshot") && Vocabulary::gameTerms("CS2").contains("AWP"));
     CHECK(Vocabulary::gameTerms("valorant").contains("Spike"));

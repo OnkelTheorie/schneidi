@@ -906,6 +906,55 @@ int main(int argc, char** argv)
             CHECK_EQ(said2(true, false), QString("Einer soll? Heilige Scheiße. Crazy."));
             CHECK_EQ(said2(false, true), QString("Einer Smoke? Headshot."));
             Vocabulary::setGameTermsOn(false);
+            // Two models must agree: the second model's transcripts in the cache too (its file name in the key, the
+            // language the first one heard); a phrase heard differently is left out, with both readings
+            const QString checkModel = "/nonexistent/ggml-check.bin";
+            const auto putCheck = [&](int stream, const QJsonArray& w) {
+                AnalysisCache::put(AnalysisCache::key("speech-words", two,
+                                                      QJsonObject{{"language", "de"}, {"stream", stream}, {"verbatim", false},
+                                                                  {"model", "ggml-check.bin"}}, 1),
+                                   QJsonObject{{"stream", stream}, {"language", "de"}, {"words", w}});
+            };
+            putCheck(1, QJsonArray{QJsonArray{4120, 4800, "einer soll"}});                       // the same
+            putCheck(2, QJsonArray{QJsonArray{5610, 6000, "Heilige"}, QJsonArray{6040, 6500, "Scheisse."}, // spelt otherwise
+                                   QJsonArray{7010, 7300, "Lazy."}});                               // another word
+            const auto checked = [&](const QString& mode, const QString& model, Cli::detail::VoiceCaptions* v) {
+                v->check = mode;
+                v->checkModel = model;
+                QStringList out;
+                for (const QJsonValue& w : Cli::detail::voiceCaptionWords(made["project"].toString(), made["timeline"].toString(), cctx, v))
+                    out << w["text"].toString();
+                return out.join(' ');
+            };
+            Cli::detail::VoiceCaptions on;
+            CHECK_EQ(checked("on", checkModel, &on), QString("Einer soll? Heilige Scheiße."));
+            CHECK_EQ(on.checkedWith, QString("ggml-check.bin"));
+            if (CHECK_EQ(on.leftOut.size(), 1)) {
+                const QJsonObject l = on.leftOut[0].toObject();
+                CHECK_EQ(l["heard"].toString(), QString("Crazy."));
+                CHECK_EQ(l["other"].toString(), QString("Lazy."));
+                CHECK_EQ(l["speaker"].toString(), QString("Discord"));
+                CHECK(l["from_s"].toDouble() > 0 && l["to_s"].toDouble() > l["from_s"].toDouble());
+            }
+            Cli::detail::VoiceCaptions off; // option off: every line, nothing checked
+            CHECK_EQ(checked("off", checkModel, &off), QString("Einer soll? Heilige Scheiße. Crazy."));
+            CHECK(off.checkedWith.isEmpty() && off.leftOut.isEmpty() && off.skipped.isEmpty());
+            if (Extensions::installedWhisperModels().size() < 2) { // no second model installed: no check, said why
+                Cli::detail::VoiceCaptions none;
+                CHECK_EQ(checked("auto", {}, &none), QString("Einer soll? Heilige Scheiße. Crazy."));
+                CHECK_EQ(none.skipped, QString("no_model"));
+            }
+            // The notes the short and direct finish give
+            CHECK(Direction::noteText("captions_left_out").contains("captions_left_out"));
+            CHECK(!Direction::noteText("captions_check_no_model").isEmpty());
+            CHECK(!Direction::noteText("captions_check_slow").isEmpty());
+            // The setting: on (auto) by default, the call's value wins
+            CHECK_EQ(Vocabulary::captionsCheck({}), QString("auto"));
+            CHECK_EQ(Vocabulary::captionsCheck("on"), QString("on"));
+            Vocabulary::setCaptionsCheckOn(false);
+            CHECK_EQ(Vocabulary::captionsCheck({}), QString("off"));
+            CHECK_EQ(Vocabulary::captionsCheck("auto"), QString("auto"));
+            Vocabulary::setCaptionsCheckOn(true);
         }
     }
 

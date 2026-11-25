@@ -61,6 +61,25 @@ bool useGameTerms(const QJsonValue& given)
     return given.isBool() ? given.toBool() : gameTermsOn();
 }
 
+bool captionsCheckOn()
+{
+    return QSettings().value(QStringLiteral("transcribe/captionsCheck"), true).toBool();
+}
+
+void setCaptionsCheckOn(bool on)
+{
+    if (on) QSettings().remove(QStringLiteral("transcribe/captionsCheck"));
+    else QSettings().setValue(QStringLiteral("transcribe/captionsCheck"), false);
+}
+
+QString captionsCheck(const QJsonValue& given)
+{
+    const QString v = given.toString().trimmed().toLower();
+    if (v == QLatin1String("auto") || v == QLatin1String("on") || v == QLatin1String("off")) return v;
+    if (given.isBool()) return given.toBool() ? QStringLiteral("on") : QStringLiteral("off");
+    return captionsCheckOn() ? QStringLiteral("auto") : QStringLiteral("off");
+}
+
 QStringList gameTerms(const QString& game)
 {
     const QString g = game.trimmed().toLower();

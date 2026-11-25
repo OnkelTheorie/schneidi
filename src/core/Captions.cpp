@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/Captions.h"
 
+#include "core/Transcript.h"
+
+#include <QHash>
 #include <QRegularExpression>
 #include <algorithm>
 #include <climits>
@@ -366,6 +369,101 @@ int snapToSound(QVector<TranscriptCut::Word>& words, const std::vector<float>& f
         ++moved;
     }
     return moved;
+}
+
+namespace {
+
+// Lower case, letters and digits only, numbers 0-12 as words, "ne" as "eine"; words in order
+QStringList plainWords(const QString& text)
+{
+    static const QHash<QString, QString> same{
+        {"0", "null"},  {"1", "eins"},  {"2", "zwei"},   {"3", "drei"}, {"4", "vier"},  {"5", "fünf"},  {"6", "sechs"},
+        {"7", "sieben"}, {"8", "acht"},  {"9", "neun"},   {"10", "zehn"}, {"11", "elf"},  {"12", "zwölf"}, {"ne", "eine"},
+        {"zero", "null"}, {"one", "eins"}, {"two", "zwei"}, {"three", "drei"}, {"four", "vier"}, {"five", "fünf"},
+        {"six", "sechs"}, {"seven", "sieben"}, {"eight", "acht"}, {"nine", "neun"}, {"ten", "zehn"}, {"eleven", "elf"},
+        {"twelve", "zwölf"}, {"ein", "eins"}};
+    QStringList out;
+    for (QString w : text.toLower().replace(QChar(0xdf), QLatin1String("ss")).split(QRegularExpression(QStringLiteral("[\\s\\-]+")), Qt::SkipEmptyParts)) {
+        w.removeIf([](QChar c) { return !c.isLetterOrNumber(); });
+        if (w.isEmpty()) continue;
+        out << same.value(w, w);
+    }
+    return out;
+}
+
+int editDistance(const QString& a, const QString& b)
+{
+    QVector<int> row(b.size() + 1);
+    for (int j = 0; j <= b.size(); ++j) row[j] = j;
+    for (int i = 1; i <= a.size(); ++i) {
+        int diag = row[0];
+        row[0] = i;
+        for (int j = 1; j <= b.size(); ++j) {
+            const int up = row[j];
+            row[j] = std::min({row[j] + 1, row[j - 1] + 1, diag + (a[i - 1] == b[j - 1] ? 0 : 1)});
+            diag = up;
+        }
+    }
+    return row[b.size()];
+}
+
+} // namespace
+
+bool sameWords(const QString& a, const QString& b)
+{
+    const QStringList x = plainWords(a), y = plainWords(b);
+    if (x.isEmpty() || y.isEmpty()) return x.isEmpty() && y.isEmpty();
+    if (std::max(x.size(), y.size()) <= 2) {
+        if (x.size() != y.size()) return false;
+        for (int i = 0; i < x.size(); ++i)
+            if (x[i] != y[i] && !(std::min(x[i].size(), y[i].size()) >= 5 && editDistance(x[i], y[i]) <= 1)) return false;
+        return true;
+    }
+    const QString p = x.join(' '), q = y.join(' ');
+    return editDistance(p, q) * 5 <= std::max(p.size(), q.size());
+}
+
+QVector<TranscriptWord> keepAgreed(const QVector<TranscriptWord>& heard, const QVector<TranscriptWord>& check,
+                                   qint64 pauseMs, QVector<Disagreement>* left)
+{
+    // Phrases of `heard`: [first, last] and their spoken span
+    struct Phrase {
+        int first, last;
+        qint64 from, to;
+        QStringList other;
+    };
+    QVector<Phrase> phrases;
+    for (int i = 0; i < heard.size(); ++i) {
+        const QString before = i > 0 ? heard[i - 1].text.trimmed() : QString();
+        const bool ended = i == 0 || before.endsWith('.') || before.endsWith('?') || before.endsWith('!')
+                           || heard[i].from - Transcript::spokenEnd(heard[i - 1]) > pauseMs;
+        if (ended) phrases << Phrase{i, i, heard[i].from, Transcript::spokenEnd(heard[i]), {}};
+        phrases.last().last = i;
+        phrases.last().to = std::max(phrases.last().to, Transcript::spokenEnd(heard[i]));
+    }
+    // Each check word to the nearest phrase, if it starts within 0.4 s of one
+    constexpr qint64 kNear = 400;
+    for (const TranscriptWord& w : check) {
+        if (w.text.trimmed().isEmpty()) continue;
+        int best = -1;
+        qint64 bestDistance = kNear + 1;
+        for (int k = 0; k < phrases.size(); ++k) {
+            const qint64 d = w.from < phrases[k].from ? phrases[k].from - w.from : w.from > phrases[k].to ? w.from - phrases[k].to : 0;
+            if (d < bestDistance) best = k, bestDistance = d;
+        }
+        if (best >= 0) phrases[best].other << w.text.trimmed();
+    }
+    QVector<TranscriptWord> out;
+    for (const Phrase& p : std::as_const(phrases)) {
+        QStringList words;
+        for (int i = p.first; i <= p.last; ++i) words << heard[i].text.trimmed();
+        if (sameWords(words.join(' '), p.other.join(' '))) {
+            for (int i = p.first; i <= p.last; ++i) out << heard[i];
+        } else if (left) {
+            *left << Disagreement{p.from, p.to, words.join(' '), p.other.join(' ')};
+        }
+    }
+    return out;
 }
 
 QColor speakerColor(int k, const QColor& first)

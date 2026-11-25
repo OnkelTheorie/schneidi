@@ -92,7 +92,7 @@ QString timelineStamp(const QString& project, const QString& timeline);
 // no speech = no words. nullopt = the file or stream cannot be read (not cached). vocabulary: words for whisper on top
 // of the settings' list (core/Vocabulary, e.g. a game's terms)
 std::optional<QJsonObject> streamTranscript(const QString& file, int stream, const QString& language, bool verbatim,
-                                            Context& ctx, const QStringList& vocabulary = {});
+                                            Context& ctx, const QStringList& vocabulary = {}, const QString& model = {});
 // A stream of the player's microphone or of a voice chat (not the mix, not music), by its title
 bool voiceStream(const QString& title);
 
@@ -106,6 +106,10 @@ struct ShortFinish {
     QString game;     // empty = none
     QString language; // empty = detect
     bool gameTerms = false; // the game's terms go to whisper too (Vocabulary::useGameTerms: the call's or the setting)
+    // Captions only where two speech models agree: "auto" (when it is cheap: whisper on a GPU or under 60 s of
+    // sound to check), "on", "off" (Vocabulary::captionsCheck: the call's or the setting)
+    QString captionsCheck = "auto";
+    QJsonArray* leftOut = nullptr; // out: the caption lines left out, [{from_s, to_s, speaker, heard, other}]
 };
 // The game whose terms go to whisper for a short's captions: f.game when f.gameTerms, else none
 inline QString captionTermsGame(const ShortFinish& f) { return f.gameTerms ? f.game : QString(); }
@@ -117,6 +121,23 @@ inline QString captionTermsGame(const ShortFinish& f) { return f.gameTerms ? f.g
 // game ("cs2", …): its terms go to whisper with the word list (Vocabulary::gameTerms)
 QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, const QString& language, Context& ctx,
                              QStringList* voices, const QString& game = {});
+// The same with the second model's check (Captions::keepAgreed per file and stream, the second transcript cached with
+// its model in the key): phrases the two models hear differently are left out
+struct VoiceCaptions {
+    QString language, game;
+    QString check = "off";   // auto, on, off
+    QString checkModel;      // the second model (file); empty = the other installed one (checkModelFor)
+    // out
+    QStringList voices;
+    QJsonArray leftOut;      // [{from_s, to_s, speaker, heard, other}] of the lines inside the timeline
+    QString checkedWith;     // the second model's file name; empty = not checked
+    QString skipped;         // why not checked: "no_model", "slow"; empty = checked or off
+    double checkSeconds = 0; // what the second transcripts took (0 when cached)
+};
+QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, Context& ctx, VoiceCaptions* v);
+// The other installed whisper model for the check: large-v3 -> turbo, turbo -> large-v3, else the best other one;
+// empty = none (never downloads)
+QString checkModelFor(const QString& mainModel);
 // noteKeys (optional): the notes' fixed keys (Direction::noteText), in the order of notes, for a page to translate
 QJsonArray shortFinishOps(const QString& project, const QString& timeline, const ShortFinish& f, Context& ctx,
                           QJsonArray* done, QJsonArray* notes, QJsonArray* noteKeys = nullptr);

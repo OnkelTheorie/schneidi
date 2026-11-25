@@ -126,7 +126,7 @@ const QHash<QString, Tool>& tools()
               {"captions", "", {"karaoke", "word", "off"}}, {"accents", "", {"punch", "off"}},
               {"game", "", {"cs2", "valorant", "none"}}},
              {"timeline", "aspect", "reframe", "hook", "sfx", "audio_stream", "sheet", "language", "encoder",
-              "threads", "overwrite", "game_terms"}},
+              "threads", "overwrite", "game_terms", "captions_check"}},
             {"direct",
              "Suggests what to cut with reasons, then applies the chosen as one edit. Suggest: recipe + files (or "
              "project + timeline); apply: session + apply.",

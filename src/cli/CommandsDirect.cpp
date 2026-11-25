@@ -70,7 +70,7 @@ const QStringList& recipeOptionKeys(const QString& recipe)
 {
     static const QHash<QString, QStringList> keys{
         {"short", {"for", "min_s", "max_s", "aspect", "variants", "hook", "reframe", "game", "audio_stream", "target_lufs",
-                   "captions", "sfx", "language", "accents", "game_terms"}},
+                   "captions", "sfx", "language", "accents", "game_terms", "captions_check"}},
         {"highlights", {"length_s", "aspect", "music", "order", "transitions", "game", "audio_stream", "target_lufs"}},
         {"talk", {"min_pause_s", "pad_s", "fillers", "language", "tracks", "threshold", "target_lufs", "room_tone"}},
         {"template", {"template", "auto", "game", "target_lufs"}},
@@ -1280,24 +1280,32 @@ QJsonObject cmdDirect(const QJsonObject& a, Context& ctx)
         // The game as the short's session saw it (given, or from the recordings' folder/name): hits on its kills
         QString game = f["game"].toString();
         QJsonValue terms = f["game_terms"];
+        QJsonValue check = f["captions_check"];
         if (f["session"].isObject())
             if (const auto session = Direction::fromJson(f["session"].toObject())) {
                 QStringList files;
                 for (const Direction::Material& m : session->material) files << m.file;
                 game = gameOf(session->options, files);
                 if (!terms.isBool()) terms = session->options["game_terms"];
+                if (!f.contains("captions_check")) check = session->options["captions_check"];
             }
         sf.gameTerms = Vocabulary::useGameTerms(terms);
+        sf.captionsCheck = Vocabulary::captionsCheck(check);
+        QJsonArray leftOut;
+        sf.leftOut = &leftOut;
         if (!game.isEmpty() && game != QLatin1String("none")) sf.game = game;
         sf.language = f["language"].toString();
         if (f["prepare"].toBool()) {
             const QJsonArray ops = shortFinishOps(project, timeline, sf, ctx, &done, &notes, &noteKeys);
-            return {{"project", project}, {"timeline", timeline}, {"ops", ops}, {"done", done}, {"notes", notes},
-                    {"note_keys", noteKeys}, {"stamp", timelineStamp(project, timeline)}};
+            QJsonObject o{{"project", project}, {"timeline", timeline}, {"ops", ops}, {"done", done}, {"notes", notes},
+                          {"note_keys", noteKeys}, {"stamp", timelineStamp(project, timeline)}};
+            if (!leftOut.isEmpty()) o["captions_left_out"] = leftOut;
+            return o;
         }
         const bool captions = shortFinish(project, timeline, sf, ctx, &done, &notes);
         QJsonObject o{{"project", project}, {"timeline", timeline}, {"captions", captions}, {"done", done}};
         if (!notes.isEmpty()) o["notes"] = notes;
+        if (!leftOut.isEmpty()) o["captions_left_out"] = leftOut;
         return o;
     }
     if (a.contains("session") || a.contains("apply")) {

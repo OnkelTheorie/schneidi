@@ -3943,5 +3943,10 @@
  "Ein Wort oder Ausdruck pro Zeile, z. B. Namen, Spitznamen, Slang": "One word or phrase per line, e.g. names, nicknames, slang",
  "Whisper bekommt die Wörter als Starttext und schreibt sie dann eher so. Das hilft bei der Schreibweise, es erfindet keine Wörter, die nicht gesagt werden. Parakeet nutzt die Liste nicht.": "Whisper gets the words as its starting text and then tends to spell them like this. It helps with spelling, it does not make up words that are not said. Parakeet does not use the list.",
  "Bei Spielaufnahmen Spielbegriffe ergänzen (z. B. CS2: Headshot, AWP, Eco)": "Add game terms for game recordings (e.g. CS2: Headshot, AWP, Eco)",
- "Für die Untertitel von Shorts aus Spielaufnahmen, wenn das Spiel bekannt ist. Die Begriffe werden richtiger geschrieben, andere Wörter können aber in ihre Richtung kippen.": "For the captions of shorts from game recordings when the game is known. The terms get spelled right more often, but other words can tip towards them."
+ "Für die Untertitel von Shorts aus Spielaufnahmen, wenn das Spiel bekannt ist. Die Begriffe werden richtiger geschrieben, andere Wörter können aber in ihre Richtung kippen.": "For the captions of shorts from game recordings when the game is known. The terms get spelled right more often, but other words can tip towards them.",
+ "Automatische Untertitel mit einem zweiten Modell gegenprüfen": "Check automatic captions with a second model",
+ "Für Shorts: eine Zeile kommt nur in die Untertitel, wenn Whisper large und turbo dasselbe hören (beide müssen installiert sein). Lieber keine Zeile als eine falsche. Ohne Grafikkarte nur bei kurzem Ton.": "For shorts: a line goes into the captions only when whisper large and turbo hear the same (both must be installed). Rather no line than a wrong one. Without a graphics card only for short sound.",
+ "Untertitel: Zeilen weggelassen, die zwei Spracherkennungen verschieden gehört haben.": "Captions: lines left out that two speech recognitions heard differently.",
+ "Untertitel nicht gegengeprüft: nur ein Whisper-Modell ist installiert.": "Captions not cross-checked: only one whisper model is installed.",
+ "Untertitel nicht gegengeprüft: ohne Grafikkarte dauert die zweite Erkennung zu lange.": "Captions not cross-checked: without a graphics card the second recognition takes too long."
 }
