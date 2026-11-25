@@ -6,6 +6,7 @@
 // trusted code stays trusted.
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
+#include "cli/Sandbox.h"
 #include "core/CodeTrust.h"
 #include "core/CompGraph.h"
 #include "core/CompRecipes.h"
@@ -336,6 +337,35 @@ int main(int argc, char** argv)
         QFile f(g_project);
         CHECK(f.open(QIODevice::ReadOnly));
         CHECK(!f.readAll().contains(hash.toLatin1()));
+    }
+    // A work folder (serve, mcp --root): its clients' trust stays in the process - code they write or vouch for with
+    // trust_custom_code runs there, but no record lets it run in the desktop app later without asking
+    {
+        const QString cwd = QDir::currentPath();
+        QSettings().remove("trust");
+        Cli::Sandbox::configure({dir.path()});
+        newRun();
+        const QString served = dir.filePath("served.schneidi");
+        g_project = served;
+        run("new", {{"project", "served.schneidi"}, {"width", 320}, {"height", 180}, {"fps", 25}, {"media", QJsonArray{still}}});
+        edit({QJsonObject{{"op", "append"}, {"media", "green.png"}, {"duration", "2s"}}});
+        ProjectData s0;
+        CHECK(ProjectFile::load(served, &s0, nullptr));
+        const int id = s0.timeline.video.isEmpty() || s0.timeline.video[0].clips.isEmpty() ? 0 : s0.timeline.video[0].clips.first().id;
+        edit({QJsonObject{{"op", "effect"}, {"clips", QJsonArray{id}}, {"effect", "ffmpeg_filter"},
+                          {"params", QJsonObject{{"chain", "negate"}}}}});
+        CHECK(negated(middle())); // runs for the client that wrote it
+        ProjectData s1;
+        CHECK(ProjectFile::load(served, &s1, nullptr));
+        CHECK(!CodeTrust::codes(s1).isEmpty());
+        CHECK(!CodeTrust::remembered(served, CodeTrust::codes(s1)));
+        newRun();
+        run("render", {{"project", "served.schneidi"}, {"out", "s.mp4"}, {"height", 180}, {"trust_custom_code", true}});
+        CHECK(!CodeTrust::remembered(served, CodeTrust::codes(s1)));
+        CHECK(!QSettings().childGroups().contains("trust"));
+        Cli::Sandbox::configure({});
+        CHECK(!CodeTrust::sessionOnly()); // outside a work folder: remembered as before
+        QDir::setCurrent(cwd);
     }
     QDir(CompRecipes::dir()).removeRecursively();
     QSettings().remove("trust");

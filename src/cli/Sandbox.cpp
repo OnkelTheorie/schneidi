@@ -4,6 +4,7 @@
 
 #include "cli/CommandsDetail.h"
 #include "cli/Live.h"
+#include "core/CodeTrust.h"
 #include "core/EffectFolders.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -130,6 +131,8 @@ void configure(const Settings& in)
         s.maps << m;
     }
     state() = s;
+    // Trust given by a client of a work folder (trust_custom_code, code it writes) stays in this process
+    CodeTrust::setSessionOnly(!s.root.isEmpty());
     if (!s.app) Live::disable();
     if (!s.root.isEmpty()) QDir::setCurrent(s.root); // what still resolves against the working directory stays inside
 }

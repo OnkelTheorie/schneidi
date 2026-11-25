@@ -24,7 +24,8 @@ struct Settings {
                        // know the work folder)
 };
 
-// Throws Error (BAD_ARGUMENT) for a root that is not a folder or a map without '='
+// Throws Error (BAD_ARGUMENT) for a root that is not a folder or a map without '='. With a root, trust in custom code
+// given here is not remembered for the desktop app (CodeTrust::setSessionOnly)
 void configure(const Settings& s);
 bool active();       // a root is set
 QString root();      // absolute, clean
