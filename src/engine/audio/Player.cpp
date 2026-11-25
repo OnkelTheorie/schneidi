@@ -298,11 +298,19 @@ void Player::Impl::process(float* out, int frames)
     int i = 0;
     bool sound = false, fade = false;
     int own = -1; // where this generation's sound starts in `out` (-1: none of it here)
+    bool newer = false; // stopped at a block of a generation that started during this callback
     while (i < frames) {
         const uint64_t r = consumed.load(std::memory_order_relaxed);
         if (r == written.load(std::memory_order_acquire)) break;
         const Block& b = ring[r % kRing];
         int k = 0;
+        // A generation started after `g` was loaded (play/scrub during this callback) whose feeder was quick: its
+        // block stays in the ring for the next callback, which switches to it, holds and fades it in (taken as old
+        // it was dropped: 256 samples never heard, the clock behind the sound). Generations only grow
+        if (b.gen != g && int32_t(b.gen - g) > 0) {
+            newer = true;
+            break;
+        }
         if (b.gen != g) { // old generation: fade out over what is there, drop the rest
             k = std::min({frames - i, kBlock - cb.offset, s.fadeLeft});
             for (int j = 0; j < k; ++j) {
@@ -363,7 +371,7 @@ void Player::Impl::process(float* out, int frames)
             if (s.fadeInAt != s.handed) fadeOutTail(i); // not faded out at the end of the callback before
             s.inRun = false;
             s.gapT = s.total + i;
-            if (!scrubbing) underruns.fetch_add(1, std::memory_order_relaxed);
+            if (!scrubbing && !newer) underruns.fetch_add(1, std::memory_order_relaxed); // newer: not a dropout
         }
         sound = false;
     } else if (s.inRun && !hold && !scrubbing && own >= 0 && s.handed - s.fadeInAt > kFade
