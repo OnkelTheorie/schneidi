@@ -2611,9 +2611,14 @@ struct Renderer::Impl {
             // field by field (Video::toRgba); the card samples the chroma plane as one picture and blended the
             // fields' colours (stripes of one field tinted by the other). Converted here, the card draws the RGBA
             // picture (from the layer pool). Only the formats the CPU converts field by field: the others (NV12, P010
-            // of hardware decoding, 10 bit) the CPU converts as progressive too, the planes upload gives the same
+            // of hardware decoding, 10 bit) the CPU converts as progressive too, the planes upload gives the same.
+            // Deinterlaced 4:2:0 as well (Video::Reader's bwdif): where the picture stands still the filter keeps both
+            // fields, so its chroma rows still alternate between them - the CPU's conversion and the card's sampling
+            // of such rows differ widely (a static picture with fields of other colours: mean 27 levels); converted
+            // here, the card shows exactly the CPU's picture (and the export's)
             const auto fmt = AVPixelFormat(op.picture->frame->format);
-            if (!op.picture->progressive && (fmt == AV_PIX_FMT_YUV420P || fmt == AV_PIX_FMT_YUVJ420P) && nw > 0 && nh > 0) {
+            if ((!op.picture->progressive || op.picture->deinterlaced) && (fmt == AV_PIX_FMT_YUV420P || fmt == AV_PIX_FMT_YUVJ420P)
+                && nw > 0 && nh > 0) {
                 auto img = std::make_shared<Image>(nw, nh);
                 if (!Video::toRgba(*op.picture, op.info, img->data(), nw, nh, ctx.preview)) return false;
                 op.rgba = std::move(img);
