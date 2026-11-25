@@ -341,7 +341,7 @@ QVector<Issue> story(const Timeline& tl, int from, int to, const ProjectFormat& 
     });
     if (!planned) {
         if (!o.platform.isEmpty() && length > 6) {
-            const int tail = to - std::max(framesOf(3, f), (to - from) * 15 / 100);
+            const int tail = to - int(std::max<qint64>(framesOf(3, f), qint64(to - from) * 15 / 100)); // (no overflow)
             const bool text = firstText(tl, tail, to) >= 0;
             const bool spoken = std::any_of(words.begin(), words.end(), [&](int w) { return w >= tail && w < to; });
             if (!text && !spoken)
