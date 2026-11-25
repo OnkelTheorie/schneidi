@@ -32,6 +32,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QSettings>
+#include <climits>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QListWidget>
@@ -211,6 +212,39 @@ void testWindow(const QString& media, const QString& shots)
     action("track_height_medium")->trigger();
     CHECK_EQ(tv->view().videoTrackHeight, 64);
     CHECK_EQ(p->undoStack()->count(), steps + 2);
+
+    // Loop playback without an In/Out range: not possible by default (as before); with the whole timeline chosen
+    // (Settings › Timeline) it loops from 0 to the end, a range set meanwhile loops in the range, removing the range
+    // goes back to the whole timeline
+    {
+        QAction* loop = action("loop_inout");
+        CHECK(!loop->isEnabled() && !loop->isChecked() && !engine.looping());
+        TimelineOptions::setLoopWholeTimeline(true);
+        w.applyTimelineOptions();
+        CHECK(loop->isEnabled());
+        CHECK_EQ(loop->text(), T("Ganze Timeline wiederholen"));
+        loop->trigger();
+        CHECK(loop->isChecked() && engine.looping());
+        CHECK_EQ(engine.loopIn(), 0);
+        CHECK_EQ(engine.loopOut(), INT_MAX);
+        CHECK(!tv->loopInOut()); // nothing to draw in the ruler: no range
+        p->edit("marks", [](Timeline& tl) {
+            tl.markIn = 10;
+            tl.markOut = 40;
+        });
+        CHECK(engine.looping() && tv->loopInOut());
+        CHECK_EQ(engine.loopIn(), 10);
+        CHECK_EQ(engine.loopOut(), 40);
+        CHECK_EQ(loop->text(), T("Im Bereich wiederholen"));
+        p->edit("marks", [](Timeline& tl) { tl.markIn = tl.markOut = -1; });
+        CHECK(loop->isChecked() && engine.looping());
+        CHECK_EQ(engine.loopOut(), INT_MAX);
+        // Back to the default: without a range the loop goes off, as before
+        TimelineOptions::setLoopWholeTimeline(false);
+        w.applyTimelineOptions();
+        CHECK(!loop->isChecked() && !loop->isEnabled() && !engine.looping());
+        CHECK(QSettings().allKeys().filter("timeline/").isEmpty()); // a test run stores no wish
+    }
 
     if (media.isEmpty()) return;
     // V1/A1: three pieces of the clip with spare material on both sides (frames 25-74, 100-149, 175-224 of 250)

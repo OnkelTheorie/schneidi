@@ -108,6 +108,25 @@ bool scrubAudio() { return stored("timeline/scrubAudio") != "off"; }
 
 void setScrubAudio(bool on) { store("timeline/scrubAudio", "off", on); }
 
+bool loopWholeTimeline() { return stored("timeline/loopWithoutRange") == "timeline"; }
+
+void setLoopWholeTimeline(bool on) { store("timeline/loopWithoutRange", "timeline", !on); }
+
+bool rememberLoop() { return QSettings().value("timeline/rememberLoop").toBool(); }
+
+void setRememberLoop(bool on)
+{
+    store("timeline/rememberLoop", "true", !on);
+    if (!on) QSettings().remove("timeline/loopOn");
+}
+
+void setLoopWish(bool on)
+{
+    if (rememberLoop()) store("timeline/loopOn", "true", !on);
+}
+
+bool loopAtStart() { return rememberLoop() && QSettings().value("timeline/loopOn").toBool(); }
+
 bool snapping() { return QSettings().value("timeline/snapping", true).toBool(); }
 
 void setSnapping(bool on) { store("timeline/snapping", "false", on); }

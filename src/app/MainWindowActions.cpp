@@ -691,25 +691,45 @@ void MainWindow::buildActions()
         PlayheadMove::jump(m_engine, PlayheadMove::Source::Key,
                            [this] { m_engine->seek(TimelineOps::endFrame(m_project->timeline())); });
     });
-    // Loop playback in the In/Out range (per session, off at every start; export unaffected): only while a range
-    // exists, removing it switches the loop off (nothing loops by accident). No default key.
+    // Loop playback in the In/Out range (export unaffected): only while a range exists, removing it switches the loop
+    // off (nothing loops by accident) - unless the user chose the whole timeline for no range (Settings › Timeline).
+    // Off at every start, unless the user chose to remember it: then the last switch by hand comes back once the
+    // loop is possible. No default key.
     auto* loop = makeAction(play, "loop_inout", T("Im Bereich wiederholen"), QKeySequence(), [] {});
     loop->setCheckable(true);
     loop->setChecked(m_engine->looping()); // (built again, rebuildUi: the loop stays as it was)
-    auto applyLoop = [this, tv, loop] {
+    auto restore = std::make_shared<bool>(!m_loopRestored && TimelineOptions::loopAtStart()); // only at the start
+    m_loopRestored = true;
+    m_applyLoop = [this, tv, loop, restore] {
         const Timeline& tl = m_project->timeline();
         const bool range = tl.markIn >= 0 || tl.markOut >= 0;
-        if (!range && loop->isChecked()) loop->setChecked(false); // comes back here through toggled
-        loop->setEnabled(range);
-        const bool on = loop->isChecked() && range;
-        tv->setLoopInOut(on);
-        if (on) m_engine->setLoopRange(std::max(0, tl.markIn), tl.markOut >= 0 ? tl.markOut : INT_MAX);
+        const bool possible = range || TimelineOptions::loopWholeTimeline();
+        if (possible && *restore) {
+            *restore = false;
+            if (!loop->isChecked()) loop->setChecked(true); // comes back here through toggled
+        }
+        if (!possible && loop->isChecked()) loop->setChecked(false);
+        loop->setEnabled(possible);
+        loop->setText(range || !possible ? T("Im Bereich wiederholen") : T("Ganze Timeline wiederholen"));
+        const bool on = loop->isChecked() && possible;
+        tv->setLoopInOut(on && range);
+        tv->setLoopWhole(on && !range);
+        if (on && range) m_engine->setLoopRange(std::max(0, tl.markIn), tl.markOut >= 0 ? tl.markOut : INT_MAX);
+        else if (on) m_engine->setLoopRange(0, INT_MAX); // the whole timeline: wraps at its end
         else m_engine->setLoopRange(-1, -1);
     };
-    connect(loop, &QAction::toggled, this, applyLoop);
-    connect(tv, &TimelineView::loopInOutRequested, loop, &QAction::setChecked);
-    connect(m_project, &Project::timelineChanged, m_ui, applyLoop);
-    applyLoop();
+    connect(loop, &QAction::toggled, this, [this] { m_applyLoop(); });
+    // A switch by hand (menu, key, the ruler's menu) is the wish a remembered loop keeps (test runs: not stored)
+    const auto wish = [this](bool on) {
+        if (!m_autosaveDisabled) TimelineOptions::setLoopWish(on);
+    };
+    connect(loop, &QAction::triggered, this, wish);
+    connect(tv, &TimelineView::loopInOutRequested, loop, [loop, wish](bool on) {
+        loop->setChecked(on);
+        wish(on);
+    });
+    connect(m_project, &Project::timelineChanged, m_ui, [this] { m_applyLoop(); });
+    m_applyLoop();
     // Sound while scrubbing (Settings › Timeline): Shift+S like DaVinci and Final Cut
     m_scrubAudioAction = makeAction(play, "scrub_audio", T("Ton beim Scrubben"), QKeySequence("Shift+S"), [] {});
     m_scrubAudioAction->setCheckable(true);

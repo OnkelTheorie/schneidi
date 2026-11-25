@@ -450,6 +450,26 @@ void testTimelineTab()
     // Pictures on video clips: filmstrip (default), first, first and last, none
     checkTimelineChoice("timeline_thumbnails", 4, int(TimelineOptions::Thumbnails::Filmstrip),
                         [] { return int(TimelineOptions::thumbnails()); });
+    // Loop without a range: not possible (default) or the whole timeline; remembered: off at every start (default)
+    // or as last switched by hand - the wish is kept only while remembering, switching that off forgets it
+    checkTimelineChoice("timeline_loop_without_range", 2, 0, [] { return int(TimelineOptions::loopWholeTimeline()); });
+    checkTimelineChoice("timeline_remember_loop", 2, 0, [] { return int(TimelineOptions::rememberLoop()); });
+    {
+        QSettings().remove("timeline");
+        TimelineOptions::setLoopWish(true); // not remembering: not stored
+        CHECK(!TimelineOptions::loopAtStart());
+        CHECK(QSettings().allKeys().filter("timeline/").isEmpty());
+        TimelineOptions::setRememberLoop(true);
+        CHECK(!TimelineOptions::loopAtStart());
+        TimelineOptions::setLoopWish(true);
+        CHECK(TimelineOptions::loopAtStart());
+        TimelineOptions::setLoopWish(false);
+        CHECK(!TimelineOptions::loopAtStart());
+        TimelineOptions::setLoopWish(true);
+        TimelineOptions::setRememberLoop(false);
+        CHECK(!TimelineOptions::loopAtStart());
+        CHECK(QSettings().allKeys().filter("timeline/").isEmpty());
+    }
     // Track height: small, medium (default: the view's 64/52 from before), large
     checkTimelineChoice("timeline_track_height", 3, int(TimelineOptions::TrackHeight::Medium),
                         [] { return int(TimelineOptions::trackHeight()); });

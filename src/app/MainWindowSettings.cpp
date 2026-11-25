@@ -170,6 +170,7 @@ void MainWindow::applyTimelineOptions()
         if (m_scrubAudioAction) m_scrubAudioAction->setChecked(TimelineOptions::scrubAudio());
     }
     updateStepTexts();
+    m_applyLoop(); // without a range: the whole timeline or nothing
     m_timeline->view()->update();
     m_timeline->overview()->update();
     if (m_studioPage) m_studioPage->tracks()->update();

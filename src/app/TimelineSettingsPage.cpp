@@ -224,6 +224,15 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
     play->addRow(hint(T("Zurück zur Startposition: die Abspielmarke springt dorthin, wo du das Abspielen gestartet hast "
                         "(wie in Vegas), gut zum wiederholten Anhören eines Schnitts. K hält immer an der Stelle an; "
                         "„Stopp und zurück zur Startposition“ gibt es auch als eigene Taste (Tastenbelegung).")));
+    m_loopWhole = combo("timeline_loop_without_range", {{T("Nicht möglich"), 0}, {T("Ganze Timeline"), 1}},
+                        TimelineOptions::loopWholeTimeline() ? 1 : 0);
+    play->addRow(T("Wiederholen ohne In/Out"), m_loopWhole);
+    m_loopRemember = combo("timeline_remember_loop", {{T("Aus bei jedem Start"), 0}, {T("Wie zuletzt eingestellt"), 1}},
+                           TimelineOptions::rememberLoop() ? 1 : 0);
+    play->addRow(T("Wiederholen nach dem Start"), m_loopRemember);
+    play->addRow(hint(T("Wiederholen schaltest du unter Wiedergabe › Im Bereich wiederholen oder im Lineal-Menü. Ganze "
+                        "Timeline: ohne In- und Out-Punkt läuft die ganze Timeline immer wieder. Wie zuletzt eingestellt: "
+                        "war Wiederholen beim Beenden an, ist es nach dem Start wieder an.")));
     m_scrubAudio = combo("timeline_scrub_audio", {{T("An"), 1}, {T("Aus"), 0}}, TimelineOptions::scrubAudio() ? 1 : 0);
     play->addRow(T("Ton beim Scrubben"), m_scrubAudio);
     play->addRow(hint(T("An: ziehst du die Abspielmarke oder gehst Einzelbilder, hörst du kurz den Ton an der Stelle "
@@ -322,6 +331,10 @@ TimelineOptions::ShuttleSteps TimelineSettingsPage::shuttleSteps() const
 
 bool TimelineSettingsPage::spaceReturns() const { return m_space->currentData().toInt() == 1; }
 
+bool TimelineSettingsPage::loopWholeTimeline() const { return m_loopWhole->currentData().toInt() == 1; }
+
+bool TimelineSettingsPage::rememberLoop() const { return m_loopRemember->currentData().toInt() == 1; }
+
 bool TimelineSettingsPage::scrubAudio() const { return m_scrubAudio->currentData().toInt() == 1; }
 
 double TimelineSettingsPage::stillSeconds() const { return m_stillSeconds->value(); }
@@ -371,6 +384,8 @@ void TimelineSettingsPage::store() const
         TimelineOptions::setTransitionSeconds(transitionSeconds());
     if (shuttleSteps() != TimelineOptions::shuttleSteps()) TimelineOptions::setShuttleSteps(shuttleSteps());
     if (spaceReturns() != TimelineOptions::spaceReturns()) TimelineOptions::setSpaceReturns(spaceReturns());
+    if (loopWholeTimeline() != TimelineOptions::loopWholeTimeline()) TimelineOptions::setLoopWholeTimeline(loopWholeTimeline());
+    if (rememberLoop() != TimelineOptions::rememberLoop()) TimelineOptions::setRememberLoop(rememberLoop());
     if (scrubAudio() != TimelineOptions::scrubAudio()) TimelineOptions::setScrubAudio(scrubAudio());
     if (snapTargets() != TimelineOptions::snapTargets()) TimelineOptions::setSnapTargets(snapTargets());
     if (snapReach() != TimelineOptions::snapReach()) TimelineOptions::setSnapReach(snapReach());

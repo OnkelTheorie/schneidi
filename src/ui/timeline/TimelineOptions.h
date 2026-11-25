@@ -57,6 +57,17 @@ void setSpaceReturns(bool on);
 bool scrubAudio();
 void setScrubAudio(bool on);
 
+// Loop playback (Playback › Loop, Settings › Timeline › Playback). Without an In/Out range: not available (default,
+// as before: nothing loops by accident) or the whole timeline loops (Premiere). Remembered: off at every start
+// (default, as before) or the loop's state as the user last switched it (the wish, stored at each switch by hand
+// while remembering is on; it comes back once a range or the whole timeline allows it).
+bool loopWholeTimeline();
+void setLoopWholeTimeline(bool on);
+bool rememberLoop();
+void setRememberLoop(bool on); // off also forgets the wish
+void setLoopWish(bool on);     // only stored while rememberLoop()
+bool loopAtStart();            // remembered and switched on last time
+
 // The speeds J/L step through when pressed again (Settings › Timeline › Playback): doubling 1-2-4-8-16 (default, as
 // before; DaVinci) or gentle 1-2-3-5-8 (Avid; Premiere 1-2-3-4). shuttleSpeed: the speed after a press of J
 // (direction -1) or L (+1) at the current speed - the other direction (or paused) starts at 1x, a slower one (half

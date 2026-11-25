@@ -642,6 +642,9 @@ private:
     class DrawBar* m_drawBar = nullptr;
     QAction* m_drawAction = nullptr;
     QAction* m_magneticAction = nullptr; // "Lücken automatisch schließen (Spur 1)" (follows applyCenterPlayhead)
+    // Loop playback as the In/Out range and Settings › Timeline allow (Playback › Loop; buildActions)
+    std::function<void()> m_applyLoop = [] {};
+    bool m_loopRestored = false; // the remembered loop was offered (once per start, not per rebuildUi)
     QAction* m_scrubAudioAction = nullptr; // Playback › Sound while scrubbing (rebuilt with the menus)
     void setDrawTool(bool on);
     void drawToolChanged(bool on);
