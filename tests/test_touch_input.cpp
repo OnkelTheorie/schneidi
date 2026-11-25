@@ -1299,6 +1299,28 @@ void testReviewFixes()
         QTest::touchEvent(f.tv, g_touch).release(0, empty - QPoint(60, 0), f.tv);
         CHECK_EQ(f.tv->view().leftFrame, left);
     }
+    {
+        // A cancelled touch drops every drag, not only moves and trims (review ui-06): a fade dragged with the finger
+        // (it edits while dragging) is taken back
+        Fixture f;
+        tap(f.tv, {f.x(200), 120});
+        CHECK(f.sel.contains(2));
+        pauseTaps();
+        const int undo = f.project.undoStack()->index();
+        const QPoint at(f.x(150) + 13, 100);
+        QTest::touchEvent(f.tv, g_touch).press(0, at, f.tv);
+        for (int i = 1; i <= 6; ++i) QTest::touchEvent(f.tv, g_touch).move(0, at + QPoint(40 * i / 6, 0), f.tv);
+        CHECK(f.project.timeline().video[0].clips[1].fadeIn > 0); // (the drag ran)
+        QTouchEvent cancel(QEvent::TouchCancel, g_touch);
+        QApplication::sendEvent(f.tv, &cancel);
+        CHECK_EQ(f.project.timeline().video[0].clips[1].fadeIn, 0);
+        CHECK_EQ(f.project.undoStack()->index(), undo);
+        pauseTaps();
+        // the clip is still there and can be faded again afterwards
+        swipe(f.tv, at, at + QPoint(40, 0));
+        CHECK(f.project.timeline().video[0].clips[1].fadeIn > 0);
+        CHECK_EQ(f.project.undoStack()->index(), undo + 1);
+    }
 }
 
 int main(int argc, char** argv)

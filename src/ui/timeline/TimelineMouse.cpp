@@ -185,6 +185,7 @@ bool TimelineView::closeSelectedGap()
 void TimelineView::mousePressEvent(QMouseEvent* e)
 {
     m_touchPointer = Touch::isTouch(e);
+    m_pressUndo = m_editor->project()->undoStack()->index();
     if (m_reorder.on) { // the held clip of the magnetic main track follows the finger (mouseMoveEvent)
         m_reorder.fingerX = e->position().x();
         return;

@@ -566,6 +566,7 @@ private:
     static constexpr int kCacheTipH = 6; // the bar is 3 px high: its tooltip reaches a little lower
     ViewState m_view;
     Tool m_tool = Tool::Select;
+    int m_pressUndo = 0;         // undo index at the last press: a cancelled touch takes back what its drag edited live
     bool m_touchPointer = false; // the last press/move came from a finger: larger grab zones (edges, In/Out handles)
     int edgeGrabPx() const;
     int edgeGrabPxFor(bool touch) const; // (onSelectedHandle: a finger before its press arrived)
