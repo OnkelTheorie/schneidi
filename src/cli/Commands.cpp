@@ -1443,7 +1443,10 @@ const QVector<Command>& commands()
           {"window", T::Time, "length of a stretch (default: about 1/20 of the whole, on whole seconds)"},
           {"timeline", T::String, "for a project: which timeline (default: the open one)"},
           {"audio_stream", T::Integer, "for a media file: which audio stream, 0 = first"},
-          {"project", T::Path, "count frames in this project's frame rate"}},
+          {"project", T::Path, "count frames in this project's frame rate"},
+          {"numbers", T::Boolean, "also 'windows': each stretch as numbers - from/to (frames), sound_db, peak_db, "
+                                  "silent_percent, motion, cuts, brightness (media file) or clips (ids, project); "
+                                  "default: only the text, which says the same"}},
          cmdOverview},
         {"scenes", "Find scene changes (cuts) in a video file. Returns the 'cuts' and the 'scenes' between them as "
                    "ranges [from, to) in source frames, e.g. to pick shots for 'keep' or to look at them with `frames`. "

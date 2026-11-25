@@ -169,11 +169,11 @@ QJsonObject overviewFile(const QJsonObject& a, Context& ctx)
         windows << o;
         lines << text.join("  ");
     }
-    return {{"file", m.info.path},
-            {"seconds", seconds(length, f)},
-            {"window_s", seconds(w, f)},
-            {"windows", windows},
-            {"text", lines.join('\n')}};
+    // The text says it all for reading; the same as numbers only when asked (it doubled the answer)
+    QJsonObject out{{"file", m.info.path}, {"seconds", seconds(length, f)}, {"window_s", seconds(w, f)},
+                    {"text", lines.join('\n')}};
+    if (a["numbers"].toBool()) out["windows"] = windows;
+    return out;
 }
 
 QJsonObject overviewProject(const QJsonObject& a, Context& ctx)
@@ -220,11 +220,10 @@ QJsonObject overviewProject(const QJsonObject& a, Context& ctx)
         windows << o;
         lines << text.join("  ");
     }
-    return {{"project", s.path.isEmpty() ? absolute(src) : s.path},
-            {"seconds", seconds(length, f)},
-            {"window_s", seconds(w, f)},
-            {"windows", windows},
-            {"text", lines.join('\n')}};
+    QJsonObject out{{"project", s.path.isEmpty() ? absolute(src) : s.path}, {"seconds", seconds(length, f)},
+                    {"window_s", seconds(w, f)}, {"text", lines.join('\n')}};
+    if (a["numbers"].toBool()) out["windows"] = windows;
+    return out;
 }
 
 } // namespace

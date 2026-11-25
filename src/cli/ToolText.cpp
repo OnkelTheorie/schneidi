@@ -11,6 +11,7 @@
 #include <QJsonArray>
 
 #include <algorithm>
+#include <cstdlib>
 #include <initializer_list>
 
 namespace Cli::ToolText {
@@ -35,180 +36,151 @@ const QHash<QString, Tool>& tools()
     static const QHash<QString, Tool> all = [] {
         const std::initializer_list<Def> defs = {
             {"help",
-             "Details of a tool (every parameter, defaults, answer fields, errors) or of edit ops. Call it before using "
-             "a tool or an op for the first time.",
-             {{"command", "tool name"}, {"op", "with command 'edit': op name(s), comma list"}},
+             "Every parameter of a tool (defaults, answer fields, errors), or an edit op's keys. Call it before using a "
+             "tool or op the first time.",
+             {{"command"}, {"op", "with command 'edit': op name(s)"}},
              {"all"}},
             {"guide",
-             "How to edit well with schneidi: the workflow, and how-tos per task (topics). Read it first.",
-             {{"topic", "e.g. highlights, talking, social, subtitles, audio, color, export"}},
+             "How to edit well: the workflow and how-tos per task. Read it first.",
+             {{"topic", "e.g. highlights, talking, social, subtitles, audio, color"}},
              {}},
             {"new",
-             "Create a project (.schneidi), optionally with media. Size and frame rate come from the first video unless "
-             "given. template: neutral, game, podcast, vertical (9:16) or one from `templates` (default: the user's).",
-             {{"project", "file to create", {}}, {"template"}, {"width"}, {"height"}, {"fps"}, {"media", "files to import"},
-              {"overwrite"}},
-             {}},
+             "Create a project (.schneidi), optionally with media; size and frame rate from the first video. template: "
+             "neutral, game, podcast, vertical (9:16) or one of `templates`.",
+             {{"project"}, {"template"}, {"width"}, {"height"}, {"media"}},
+             {"fps", "overwrite"}},
             {"templates",
-             "Start templates (for `new`) and content templates (finished projects with slots for clips, texts, music, "
-             "logo). No parameters: the list. info: a template's slots. fill + values: a new project (rows: one per "
-             "table row). project + values: fill in place. auto: best shots for empty slots.",
-             {{"template"}, {"info", "template whose slots to show"}, {"fill", "template to fill"},
-              {"values", "slot id -> file | {file, from, to} | text"}, {"rows", "CSV/JSON table, a column per slot"},
-              {"out_project"}, {"out_dir", "with rows"}, {"project"}, {"auto"}, {"render", "render parameters"},
-              {"dry_run"}},
+             "Start templates (for `new`) and content templates (projects with slots for clips, texts, music, logo). No "
+             "parameters: the list. info: a template's slots. fill + values: a new project (rows: one per table row).",
+             {{"template"}, {"info"}, {"fill"}, {"values", "slot id -> file | {file, from, to} | text"},
+              {"rows", "CSV/JSON table"}, {"out_project"}, {"out_dir"}, {"project", "fill this one in place"}},
              {"continue_on_error", "brand", "reframe", "strict", "overwrite", "copy_media", "save", "name", "description",
-              "tags", "preview", "replace", "remove", "rename", "export", "zip", "import", "files"}},
+              "tags", "preview", "replace", "remove", "rename", "export", "zip", "import", "files", "auto", "render",
+              "dry_run"}},
             {"info",
-             "A project: format, media, its timelines and one timeline's tracks and clips (ids, positions, source "
-             "ranges). Open in the app: also the playhead and selection.",
-             {{"project"}, {"summary", "counts only, no clip list"}, {"timeline"}},
+             "A project: format, media, timelines, and one timeline's tracks and clips (ids, positions). In the app: "
+             "also playhead and selection.",
+             {{"project"}, {"summary", "counts, no clips"}, {"timeline"}},
              {}},
             {"import",
-             "Add media files to the media pool, or a timeline of another editor (FCP7 XML, .otio, .edl) as a new "
-             "timeline.",
-             {{"project"}, {"files"}, {"timeline_file", ".xml, .otio or .edl"}},
+             "Add media files to the media pool, or another editor's timeline (FCP7 XML, .otio, .edl).",
+             {{"project"}, {"files"}, {"timeline_file"}},
              {"format", "search", "name", "fps"}},
             {"export_timeline",
              "Write a timeline for another editor: FCP7 XML (Premiere, Resolve), .otio or .edl.",
-             {{"project"}, {"out", ".xml, .otio or .edl"}, {"timeline"}, {"overwrite"}},
-             {"format"}},
+             {{"project"}, {"out"}, {"timeline"}},
+             {"format", "overwrite"}},
             {"edit",
-             "Change a timeline: a list of ops, all or nothing, saved with a backup (open in the app: one undo step, "
-             "not saved). The answer lists what changed with the new clip ids. plan:true shows the steps first "
-             "(then plan_id + run).",
-             {{"project"}, {"ops"}, {"timeline", "timeline to edit"}, {"dry_run"}, {"plan"},
-              {"plan_id"}, {"run", "plan steps [1,2] or \"all\""}},
+             "Change a timeline with a list of ops, all or nothing; saved with a backup (in the app: one undo step). The "
+             "answer lists the changes with new clip ids. plan:true = show the steps first.",
+             {{"project"}, {"ops"}, {"timeline"}, {"dry_run"}, {"plan"}, {"plan_id"}, {"run", "plan steps or \"all\""}},
              {"discard", "full", "trust_custom_code"}},
-            {"backups", "The saved states of a project, newest first (for `restore`).", {{"project"}}, {}},
+            {"backups", "Saved states of a project, newest first.", {{"project"}}, {}},
             {"restore",
-             "Undo: put a backup back as the project (the current state becomes a backup too).",
-             {{"project"}, {"backup", "number from `backups` (1 = before the last change)"}},
+             "Undo: put a backup back (default: the state before the last change).",
+             {{"project"}, {"backup"}},
              {}},
             {"app",
-             "Control the schneidi app that has the project open: state (playhead, selection, page), seek, play, "
-             "select clips, show a page, undo/redo, save, open files, proxies, render cache.",
+             "Control the schneidi app that has the project open.",
              {{"action", "",
                {"state", "seek", "play", "stop", "select", "page", "undo", "redo", "save", "open", "proxies",
                 "render_cache", "clean_proxies"}},
               {"at"},
-              {"clips", "clip ids"},
+              {"clips"},
               {"page", "", {"media", "direct", "edit", "comp", "color", "studio", "deliver"}},
               {"files"}},
              {"project", "generate", "delete", "mode", "pause", "path", "trust_custom_code"}},
             {"watch",
-             "Watch folders: new media files there come into the media pool (a recorder's output). add a folder; "
-             "without add/remove/list one pass imports what is new and complete ('new'); since = the revision of your "
-             "last answer.",
-             {{"project"}, {"add", "folder"}, {"bin"}, {"remove", "folder"}, {"list"}, {"since"}},
-             {"subfolders", "types", "existing", "picture_aspect", "settle_s", "follow"}},
+             "Watch folders: their new media files come into the media pool. add a folder; without add/remove/list: one "
+             "pass, new files in 'new'.",
+             {{"project"}, {"add", "folder"}, {"list"}, {"since", "revision of your last answer"}},
+             {"bin", "remove", "subfolders", "types", "existing", "picture_aspect", "settle_s", "follow"}},
             {"brand",
-             "The user's brand kit: logo, up to 4 colors, 2 fonts, intro/outro; global or per project. Titles take "
-             "color \"brand1\"..\"brand4\" and font \"brand1\"/\"brand2\".",
-             {{"project"},
-              {"action", "", {"show", "set", "apply", "unset", "logo", "intro_outro"}},
-              {"global", "set: the global kit (else the project's)"},
-              {"logo", "file"},
-              {"colors", "comma list"},
-              {"fonts", "heading, body"},
-              {"intro", "file"},
-              {"outro", "file"}},
-             {"logo_corner", "logo_size", "timeline"}},
+             "The user's brand kit (logo, 4 colors, 2 fonts, intro/outro). Titles take color \"brand1\"..\"brand4\", "
+             "font \"brand1\"/\"brand2\".",
+             {{"project"}, {"action", "", {"show", "set", "apply", "unset", "logo", "intro_outro"}}, {"logo"},
+              {"colors", "comma list"}, {"fonts", "heading, body"}},
+             {"global", "intro", "outro", "logo_corner", "logo_size", "timeline"}},
             {"probe",
-             "Media file details: length, frames, size, frame rate, audio streams and channels. gaps: stutter of "
-             "game recordings; bars: black bars baked into the picture.",
-             {{"file"}, {"files"}, {"project", "count frames in its rate"}, {"gaps"}, {"bars"}},
-             {}},
+             "Media file details: length, size, frame rate, audio streams and channels. gaps: stutter of game "
+             "recordings.",
+             {{"file"}, {"files"}, {"gaps"}},
+             {"project", "bars"}},
             {"silence",
-             "Pauses in the sound of a media file or a project's timeline: 'silence' and 'sound' ranges. File: 'sound' "
-             "fits op keep; project: 'silence' fits op delete_range (or use op cut_pauses).",
-             {{"file", "media file or project"}, {"project", "count frames in its rate"}, {"threshold_db"}, {"min"},
-              {"pad"}},
-             {"timeline", "tracks", "from", "to"}},
+             "Pauses in a media file or a project's sound: 'silence' and 'sound' ranges. File: 'sound' fits op keep; "
+             "project: op cut_pauses does it.",
+             {{"file", "media file or project"}, {"project", "frames in its rate"}, {"threshold_db"}, {"min"}},
+             {"pad", "timeline", "tracks", "from", "to"}},
             {"overview",
-             "Cheap first look at a file or project: per stretch of time loudness, silence, motion, cuts, brightness "
-             "(or clips). Read it first, then the detailed analyses.",
+             "Cheap first look at a file or project: per stretch loudness, silence, motion, cuts (or clips). Read it "
+             "first.",
              {{"file"}, {"files"}},
-             {"window", "timeline", "audio_stream", "project"}},
+             {"window", "timeline", "audio_stream", "project", "numbers"}},
             {"scenes",
-             "Scene changes of a video: 'cuts' and 'scenes' in source frames. region (+ color) finds events in one "
-             "part of the picture instead (kill feed lines, HUD changes).",
-             {{"file"}, {"files"}, {"region", "x,y,w,h in pixels or 0..1"}, {"color", "with region: #rrggbb"},
-              {"project", "count frames in its rate"}, {"threshold", "0..1, lower = more cuts"}, {"min"}},
-             {"tolerance", "only", "min_area"}},
+             "Scene changes of a video in source frames. region + color: events in one part of the picture (kill feed, "
+             "HUD).",
+             {{"file"}, {"files"}, {"region", "x,y,w,h"}, {"color"}, {"project", "frames in its rate"}},
+             {"threshold", "min", "tolerance", "only", "min_area"}},
             {"peaks",
-             "Loud moments of media files (shots, explosions, shouts, applause). events:true also says what is heard "
-             "(speech, music, laughter, applause, cheering, shot, scream).",
-             {{"file"}, {"files"}, {"threshold_db"}, {"min"}, {"top"}, {"group", "bursts of peaks closer than this"},
-              {"events"}, {"project", "count frames in its rate"}},
-             {"audio_stream", "event_kinds", "min_conf"}},
+             "Loud moments (shots, shouts, applause); events:true says what is heard (speech, music, laughter, "
+             "cheering …).",
+             {{"file"}, {"files"}, {"top"}, {"events"}, {"project", "frames in its rate"}},
+             {"threshold_db", "min", "group", "audio_stream", "event_kinds", "min_conf"}},
             {"beats",
-             "A song's tempo and structure: bpm, beat grid, bar ones, phrases, energy, breaks and drops. Cut on beats, "
-             "put strong moments on drops. Source: a file or a project's sound.",
-             {{"file", "song, or a project"}, {"beats", "also every beat"}, {"apply", "markers on the timeline", {"markers"}}},
-             {"project", "timeline", "tracks", "from", "to", "audio_stream", "min_bpm", "max_bpm", "markers"}},
+             "A song's bpm, beats, bar ones, phrases, breaks and drops: cut on beats, strong moments on drops.",
+             {{"file", "song or project"}, {"beats", "list every beat"}},
+             {"apply", "project", "timeline", "tracks", "from", "to", "audio_stream", "min_bpm", "max_bpm", "markers"}},
             {"index",
-             "Material index: every shot of each file with quality, speech, sounds, tags and descriptions (cached). "
-             "query finds shots (\"calm wide shot of the shop\"); annotate writes descriptions.",
-             {{"file"}, {"files"}, {"project"}, {"query"}, {"annotate", "[{file, shot, desc, tags}]"}},
+             "Material index: every shot with quality, speech, sounds, descriptions (cached). query finds shots; "
+             "annotate describes them.",
+             {{"file"}, {"files"}, {"project"}, {"query"}, {"annotate", "[{file, shot, desc}]"}},
              {"timeline", "top", "refresh", "thumbs", "sheet"}},
             {"highlights",
-             "Candidates for a highlight video, best first: kills of a game's kill feed and loud moments, as source "
-             "ranges. 'keep' per file fits op keep ('keep_clean' without stutter); hit_s = the hit, for accents.",
-             {{"file"}, {"files"}, {"game", "default: from the file or folder name", {"cs2", "valorant", "none"}},
-              {"top"}, {"pre", "lead-in"}, {"post", "lead-out"}, {"project", "count frames in its rate"}},
-             {"region", "color", "tolerance", "min_area", "join", "threshold_db", "audio_stream"}},
+             "Highlight candidates, best first: kill feed kills (cs2, valorant) and loud moments as source ranges. "
+             "'keep' fits op keep; hit_s = the hit (accents).",
+             {{"file"}, {"files"}, {"game", "", {"cs2", "valorant", "none"}}, {"top"},
+              {"project", "frames in its rate"}},
+             {"pre", "post", "region", "color", "tolerance", "min_area", "join", "threshold_db", "audio_stream"}},
             {"transcribe",
-             "Speech to text (whisper/Parakeet, offline; install with `extensions`): segments with times, words:true "
-             "every word. Source: a media file or a project; apply puts a subtitle or caption track on the timeline.",
-             {{"source"}, {"language", "de, en, … (default: detect)"}, {"words"}, {"srt", "also write this SRT file"},
-              {"apply"},
-              {"captions", "with apply: word captions", {"karaoke", "word", "beat"}},
-              {"length", "cue length", {"auto", "normal", "short", "very_short"}},
-              {"quality", "", {"accurate", "fast", "very_fast"}}},
-             {"project", "model", "music", "max_chars", "audio_stream", "from", "to", "timeline", "tracks", "name",
-              "readable", "max_words", "beats", "bpm", "first_beat", "threads", "verbatim"}},
+             "Speech to text (offline; install with `extensions`): segments with times. A project with apply: subtitles "
+             "or captions on the timeline.",
+             {{"source"}, {"language", "default: detect"}, {"words", "every word's time"}, {"srt", "SRT file to write"},
+              {"apply"}, {"captions", "", {"karaoke", "word", "beat"}}},
+             {"project", "quality", "length", "model", "music", "max_chars", "audio_stream", "from", "to", "timeline",
+              "tracks", "name", "readable", "max_words", "beats", "bpm", "first_beat", "threads", "verbatim"}},
             {"loudness",
-             "Loudness (EBU R128): integrated LUFS, range, true peak of a file, a project's mix or single clips. "
-             "Web: -14 LUFS / -1 dBTP; broadcast -23.",
-             {{"source"}, {"tracks"}, {"clips", "measure these clips one by one"}},
-             {"timeline", "from", "to", "channels", "audio_stream"}},
+             "Loudness (LUFS, true peak) of a file, a project's mix or clips. Web -14 LUFS, broadcast -23.",
+             {{"source"}, {"clips", "measure each"}},
+             {"tracks", "timeline", "from", "to", "channels", "audio_stream"}},
             {"check",
-             "Finds what typically goes wrong, before rendering (project) or handing over (rendered file): missing "
-             "media, gaps, sound (clipping, loudness, music over voice), unreadable subtitles, text under phone UI, "
-             "slow pace, late hook. Its 'fix' ops: apply them with `edit`.",
+             "What goes wrong before rendering or handing over: missing media, gaps, sound, unreadable subtitles, text "
+             "under phone UI, pace, hook. Apply its 'fix' ops with `edit`.",
              {{"source", "project or rendered file"},
               {"for", "", {"shorts", "reels", "tiktok", "podcast", "youtube", "web", "broadcast"}},
-              {"target_lufs"},
               {"timeline"}},
-             {"from", "to", "channels", "sound", "max_still_s", "retention"}},
+             {"target_lufs", "from", "to", "channels", "sound", "max_still_s", "retention"}},
             {"scopes",
-             "Video scopes of one frame (waveform, parade, vectorscope, histogram) as an image, with numbers for "
-             "exposure and color cast.",
+             "Waveform, parade, vectorscope, histogram of one frame, with exposure and color cast numbers.",
              {{"source"}, {"at"}},
              {"types", "out", "timeline", "project"}},
             {"extensions",
-             "Optional downloads: whisper and models, x264, piper voices, faces, cutout. No parameters: the list with "
-             "sizes. Ask the user before installing.",
-             {{"install", "ids, e.g. whisper,small"}, {"remove"}},
+             "Optional downloads: whisper, x264, piper voices, faces, cutout. Ask the user before installing.",
+             {{"install", "ids"}, {"remove"}},
              {"reinstall"}},
             {"effects",
-             "Ids and parameters for edit ops: effects, LUTs, transitions, effect and accent presets, sounds; kind "
-             "music/nodes/recipes: music bed moods, compositing nodes and recipes.",
-             {{"effect", "one effect's parameters"}, {"category"}, {"kind", "", {"sfx", "music", "nodes", "recipes"}}},
-             {"favorites", "export", "to", "import", "remove", "replace"}},
+             "Ids and parameters for edit ops: effects, LUTs, transitions, presets, accents, sounds; kind music/nodes/"
+             "recipes.",
+             {{"effect", "one effect's parameters"}, {"kind", "", {"sfx", "music", "nodes", "recipes"}}},
+             {"category", "favorites", "export", "to", "import", "remove", "replace"}},
             {"sync",
-             "Offsets of recordings of the same event by their shared sound (the first file is the reference). Op "
-             "multicam syncs by itself; this checks first.",
+             "Offsets of recordings of one event by their sound (first file = reference).",
              {{"files"}},
              {"stream", "max_offset_s", "project"}},
             {"frames",
-             "Still images of a media file or a project timeline, or one contact sheet: look at material and results. "
-             "crop = a detail (HUD, kill feed).",
-             {{"source"}, {"sources", "several files on one sheet"}, {"at"}, {"every", "e.g. \"10s\""}, {"count"},
-              {"sheet"}, {"crop", "x,y,w,h in pixels or 0..1"}},
-             {"from", "to", "out", "columns", "tile_width", "width", "project", "timeline", "still", "clip", "node",
-              "view", "guides"}},
+             "Still images or one contact sheet of media or a timeline: look at material and results. crop = a detail.",
+             {{"source"}, {"sources"}, {"at"}, {"count"}, {"sheet"}, {"crop", "x,y,w,h"}},
+             {"every", "from", "to", "out", "columns", "tile_width", "width", "project", "timeline", "still", "clip",
+              "node", "view", "guides"}},
         };
         QHash<QString, Tool> out;
         for (const Def& d : defs) {
@@ -250,13 +222,21 @@ QJsonObject schema(const Command& cmd)
     if (!t) return s;
     QJsonObject props = s["properties"].toObject();
     QJsonObject out;
-    for (const Param& p : cmd.params) {
+    for (const Cli::Param& p : cmd.params) {
         if (!t->params.contains(p.name)) continue;
         QJsonObject o = props[p.name].toObject();
         const ToolText::Param& brief = t->params[p.name];
         if (p.name == "ops" && cmd.name == "edit") o["description"] = editOpsBrief();
         else if (brief.text.isEmpty()) o.remove("description");
         else o["description"] = brief.text;
+        // Times as text: seconds ("4.5s") are the safe way (a bare number is frames); normalize still takes numbers.
+        // Objects without the "or a text" form. Both shorter, and what an AI should send anyway
+        if (p.type == ParamType::Time) o["type"] = "string";
+        else if (p.type == ParamType::Times && p.name != "run") {
+            o["type"] = "array";
+            o["items"] = QJsonObject{{"type", p.name == "clips" ? "integer" : "string"}}; // clip ids, else times
+        }
+        else if (p.type == ParamType::Object) o["type"] = "object";
         out[p.name] = o;
     }
     s["properties"] = out;
@@ -277,7 +257,7 @@ const QVector<std::pair<QString, QStringList>>& editOpGroups()
         {"color", {"color", "still", "qualifier", "window", "track_window"}},
         {"sound", {"volume", "mixer", "duck", "normalize", "clean_voice", "audio_stream", "route", "track_volume",
                    "track_pan", "speak", "voiceover", "room_tone", "sfx", "music_bed", "fit_music", "snap_to_beat"}},
-        {"text and graphics", {"title", "subtitle", "subtitles", "add_subtitle_track", "captions", "shape", "solid",
+        {"text", {"title", "subtitle", "subtitles", "add_subtitle_track", "captions", "shape", "solid",
                                "clip_shape", "draw"}},
         {"compositing", {"comp", "comp_from", "node", "track_node", "pick_region", "cutout_node"}},
         {"multicam", {"multicam", "angle", "angle_cuts", "flatten", "multicam_nudge", "add_angle", "angle_name",
@@ -298,12 +278,11 @@ QString editOpsBrief()
     // An op no group names yet (test_mcp_tool_size asks for one) is still listed
     QStringList other;
     for (const detail::OpDef& d : detail::editOps())
-        if (!seen.contains(d.name)) other << d.name;
+        if (!seen.contains(d.name) && !d.usage.isEmpty()) other << d.name; // without usage: told by another op's
     if (!other.isEmpty()) grouped << "other: " + other.join(", ");
-    return "[{op:'name', …keys}], applied in order. Ops - " + grouped.join("; ")
-           + ". Times: frames, \"4.5s\", \"MM:SS\" or timecode; ranges [from, to). Tracks \"V1\", \"A2\". Clip ids "
-             "from `info` or the last edit's answer. Keys of an op: help {command:'edit', op:'name'} (ask before "
-             "using an op the first time); general rules: help {command:'edit'}.";
+    return "[{op, …keys}] in order. " + grouped.join("; ")
+           + ". Times: \"4.5s\", \"MM:SS\", timecode or frames; ranges [from, to). Tracks \"V1\", \"A2\". Clip ids "
+             "from `info` or the last answer. An op's keys: help {command:'edit', op:'name'} (before first use).";
 }
 
 QStringList nearest(const QString& name, const QStringList& candidates, int max)
@@ -331,7 +310,8 @@ QStringList nearest(const QString& name, const QStringList& candidates, int max)
         // A typing error (about a third of the letters), or one name inside the other ("ramp" in "speed_ramp")
         const bool near = d <= std::max<qsizetype>(1, std::max(a.size(), b.size()) / 3);
         const bool inside = std::min(a.size(), b.size()) >= 4 && (a.contains(b) || b.contains(a));
-        if (near || inside) close.push_back({inside && !near ? d + 100 : d, c});
+        // a name inside the other one counts as half its extra letters ("add_title" -> "title" before "add_angle")
+        if (near || inside) close.push_back({inside ? std::min(d, int(std::abs(a.size() - b.size()) / 2)) : d, c});
     }
     std::stable_sort(close.begin(), close.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
     QStringList out;

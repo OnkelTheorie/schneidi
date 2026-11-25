@@ -126,6 +126,8 @@ int main(int argc, char** argv)
         QStringList all;
         for (const Cli::detail::OpDef& d : Cli::detail::editOps()) {
             all << d.name;
+            // An op told under another one's usage ('disable' under enable's) or an inner one ('_direction'): no group
+            if (d.usage.isEmpty()) continue;
             if (!CHECK(grouped.contains(d.name)))
                 std::printf("       op %s is in no group of cli/ToolText.cpp editOpGroups\n", qPrintable(d.name));
         }

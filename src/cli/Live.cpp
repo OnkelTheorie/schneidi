@@ -1236,6 +1236,9 @@ QJsonObject activitySummary(const QString& tool, const QJsonObject& r)
         {"check", {"issues"}},           {"overview", {"windows", "files"}},
         {"index", {"hits", "media"}},
     };
+    // overview: its windows only with numbers:true, the text has a line per window
+    if (tool == "overview" && !r.contains("windows") && r.value("text").isString())
+        return {{"count", int(r.value("text").toString().count('\n')) + 1}};
     if (counted.contains(tool)) return {{"count", countOf(r, counted.value(tool))}};
     if (tool == "sync") {
         int found = 0;
