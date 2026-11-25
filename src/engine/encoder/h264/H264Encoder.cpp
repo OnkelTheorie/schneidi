@@ -198,7 +198,11 @@ S264_DEV(double, gBSharpEnv, devEnv("H264_BSHARP") ? std::atof(devEnv("H264_BSHA
 S264_DEV(double, gBSharpEst, devEnv("H264_BSHARPEST") ? std::atof(devEnv("H264_BSHARPEST")) : 1.0);
 S264_DEV(double, gBSharpKeep, devEnv("H264_BSHARPKEEP") ? std::atof(devEnv("H264_BSHARPKEEP")) : 0.85);
 S264_DEV(bool, gBSharpLong, devEnv("H264_BSHARPLONG") && std::atoi(devEnv("H264_BSHARPLONG")) != 0);
-// B_8x8: the sub-pel level of the four 8x8 searches per list (motionSearch: 1 half-pel, 2 quarter-pel). H264_B8SUBPEL.
+// B_8x8: the sub-pel level of the four 8x8 searches per list (motionSearch: 1 half-pel, 2 quarter-pel as the other
+// searches; H264_B8SUBPEL). Half-pel on purpose: measured 25.11.2026 with 2, BD-rate against x264 medium (PSNR-Y / SSIM-Y /
+// VMAF, CRF 19-28) highlights -3.84 / +1.52 / -3.59 -> -3.87 / +1.51 / -3.59 %, game clips with stills -3.29 / -1.28 / +3.44 ->
+// -3.32 / -1.28 / +3.44 %, a vertical short -6.99 / -12.40 / -26.01 -> -7.03 / -12.43 / -26.01 % - 0.03 points, for 1 to
+// 1.7 % more CPU time (crf 22, 3 threads, two alternating runs each: highlights 136.0 -> 137.4 s, the short 88.8 -> 90.3 s).
 S264_DEV(int, gB8Subpel, devEnv("H264_B8SUBPEL") ? std::atoi(devEnv("H264_B8SUBPEL")) : 1);
 // Texture keepers (psy-RD, bSharp) by the source macroblock's texture (the AQ's energy, log2 of 256 x variance + 1):
 // none below gFlatLo, in full from gFlatHi. A flat or smoothly shaded macroblock has no texture to keep - there
