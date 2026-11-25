@@ -8,6 +8,7 @@
 #include <QImage>
 #include <QSize>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <functional>
 
@@ -29,6 +30,11 @@ QImage thumbnail(const DeviceMediaItem& item, const QSize& size);
 bool hasPermission();
 // Asks Android (the system dialog); `done` gets whether it was granted. Elsewhere: true at once
 void requestPermission(QObject* context, std::function<void(bool granted)> done);
+
+// New files of the app's own (an export) made known to Android's MediaStore at once, so the gallery, music and file
+// pickers show them (a file written by path into a shared folder and renamed there was not listed: the exported
+// .m4a and image sequences never appeared). Folders are listed with their files. Elsewhere: nothing.
+void announce(const QStringList& paths);
 
 // Tests: the items list() returns instead of the device's (empty = the device's again)
 void setTestItems(const QVector<DeviceMediaItem>& items);

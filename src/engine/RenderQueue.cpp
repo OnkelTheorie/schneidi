@@ -4,6 +4,7 @@
 #include "core/ChannelLayout.h"
 #include "core/I18n.h"
 #include "core/Project.h"
+#include "engine/DeviceMedia.h"
 #include "engine/ExportWriter.h"
 #include "engine/HardwareEncoders.h"
 #include "engine/MediaProbe.h"
@@ -20,6 +21,19 @@
 
 namespace {
 RenderQueue::ReviewMarks g_reviewMarks;
+
+// What a finished job wrote: the file (an image sequence: its folder) and the subtitle files beside it
+QStringList outputFiles(const RenderJob& job)
+{
+    QStringList out{job.settings.kind() == RenderKind::ImageSequence ? imageSequenceDir(job.path) : job.path};
+    if (job.settings.subtitles == RenderSettings::SrtFile || job.settings.subtitles == RenderSettings::VttFile) {
+        const QFileInfo fi(job.path);
+        for (const QFileInfo& sub : fi.dir().entryInfoList({fi.completeBaseName() + "*.srt",
+                                                             fi.completeBaseName() + "*.vtt"}, QDir::Files))
+            out << sub.absoluteFilePath();
+    }
+    return out;
+}
 }
 
 void RenderQueue::setReviewMarks(ReviewMarks make) { g_reviewMarks = std::move(make); }
@@ -377,6 +391,11 @@ void RenderQueue::onExportFinished(bool ok, const QString& message)
             it != m_project->renderQueue().cend())
             if (const QString miss = sizeMissNote(*it, *m_project, QFileInfo(it->path).size()); !miss.isEmpty())
                 note = note.isEmpty() ? miss : miss + "\n" + note;
+    if (ok && !m_canceling)
+        if (const auto it = std::find_if(m_project->renderQueue().cbegin(), m_project->renderQueue().cend(),
+                                         [id](const RenderJob& j) { return j.id == id; });
+            it != m_project->renderQueue().cend())
+            DeviceMedia::announce(outputFiles(*it)); // Android: the gallery and music apps list it (elsewhere nothing)
     setStatus(id, status, note, m_clock.elapsed(),
               ok ? m_exporter->usedCodec() : QString(), ok ? m_exporter->targetBitrateK() : -1);
     emit jobFinished(id, status);
