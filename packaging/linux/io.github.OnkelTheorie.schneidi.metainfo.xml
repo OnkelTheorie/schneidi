@@ -103,12 +103,28 @@
   <supports>
     <control>pointing</control>
     <control>keyboard</control>
+    <control>touch</control>
   </supports>
   <requires>
     <display_length compare="ge">1024</display_length>
   </requires>
 
   <releases>
+    <release version="0.26.0" date="2026-11-25">
+      <description>
+        <p>Touch Update: finger input on touch screens and tablets (pinch to zoom the timeline, long press for the
+        context menu, drag and drop by finger) and phone and tablet layouts, with an Android app as a prototype built
+        from source; shorts without dead footage, where laughter and loud voices in the voice chat count as moments and
+        are mixed in; a caption track per speaker, checked by a second speech model; a word list for speech
+        recognition; render to a file size; a much smaller MCP tool list for AI clients; sound while scrubbing; an
+        optional magnetic main track; a Timeline settings tab with the wheel, zoom, scrolling, playhead and snapping
+        behaviours known from other editors; speech recognition with an accurate, a fast and an optional very fast
+        model; shorter subtitles for vertical videos; Find Missing Media at any time; search in Media Storage and the
+        Media Pool; language and design change without a restart; interlaced footage deinterlaced the same way in
+        preview and export; about 145 defects fixed after a review of the whole source code.</p>
+      </description>
+      <url type="details">https://github.com/OnkelTheorie/schneidi/releases/tag/v0.26.0</url>
+    </release>
     <release version="0.25.0" date="2026-11-21">
       <description>
         <p>Direct Update: a Direct page that turns clips into a cut by recipe – a short (up to three variants), a

@@ -105,10 +105,13 @@ The short version, one line per item. **Every detail is in [FEATURES.md](FEATURE
 - Text-based editing: delete words in the transcript to cut them
 - Speed ramps and smooth slow motion with own optical flow
 - An overview strip of the whole timeline above the detail view (optional)
+- Sound while scrubbing; an optional magnetic main track; a Timeline settings tab with wheel, zoom and scrolling presets for people coming from other editors
+- Touch input on touch screens and tablets; phone and tablet layouts (an Android app as a prototype, built from source)
 - Timeline exchange with Premiere Pro, DaVinci Resolve and others (FCP7 XML, OpenTimelineIO, EDL)
 
 **Direct page and shorts, templates, brand**
 - Edit by recipe: a short (up to three variants), highlights of any material, a talk without pauses, a filled template, a rough cut from a script – suggestions with reasons, no chat AI needed
+- Shorts of game clips without dead seconds; laughter and loud voices in the voice chat count as moments, with a caption track per speaker
 - A 9:16 (or 1:1, 4:5) timeline next to the 16:9 edit; auto reframe that follows the subject
 - Templates with placeholders – fill them by drag and drop or from a CSV, one video per row
 - Brand kit: logo, colors, fonts, intro/outro for every project
@@ -118,6 +121,7 @@ The short version, one line per item. **Every detail is in [FEATURES.md](FEATURE
 - Node graph or layer stack on any clip: masks, chroma/luma keyer, recipes in one click
 - Point, planar (four-corner) and face tracking; text behind an object; shapes and drawing on the video
 - Titles with looks and real 3D text; word-by-word captions; your own FFmpeg filter or GLSL shader as an effect
+- Speech recognition on your computer with an accurate, a fast and an optional very fast model, a word list for names and slang; shorter subtitles for vertical videos
 
 **Color**
 - Wheels with master wheels, curves, a qualifier, windows with tracking, LUTs, scopes
@@ -134,6 +138,8 @@ The short version, one line per item. **Every detail is in [FEATURES.md](FEATURE
 **Export**
 - H.264, H.265 (also 10-bit), AV1, VP9, ProRes, DNxHR, GIF, image sequences, audio only; hardware encoders
 - Smart Render copies unchanged parts instead of encoding them again
+- Render to a file size (for Discord, WhatsApp or mail)
+- Interlaced footage deinterlaced the same way in preview, proxy and export
 - A check before export: gaps, missing files, loudness, unreadable subtitles, text a phone app covers
 - Presets for YouTube, Shorts, Reels and TikTok
 
@@ -141,6 +147,7 @@ The short version, one line per item. **Every detail is in [FEATURES.md](FEATURE
 - AI chat in the app (Claude, OpenAI-compatible, Ollama), automatic or review mode
 - `schneidi-cli` and an MCP server – locally, live in the open app, or over HTTP on a server
 - A searchable index of your footage, highlights, beats, sync by sound, a finished short in one call
+- A compact MCP tool list (about 3,500 tokens), details on demand
 
 ## How mature is it?
 
@@ -157,7 +164,7 @@ edges; never a default.
 | Command line and MCP, live editing in the app | 0.6 / 0.7 | stable | |
 | AI chat in the app | 0.12 | stable | A local model needs a 32k context; small local models make more mistakes than Claude |
 | Multicam, sync by sound | 0.8 | stable | Tested with game recordings and synthetic material, not with a real multi-camera shoot |
-| Shorts, auto reframe, captions, `short` | 0.16 | stable | Highlights know kills only in CS2 and Valorant; other footage gets "loud moments" |
+| Shorts, auto reframe, captions, `short` | 0.16 | stable | Highlights know kills only in CS2 and Valorant; other footage gets "loud moments". Voices as moments and captions per speaker (0.26) are young: laughter is not recognised on its own yet, two people in one voice-chat stream are one speaker |
 | Direct page, `direct`, `cut_pauses` | 0.25 | young | Moments come from the sound, picture changes and kill feeds – it does not see what is in the picture; filler words only as far as the transcript has them |
 | Music bed (own background music) | 0.25 | young | Simple synth music for under the program sound; four moods |
 | Blur player names | 0.16 | young | CS2 only in practice: a Valorant template exists but is less tested; small name tags in the 3D picture are often missed – always check the result |
@@ -171,6 +178,9 @@ edges; never a default.
 | Curves, qualifier, stills, master wheel | 0.24 | young | No curve keyframes; the qualifier has no spatial mask smoothing; with a qualifier or hue curves active a fine 65-point LUT is resampled to 33 points |
 | HDR → SDR, 10-bit export | 0.24 | young | PQ above 1000 nits goes to white; Dolby Vision only through its HLG/HDR10 base; no HDR export yet; VAAPI/Quick Sync 10-bit not checked on real hardware |
 | **s264** (own H.264 encoder) | 0.24 | experimental | In two-pass faster than x264 medium on game, calm and animation footage, slower on camera footage and in CRF mode; never the default, x264 stays the encoder to use |
+| Touch input, phone and tablet layouts | 0.26 | experimental | Tried on one Android phone and in automated tests, not yet on a touch laptop or a Windows tablet; the Android app is a prototype without a download and without audio focus |
+| Sound while scrubbing, magnetic main track, Timeline settings | 0.26 | young | The magnetic main track is off on the desktop; with it on, linked copies on locked tracks block a move |
+| Render to a file size | 0.26 | young | Measured with the software encoders; NVENC may need a second try, VAAPI, Quick Sync and OpenH264 are untested with it |
 | Windows build | 0.5 | young | No download yet, build it yourself; tested less than Linux and not in CI |
 | Translations | 0.6 – 0.21 | young | Most languages beyond English and German are translated by AI |
 
@@ -331,11 +341,13 @@ claude mcp add --transport http schneidi http://127.0.0.1:8642/mcp
 What comes next. Plans can still change, and there are no dates. What earlier versions brought is in the
 [release notes](https://github.com/OnkelTheorie/schneidi/releases).
 
-### Next: 0.26 – Touch Update
-Editing with touch input (a tablet or a touch screen), s264 using what the editor already knows about the picture
-(cuts, still parts, motion), and fixes from tests with real use.
+### Next: 0.27 – Essentials
+The small things you miss when they are not there: group clips, scene detection as a button, chapter marks in the
+export, collect a project with its media, a slideshow from photos, smart bins and a credits roll.
 
 ### Ideas for later (no order, not promised)
+- More effects and transitions
+- Speakers recognised on your computer, a podcast multicam that cuts to whoever speaks, subtitles translated
 - Color management (a working color space per project) and HDR export
 - Camera RAW, starting with DNG
 - s264 faster and ready to be more than an experiment
