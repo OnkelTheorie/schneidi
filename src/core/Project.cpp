@@ -482,7 +482,7 @@ void Project::edit(const QString& text, const std::function<void(Timeline&)>& fn
     // A clip overwritten in place: its kill feed copy is cut the same way (every overwrite path at once)
     TimelineOps::cutCopiesLikeBases(timeline(), after, [this] { return newClipId(); });
     TimelineOps::resolvePendingLinks(after, [this] { return newLinkId(); }); // leftover pieces from clearRange
-    // The magnetic main track closes what the edit opened on V1 (the same undo step)
+    // The magnetic main track closes what the edit opened on V1 (the same undo step); gaps that were there stay
     const QString gapKept = magnetActive() ? magnetize(after) : QString();
     TimelineOps::unpairBrokenDissolves(timeline(), after);
     TimelineOps::keepFadesApart(timeline(), after);
@@ -514,7 +514,7 @@ QString Project::magnetize(Timeline& after) const
 {
     if (!magnetActive() || !MainTrack::touched(timeline(), after, MainTrack::kMain)) return {};
     QString why;
-    MainTrack::pack(after, MainTrack::kMain, {}, &why);
+    MainTrack::pack(after, MainTrack::kMain, {}, &why, MainTrack::keptGaps(timeline(), after, MainTrack::kMain));
     return why;
 }
 

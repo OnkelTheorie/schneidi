@@ -386,6 +386,9 @@ void start(QWidget* source, QMimeData* data, const QPixmap& pixmap, const QPoint
     if (g_drag) finish(globalPos, false);
     g_drag = std::make_unique<Drag>();
     g_drag->source = source;
+    // A finger's drop event has no source() (no QDrag): targets that take only their own drags find it here (the
+    // render queue's reorder, RenderQueuePanel's fromHere)
+    if (data) data->setProperty("schneidi_drag_source", QVariant::fromValue<QObject*>(source));
     g_drag->data.reset(data);
     if (!pixmap.isNull()) {
         auto* label = new QLabel(nullptr, Qt::ToolTip | Qt::FramelessWindowHint);

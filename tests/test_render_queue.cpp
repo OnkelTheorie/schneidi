@@ -1094,5 +1094,25 @@ int main(int argc, char** argv)
             if (CHECK_EQ(seek.count(), 1)) CHECK_EQ(seek.first().first().toInt(), 10);
         }
     }
+    {
+        // x-phone 1 + 3: Android's fixed export places by kind (exportCollection; the path itself is a device thing)
+        RenderSettings s;
+        s.format = "h264";
+        CHECK_EQ(DeliverPanel::exportCollection(s), QString("Movies"));
+        s.subtitles = RenderSettings::BurnSubtitles;
+        CHECK_EQ(DeliverPanel::exportCollection(s), QString("Movies"));
+        s.subtitles = RenderSettings::SrtFile; // a subtitle file beside it: only Download takes both
+        CHECK_EQ(DeliverPanel::exportCollection(s), QString("Download"));
+        s.subtitles = RenderSettings::VttFile;
+        CHECK_EQ(DeliverPanel::exportCollection(s), QString("Download"));
+        s.subtitles = RenderSettings::NoSubtitles;
+        s.format = "aac";
+        CHECK_EQ(DeliverPanel::exportCollection(s), QString("Music"));
+        s.format = "png";
+        CHECK_EQ(DeliverPanel::exportCollection(s), QString("Pictures"));
+        s.format = "gif";
+        CHECK_EQ(DeliverPanel::exportCollection(s), QString("Pictures"));
+        CHECK(DeliverPanel::androidFolder(s).endsWith("Pictures/schneidi"));
+    }
     return Check::result();
 }

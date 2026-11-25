@@ -23,6 +23,7 @@
 #include <functional>
 
 class QMimeData;
+class QUndoStack;
 class ViewerOverlay;
 
 class FrameView : public QWidget {
@@ -149,6 +150,9 @@ private:
     friend class FrameViewRhiSurface;
     friend class FrameViewOverlayLayer;
     void paintOverlay(QPainter& p);
+    // A touch the system cancelled during an overlay drag: the drag ends (as on a release) and every undo step since
+    // its press is taken back - a cancelled touch commits nothing (as TimelineView::cancelTouchDrag)
+    void cancelOverlayDrag();
     void repaintPicture();
     void repaintOverlay();
     void fallBackToPainter(const QString& why); // the GPU surface failed
@@ -173,6 +177,9 @@ private:
     QPointF m_pan;
     QPointer<ViewerOverlay> m_overlay;
     bool m_overlayDrag = false;
+    QPointer<QUndoStack> m_overlayUndo; // the overlay's stack at its press (cancelOverlayDrag), and its index then
+    int m_overlayUndoIndex = -1;
+    QPointF m_overlayLast;              // where the overlay's drag is
     bool m_panning = false;
     Qt::CursorShape m_idleCursor = Qt::ArrowCursor;
     QPoint m_pressPos{-1, -1};

@@ -122,7 +122,8 @@ QMargins safeAreaMargins(const QWidget* w);
 
 // Drag and drop with a finger (see above). One at a time
 namespace TouchDrag {
-// Starts a drag of `data` (owned from here) from `source` at the finger's global position
+// Starts a drag of `data` (owned from here) from `source` at the finger's global position. The data names the source
+// in its property "schneidi_drag_source" (a finger's drop event has no source())
 void start(QWidget* source, QMimeData* data, const QPixmap& pixmap, const QPointF& globalPos);
 bool active();
 void move(const QPointF& globalPos);

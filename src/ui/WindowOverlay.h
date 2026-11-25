@@ -43,6 +43,7 @@ public:
     bool mousePress(QMouseEvent* e, const QRectF& frame) override;
     bool mouseMove(QMouseEvent* e, const QRectF& frame) override;
     bool mouseRelease(QMouseEvent* e, const QRectF& frame) override;
+    QUndoStack* undoStack() const override;
     Qt::CursorShape cursorAt(const QPointF& pos, const QRectF& frame) const override;
 
     // For tests: widget coordinates of the window center / a handle (0..7 clockwise from top left, 8 = rotate knob)

@@ -1069,7 +1069,7 @@ void TimelineView::finishReorder(bool apply)
         QVector<int> order = m_reorder.order;
         order.removeAll(m_reorder.id);
         order.insert(std::clamp(m_reorder.to, 0, int(order.size())), m_reorder.id);
-        m_editor->packTrack({TrackKind::Video, 0}, order, T("Clip umsortieren"));
+        m_editor->reorderMain(order, {m_reorder.id}, T("Clip umsortieren"));
     }
     update();
 }

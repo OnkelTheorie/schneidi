@@ -441,6 +441,8 @@ bool DrawOverlay::tablet(QTabletEvent* e, const QRectF& frame)
     }
 }
 
+QUndoStack* DrawOverlay::undoStack() const { return m_editor->project()->undoStack(); }
+
 bool DrawOverlay::mouseRelease(QMouseEvent* e, const QRectF& frame)
 {
     if (m_part != None) {

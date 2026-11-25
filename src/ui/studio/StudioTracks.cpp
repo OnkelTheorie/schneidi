@@ -60,6 +60,7 @@ StudioTracks::StudioTracks(Editor* editor, MediaCache* cache, QWidget* parent)
     auto* touch = new TouchGestures(this);
     touch->onPinch = [this](const QPointF& from, const QPointF& to, double scale) { pinchView(from, to, scale); };
     touch->onPinchEnd = [this] { m_pinch = Pinch::None; };
+    touch->onCancel = [this] { cancelDrag(); };
     m_hbar = new QScrollBar(Qt::Horizontal, this);
     m_vbar = new QScrollBar(Qt::Vertical, this);
     m_vbar->hide();
@@ -953,6 +954,7 @@ void StudioTracks::mousePressEvent(QMouseEvent* e)
     if (e->button() != Qt::LeftButton) return QWidget::mousePressEvent(e);
     const QPoint pos = e->position().toPoint();
     m_added = {};
+    m_pressUndo = m_editor->project()->undoStack()->index(); // (cancelDrag takes back what the press began)
     if (pos.y() < kRulerH && pos.x() >= kHeaderW) { // ruler: scrub
         m_drag = Drag::Scrub;
         emit playheadMoveStarted();
@@ -1059,6 +1061,33 @@ void StudioTracks::hideEvent(QHideEvent* e)
 {
     QWidget::hideEvent(e);
     endDrag({}, false); // hidden mid-drag (another page): ends as on a release (the stroke so far, the merge closed)
+}
+
+void StudioTracks::cancelDrag()
+{
+    // A touch the system cancelled (an edge gesture, the notification shade): the pen's stroke is dropped, a dragged
+    // point (and one the press set) goes back; the release that follows finds no drag. A scrub keeps the playhead.
+    switch (m_drag) {
+    case Drag::Pen:
+        m_stroke.clear();
+        break;
+    case Drag::Key: {
+        Project* p = m_editor->project();
+        p->closeMerge();
+        QUndoStack* undo = p->undoStack();
+        while (undo->index() > m_pressUndo && undo->canUndo()) undo->undo();
+        m_key = {};
+        break;
+    }
+    case Drag::Scrub:
+        m_drag = Drag::None;
+        emit playheadMoveFinished();
+        return;
+    case Drag::None:
+        return;
+    }
+    m_drag = Drag::None;
+    update();
 }
 
 void StudioTracks::endDrag(const QPoint& pos, bool addPoint)

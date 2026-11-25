@@ -356,6 +356,8 @@ bool WindowOverlay::mouseMove(QMouseEvent* e, const QRectF& frame)
     return true;
 }
 
+QUndoStack* WindowOverlay::undoStack() const { return m_editor->project()->undoStack(); }
+
 bool WindowOverlay::mouseRelease(QMouseEvent* e, const QRectF&)
 {
     if (m_part == None || e->button() != Qt::LeftButton) return false;
