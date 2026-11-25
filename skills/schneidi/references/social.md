@@ -6,13 +6,22 @@ Goal: a vertical video that works on a phone, muted, in the first two seconds.
 From recordings to a finished short in one step, e.g. a game clip:
 `short` with `files` `["/clips/cs2/cs2_clip_….mkv"]` (CLI: `schneidi-cli short /clips/cs2/cs2_clip_….mkv`).
 It runs the steps below with the usual commands and answers with `out`, `length_s`, the `moments` it used, `done`
-(every step), `check` (what it fixed, what is left) and `notes`:
+(every step), `check` (what it fixed, what is left), `notes` (+ `note_keys`) and `sheet` (8 frames of the video):
 1. `highlights` per file - with the kill feed of `game` (`cs2`, `valorant`; by default from the folder or file name,
-   `none` = loud moments only), every candidate padded to at least 6 s, the best ones within `min_s`..`max_s`
-   (default 15-45 s); nothing found = the end of the recording (where a clip tool puts the moment).
+   `none` = loud moments only), the best ones within `min_s`..`max_s` (default 15-45 s). A moment starts at most
+   1.5 s before its first hit (loud moments: their first peak) and is padded only after it - up to 6 s after its
+   last hit, never past the player's death (CS2: the red death screen; it ends 0.7 s after it, before the
+   spectating). When the moments do not reach `min_s` that way the short stays shorter (`note_keys`
+   `short_shorter`) - `min_s` is a wish, not a force. Game recordings also give laughter and shouts in a voice
+   stream (Mikrofon, Discord: reason `voice_laughter`/`voice_shout`, from the sentence before it) as moments below
+   a kill, and a replay clip of up to 60 s without any moment gives its end (`clip_end_death` around the player's
+   death, `clip_end_loud`, `clip_end`; below every found moment). Nothing at all = the end of the recording.
 2. A timeline "Short-Schnitt" with them (`keep`) in the recordings' shape, then the `aspect` copy "Short"
    (`9:16` default, `1:1`, `4:5`) with `reframe` (`auto` default, `center`, `fit`); game footage keeps its kill
-   feed readable at the top (`keep`, below).
+   feed readable at the top (`keep`, below). A mild zoom punch on each kill's hit (`accents` `punch` default, `off`;
+   only the punch, no flash or shake). Sound (`audio_stream` `auto`, the default for game footage): the game
+   streams, plus each voice stream that speaks or laughs inside a moment, the game ducked 6 dB under it (captions
+   then come from it); `game` = only the game sound.
 3. Word captions (`captions` `karaoke` default, `word`, `off`; `language`) - only when whisper is installed. Otherwise
    a note with the install command; it never installs: ask the user first.
    Effect sounds only on request: `sfx` `off` (default) or `mild` (a soft whoosh on the hard cuts, a hit on the
@@ -22,7 +31,8 @@ It runs the steps below with the usual commands and answers with `out`, `length_
 5. `render` with the platform's preset into `out` (default `<first file>-short.mp4` beside it, numbered; an existing
    `out` needs `overwrite`). The project (`project`, default beside `out`) keeps both timelines for reworking.
 Without `files`: `project` (also `"@app"`) and `timeline` = an existing cut to turn into the short. Look at the
-result yourself afterwards (`frames` sheet of `out`) - one call does not replace that.
+result yourself afterwards: the answer's `sheet` (`<out>-sheet.jpg`, `sheet:false` = none; more with `frames`) - one
+call does not replace that.
 
 **Choose first, then cut**: `direct` with `recipe` `short` suggests the moments (up to 3 `variants` without shared
 moments, each with a `reason` like "2 kills (multi kill)" or "laughter (2.1 s)") and changes nothing; show them or
@@ -44,8 +54,9 @@ template - `templates` `fill` with the clips and the hook text ([templates.md](t
   for one that exists) - never `format` without `timeline` there, that turns every timeline portrait. A 16:9
   timeline placed into the short (`place_timeline`) is fitted like a 16:9 clip. Game recordings with a
   Mix stream next to the single streams: `template` "game" with `width` 1080, `height` 1920 mutes the Mix (else
-  everything plays twice). `short` keeps only the game sound of game recordings (a known game, or a Mix next to Discord/Spotify:
-  no voice chat, microphone or music); `audio_stream` "all", "game" or stream names choose yourself. By hand: `keep` with `audio_streams`.
+  everything plays twice). `short` keeps the game sound of game recordings (a known game, or a Mix next to Discord/Spotify)
+  plus the voice streams heard in its moments (`audio_stream` "auto"; music never); "game" = only the game sound, "all"
+  or stream names choose yourself. By hand: `keep` with `audio_streams`, then `duck` with `track` "System Output" `by` "Mikrofon".
 - **The short of an existing 16:9 edit in one call**: `{"op":"new_timeline","from":"<edit>","aspect":"9:16",
   "reframe":"auto"}` copies the edit (clips, titles, sound) into a new 9:16 timeline and reframes every video clip;
   mattes fill the new frame and titles, plates and logos in the apps' zones move into the safe area (check them

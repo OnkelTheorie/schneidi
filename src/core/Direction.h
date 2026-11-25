@@ -61,6 +61,7 @@ struct Suggestion {
     QString slot;       // slot: the template's field id
     int shot = 0;       // slot: index shot number
     int sentence = 0;   // take: the script's sentence (1-based)
+    QVector<double> hits; // moment: the hits inside (seconds of the source; a short puts its accents there)
     bool operator==(const Suggestion&) const = default;
 };
 
@@ -75,6 +76,9 @@ struct Material {
     int width = 0, height = 0;
     QStringList audioStreams; // stream titles as `probe` names them
     int moments = 0;          // moments found in it (before picking)
+    // Voice streams (microphone, voice chat) and where something is said or laughed in them:
+    // [{stream, name, s:[[from, to], ...]}] (seconds); a short places a stream that is heard in its moments
+    QJsonArray voice;
     bool operator==(const Material&) const = default;
 };
 

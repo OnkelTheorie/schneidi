@@ -956,10 +956,19 @@ void opDuck(Session& s, const QJsonObject& op)
     const Timeline& cur = s.project.timeline();
     QVector<int> ids;
     if (op.contains("track")) {
-        TrackKind k = TrackKind::Video;
-        const int index = parseTrack(op.value("track"), &k);
-        if (k != TrackKind::Audio || index >= cur.audio.size()) fail("BAD_ARGUMENT", "track must be an audio track like A2");
-        for (const Clip& c : cur.audio[index].clips) ids << c.id;
+        const QJsonValue t = op.value("track");
+        static const QRegularExpression plain("^\\s*[AaVv]?\\d+\\s*$");
+        if (t.isDouble() || plain.match(t.toString()).hasMatch()) {
+            TrackKind k = TrackKind::Video;
+            const int index = parseTrack(t, &k);
+            if (k != TrackKind::Audio || index >= cur.audio.size()) fail("BAD_ARGUMENT", "track must be an audio track like A2");
+            for (const Clip& c : cur.audio[index].clips) ids << c.id;
+        } else {
+            // Stream or track names ("System Output"): every audio track they name (a short's game sound)
+            for (const int i : audioTracksOf(s.project, s.project.renderTimeline(), t))
+                if (i >= 0 && i < cur.audio.size())
+                    for (const Clip& c : cur.audio[i].clips) ids << c.id;
+        }
         if (ids.isEmpty()) fail("BAD_ARGUMENT", "the track has no clips");
     } else {
         ids = clipsOn(s, op, TrackKind::Audio, "ducking");
@@ -1396,7 +1405,8 @@ void addAudioOps(QVector<OpDef>& ops)
                  opNormalize, kClipKeys}
         << OpDef{"duck", "{op:'duck', clips|track, by?, under?, amount_db?, threshold_db?|'auto', attack?, release?, hold?, remove?}",
                  "ducking: lower the music while other tracks have sound (volume keyframes)",
-                 "clips or track = the music; by = the tracks that duck it ([\"A1\",\"A3\"], \"A1,A3\" or stream/"
+                 "clips or track = the music (track: \"A2\", or stream/track names like \"System Output\": all the tracks they "
+                 "name); by = the tracks that duck it ([\"A1\",\"A3\"], \"A1,A3\" or stream/"
                  "track names like \"Mikrofon\"; 'under' is the same), default all other audible tracks with clips "
                  "(solo wins). amount_db: how far down (default -12), threshold_db: what counts as "
                  "sound on 'under' (sample peak in dBFS, or 'auto' = the default: -35 dBFS for voice and recorded "

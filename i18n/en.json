@@ -3928,5 +3928,11 @@
  "Die maximale Dateigröße bestimmt die Bitrate": "The maximum file size sets the bit rate",
  "Max. Dateigröße": "Max. file size",
  "Passt nicht in %1 MB: für diese Länge bleibt zu wenig Bitrate fürs Bild. Bereich kürzen oder die Grenze erhöhen.": "Does not fit in %1 MB: too little bit rate is left for the picture at this length. Shorten the range or raise the limit.",
- "max. %1 MB": "max. %1 MB"
+ "max. %1 MB": "max. %1 MB",
+ "Ende des Clips (direkt nach dem Moment gespeichert)": "end of the clip (saved right after the moment)",
+ "Tod des Spielers am Ende des Clips": "the player's death at the end of the clip",
+ "Lauteste Stelle am Ende des Clips": "the loudest moment at the end of the clip",
+ "Lachen im Sprachkanal ({stream})": "laughter in the voice chat ({stream})",
+ "Jemand ruft laut ({stream})": "someone shouts ({stream})",
+ "Nur {s} s Action (Minimum {min} s): Der Short bleibt kürzer, statt die Zeit vor den Momenten oder nach dem Tod des Spielers zu zeigen.": "Only {s} s of action (minimum {min} s): the short stays shorter rather than showing the time before the moments or after the player's death."
 }

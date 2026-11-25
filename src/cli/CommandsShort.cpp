@@ -234,7 +234,7 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
         out = freeName(base.absolutePath(), base.completeBaseName() + "-short", ".mp4");
     }
 
-    QJsonArray done, notes;
+    QJsonArray done, notes, noteKeys; // noteKeys: the fixed keys of the recipe's notes (Direction::noteText)
     QJsonArray moments;
     QJsonArray unused; // recordings without a moment in the short, and why
     QString cutTimeline;
@@ -278,7 +278,7 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
         }
         // 3. The best moments of every recording: `direct` recipe short (the highlights, ShortPick)
         QJsonObject options;
-        for (const char* k : {"min_s", "max_s", "for", "hook", "aspect", "reframe", "audio_stream"})
+        for (const char* k : {"min_s", "max_s", "for", "hook", "aspect", "reframe", "audio_stream", "accents"})
             if (a.contains(k)) options[k] = a[k];
         options["for"] = QString::fromLatin1(platform->alias);
         if (game) options["game"] = game->id;
@@ -288,10 +288,17 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
         const Direction::Session session = directSuggest(
             {{"recipe", "short"}, {"files", QJsonArray::fromStringList(files)}, {"project", project}, {"options", options}},
             suggestCtx, &found);
-        QVector<int> candidates(files.size(), 0); // highlight candidates per recording
-        for (const DirectMoment& m : found.highlights) ++candidates[m.file];
-        const int count = int(found.highlights.size());
-        const int withSome = int(std::count_if(candidates.begin(), candidates.end(), [](int n) { return n > 0; }));
+        QVector<int> candidates(files.size(), 0); // highlight candidates per recording (voice and clip end too)
+        QVector<int> real(files.size(), 0);       // ... only kills / loud moments
+        int voiceCount = 0, endCount = 0;
+        for (const DirectMoment& m : found.highlights) {
+            ++candidates[m.file];
+            voiceCount += m.source == QLatin1String("voice");
+            endCount += m.source == QLatin1String("end");
+            real[m.file] += m.source == QLatin1String("highlights");
+        }
+        const int count = int(found.highlights.size()) - voiceCount - endCount;
+        const int withSome = int(std::count_if(real.begin(), real.end(), [](int n) { return n > 0; }));
         done << QString("highlights: %1 candidate%2%3 in %4 of %5 recording%6")
                     .arg(count)
                     .arg(count == 1 ? "" : "s")
@@ -299,12 +306,27 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
                     .arg(withSome)
                     .arg(files.size())
                     .arg(files.size() == 1 ? "" : "s");
-        if (count == 0) {
+        if (voiceCount > 0)
+            done << QString("voices: %1 moment%2 of laughter or shouting in a voice stream")
+                        .arg(voiceCount)
+                        .arg(voiceCount == 1 ? "" : "s");
+        if (endCount > 0)
+            done << QString("clip ends: %1 replay clip%2 without a kill offer%3 its end (saved right after the moment)")
+                        .arg(endCount)
+                        .arg(endCount == 1 ? "" : "s")
+                        .arg(endCount == 1 ? "s" : "");
+        if (count + voiceCount + endCount == 0) {
             if (found.extra.isEmpty())
                 notes << "no highlight found: the short is the end of the recording (where a clip tool saves the moment)";
             else
                 notes << "no highlight found: the short is made of sound events and picture changes";
         }
+        // The recipe's notes a short's caller needs (key + text): shorter than min_s, and why
+        for (const Direction::Note& n : session.notes)
+            if (n.key == QLatin1String("short_shorter")) {
+                notes << n.text;
+                noteKeys << n.key;
+            }
         // Why a recording has no moment in the short: none found in it, or its moments did not fit (better ones of
         // the others filled max_s first)
         double maxS = session.target;
@@ -425,6 +447,22 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
     const QJsonObject rendered = run("render", r, step(0.7, 1));
     done << QString("render %1 (%2)").arg(rendered["preset"].toString(), rendered["encoder"].toString());
 
+    // 9. A contact sheet of the video to look at (8 tiles), next to it - never replacing a file (numbered)
+    QString sheet;
+    if (a["sheet"].toBool(true)) {
+        const QFileInfo o(out);
+        sheet = freeName(o.absolutePath(), o.completeBaseName() + "-sheet", ".jpg");
+        try {
+            run("frames", {{"source", out}, {"count", 8}, {"sheet", true}, {"columns", 4}, {"tile_width", 270}, {"out", sheet}},
+                step(1, 1));
+            done << "sheet " + sheet;
+        } catch (const Error& e) {
+            if (e.code == QLatin1String("CANCELED")) throw;
+            notes << "no contact sheet: " + e.message;
+            sheet.clear();
+        }
+    }
+
     const QJsonObject result = run("info", {{"project", project}, {"summary", true}, {"timeline", shortTimeline}}, step(1, 1));
     QJsonObject o{{"out", out},
                   {"length_s", secondsOf(result["timeline"]["length_s"])},
@@ -443,8 +481,11 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
     for (const char* k : {"threads", "threads_reason"}) // how many render threads, fewer when little RAM was free
         if (rendered.contains(k)) o[k] = rendered[k];
     if (rendered.contains("encoder_hint")) notes << rendered["encoder_hint"];
+    if (!sheet.isEmpty()) o["sheet"] = sheet;
     if (!notes.isEmpty()) o["notes"] = notes;
-    o["next"] = "look at the result: `frames` of the out file (sheet) and `check` on it";
+    if (!noteKeys.isEmpty()) o["note_keys"] = noteKeys;
+    o["next"] = sheet.isEmpty() ? QString("look at the result: `frames` of the out file (sheet) and `check` on it")
+                                : QString("look at the sheet (8 frames of the video) - more with `frames` of the out file");
     return o;
 }
 
