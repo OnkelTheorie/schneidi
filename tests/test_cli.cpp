@@ -668,6 +668,11 @@ int runTests(int argc, char** argv)
              .arg(firstId).arg(cues[0]["id"].toInt()).arg(cues[1]["id"].toInt()).toUtf8().constData());
     tl = run("info", {{"project", g_path}})["timeline"].toObject();
     CHECK_EQ(tl["tracks"][0]["clips"][0]["effects"][0]["params"]["strength"].toDouble(), 100.0); // clamped
+    // ... and the answer says so (review 25.11.: it answered ok, the agent believed 500 was set)
+    CHECK(QJsonDocument(run("edit", {{"project", g_path}, {"dry_run", true},
+                                     {"ops", QString(R"([{"op":"effect","clips":[%1],"effect":"blur","params":{"strength":500}}])")
+                                                 .arg(firstId)}})["notes"].toArray())
+              .toJson().contains("blur.strength 500 is outside its range: set to 100"));
     CHECK_EQ(tl["subtitles"][0]["cues"].toArray().size(), 2);
     CHECK_EQ(tl["subtitles"][0]["cues"][0]["text"].toString(), QString("Two!"));
     // move takes subtitle ids too (its comment said so, it answered "no clip with id"); 'to' places the first id given
@@ -1741,6 +1746,28 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             CHECK(std::abs(pauses[0]["to"].toInt() - 10 * fps) <= fps / 5 + 1);
             CHECK_EQ(run("silence", {{"file", gp}, {"tracks", "A1"}})["silence"].toArray().size(), 2);
             CHECK_EQ(errorOf("silence", {{"file", gp}, {"tracks", "Discord"}}), QString("BAD_ARGUMENT"));
+            // The answer's ranges go straight back (review 25.11.): delete_range takes silence's {from, to, ...}
+            // objects, cut_pauses the entries of a list ({n, from, to}); [from, to] pairs as before
+            const QString gp2 = dir.filePath("gap2.schneidi");
+            QFile::copy(gp, gp2);
+            const auto lengthOf = [&](const QString& p) {
+                return run("info", {{"project", p}, {"summary", true}})["timeline"]["length_s"].toDouble();
+            };
+            const double before = lengthOf(gp);
+            const QJsonArray all = run("silence", {{"file", gp}, {"tracks", "A1"}})["silence"].toArray();
+            run("edit", {{"project", gp}, {"ops", QJsonArray{QJsonObject{{"op", "delete_range"}, {"ranges", all}}}}});
+            double removed = 0; // the two pauses of 2 s less the pads silence leaves
+            for (const QJsonValue& v : all) removed += v["to_s"].toDouble() - v["from_s"].toDouble();
+            CHECK(all.size() == 2 && removed > 3);
+            if (!CHECK(std::abs(lengthOf(gp) - (before - removed)) < 0.1))
+                std::printf("       %.3f -> %.3f, ranges %s\n", before, lengthOf(gp), QJsonDocument(all).toJson(QJsonDocument::Compact).constData());
+            QJsonArray entries;
+            for (const QJsonValue& v : all)
+                entries << QJsonObject{{"n", entries.size() + 1}, {"from", v["from"]}, {"to", v["to"]}, {"kind", "pause"}};
+            run("edit", {{"project", gp2}, {"ops", QJsonArray{QJsonObject{{"op", "cut_pauses"}, {"ranges", entries}}}}});
+            if (!CHECK(std::abs(lengthOf(gp2) - (before - removed)) < 0.1)) std::printf("       cut_pauses: %.3f\n", lengthOf(gp2));
+            CHECK(messageOf("edit", {{"project", gp2}, {"ops", R"([{"op":"delete_range","ranges":[{"from":1}]}])"}})
+                      .contains("{from, to}"));
         }
         // Render with a preset (audio only) and a range
         run("edit", {{"project", proj}, {"ops", R"([{"op":"mixer","track":"A1","mute":false}])"}});
@@ -2122,6 +2149,17 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         int feedKills = 0;
         for (const QJsonValue& c : run("highlights", feedArgs)["candidates"].toArray()) feedKills += c["kills"].toInt();
         CHECK_EQ(feedKills, 2);
+        // top: 'keep' holds only the best N too (it held every candidate: keep put all moments on the timeline)
+        {
+            QJsonObject topArgs = feedArgs;
+            topArgs["top"] = 1;
+            const QJsonObject all = run("highlights", feedArgs), one = run("highlights", topArgs);
+            CHECK(all["keep"].toArray().size() >= 2);
+            if (CHECK_EQ(one["candidates"].toArray().size(), 1) && CHECK_EQ(one["keep"].toArray().size(), 1)) {
+                CHECK_EQ(one["keep"][0][0].toInt(), one["candidates"][0]["from"].toInt());
+                CHECK_EQ(one["keep"][0][1].toInt(), one["candidates"][0]["to"].toInt());
+            }
+        }
         // highlights (0.10): the mark as a kill with lead-in/out; without a kill feed the two tone bursts
         const QJsonObject hl = run("highlights", {{"file", marks}, {"region", "0.5,0,0.5,0.8"}, {"color", "#e7e371"}});
         if (CHECK_EQ(hl["candidates"].toArray().size(), 1)) {
@@ -2652,6 +2690,14 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(audioTracks(), before - 3);
         CHECK(messageOf("edit", {{"project", proj}, {"ops", R"([{"op":"remove_track","tracks":["V1","V2"]}])"}})
                   .contains("a timeline keeps at least one video track"));
+        // Subtitle tracks in the list too (review 25.11.: "ST1" in tracks:[…] was "no track 'ST1'")
+        ed(R"([{"op":"add_subtitle_track","name":"DE"},{"op":"add_subtitle_track","name":"FR"}])");
+        const auto subtitleTracks = [&] { return int(run("info", {{"project", proj}})["timeline"]["subtitles"].toArray().size()); };
+        const int subs = subtitleTracks();
+        CHECK(subs >= 2);
+        ed(R"([{"op":"remove_track","tracks":["ST1","ST2","A1"]}])");
+        CHECK_EQ(subtitleTracks(), subs - 2);
+        CHECK_EQ(audioTracks(), before - 4);
     }
     // A project loaded from its file keeps no undo history: every op kept a snapshot of the whole timeline, so an
     // edit with a thousand appends took over a gigabyte and 3000 ran out of memory
@@ -2660,6 +2706,51 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         for (int i = 1; i <= 50; ++i) s.editor.toggleMarker(100000 + i);
         CHECK_EQ(s.project.timeline().markers.count(100050), qsizetype(1));
         CHECK(s.project.undoStack()->count() <= 1);
+    }
+    // Review 25.11. (x-toolhelp): what the help tells an agent is what the tools do
+    {
+        // silence on a project: timeline frames - delete_range, not keep (keep places source ranges of a file)
+        const QString text = QJsonDocument(run("help", {{"command", "silence"}})).toJson();
+        CHECK(text.contains("'silence' fits 'delete_range'"));
+        CHECK(!text.contains("for a project they are timeline frames and 'sound' fits the 'keep'"));
+    }
+    // review_hits false from the command line (--review_hits false) is the switch, not invalid JSON
+    {
+        const Cli::Command* render = Cli::find("render");
+        const QJsonObject n = Cli::normalize(*render, {{"project", g_path}, {"out", "x.mp4"}, {"review_hits", "false"}});
+        CHECK(n["review_hits"].isBool() && !n["review_hits"].toBool());
+    }
+    // A plan names its steps by n (from 1) in notes and errors, as plan.steps and run do (were 0-based op indexes)
+    {
+        const QString pp = dir.filePath("plan-n.schneidi");
+        run("new", {{"project", pp}, {"overwrite", true}});
+        const QJsonObject plan = run("edit", {{"project", pp}, {"plan", true},
+                                              {"ops", R"([{"op":"marker","at":"1s","why":"a"},{"op":"delete_range","from":5000,"to":6000,"why":"b"}])"}});
+        const QString notes = QJsonDocument(plan["notes"].toArray()).toJson();
+        if (!CHECK(notes.contains("step 2 (delete_range): changed nothing"))) std::printf("       %s\n", qPrintable(notes));
+        CHECK_EQ(plan["why"][1]["step"].toInt(), 2);
+        CHECK(messageOf("edit", {{"project", pp}, {"plan", true}, {"ops", R"([{"op":"marker","at":"1s"},{"op":"split","at":"x"}])"}})
+                  .contains("step 2 (split)"));
+        CHECK(messageOf("edit", {{"project", pp}, {"ops", R"([{"op":"marker","at":"1s"},{"op":"split","at":"x"}])"}})
+                  .contains("op 1 (split)"));
+    }
+    // Relative positions {clip, offset} work for track_volume's points/from/to as the help promises; lengths and
+    // source times (fade in, in/out) refuse them (they resolved to a timeline place used as a length)
+    {
+        const QString tone = Check::makeMedia(dir.filePath("rel-tone.wav"), {"-f", "lavfi", "-i", "sine=f=440:d=6"});
+        const QString rp = dir.filePath("rel.schneidi");
+        run("new", {{"project", rp}, {"overwrite", true}});
+        run("edit", {{"project", rp}, {"ops", QString(R"([{"op":"append","media":"%1","track":"A1"}])").arg(tone)}});
+        int id = -1;
+        for (const QJsonValue& t : run("info", {{"project", rp}})["timeline"]["tracks"].toArray())
+            if (t["track"].toString() == "A1" && !t["clips"].toArray().isEmpty()) id = t["clips"][0]["id"].toInt();
+        if (CHECK(id >= 0)) {
+            const QString ops = QString(R"([{"op":"track_volume","track":"A1","from":{"clip":%1,"offset":"1s"},"to":{"clip":%1,"offset":"3s"},
+                                            "points":[{"at":{"clip":%1,"offset":"2s"},"db":-6}]}])").arg(id);
+            CHECK_EQ(errorOf("edit", {{"project", rp}, {"ops", ops}}), QString("none"));
+            CHECK(messageOf("edit", {{"project", rp}, {"ops", QString(R"([{"op":"fade","clips":[%1],"in":{"clip":%1}}])").arg(id)}})
+                      .contains("'in' is a length or source time"));
+        }
     }
     return Check::result();
 }

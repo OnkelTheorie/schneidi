@@ -16,6 +16,7 @@
 #include <QUrl>
 
 #include <climits>
+#include <algorithm>
 #include <cmath>
 
 namespace Interchange {
@@ -200,7 +201,8 @@ Timeline toTimeline(const Sequence& seq, const std::function<int()>& newId, cons
                 c.start = it.start;
                 c.in = it.in;
                 c.out = it.in + it.length - 1;
-                c.speed = it.speed > 0 ? it.speed : 1.0;
+                // within the speeds a project file keeps: else the clip shows other frames after save + reopen
+                c.speed = it.speed > 0 ? std::clamp(it.speed, Retime::kMinSpeed, Retime::kMaxSpeed) : 1.0;
                 c.reverse = it.reverse;
                 c.enabled = it.enabled;
                 if (it.link > 0) {
@@ -208,7 +210,15 @@ Timeline toTimeline(const Sequence& seq, const std::function<int()>& newId, cons
                     c.linkId = links.value(it.link);
                 }
                 const auto keys = [&c](AnimParam p, const QVector<Key>& list) {
-                    for (const Key& k : list) c.keys[p] << Keyframe{k.frame, k.value};
+                    if (list.isEmpty()) return;
+                    KeyTrack& track = c.keys[p];
+                    for (const Key& k : list) track << Keyframe{k.frame, k.value};
+                    // Sorted by frame, one key per frame (KeyTrack's rule; the files keep their own order): unsorted,
+                    // Keys::valueAt's binary search gave wrong values and the curve changed after save + reopen
+                    std::stable_sort(track.begin(), track.end(),
+                                     [](const Keyframe& a, const Keyframe& b) { return a.frame < b.frame; });
+                    for (int i = track.size() - 1; i > 0; --i)
+                        if (track[i - 1].frame == track[i].frame) track.remove(i - 1); // the later one of the file wins
                 };
                 if (kind == TrackKind::Audio) {
                     c.audioStream = it.audioStream;

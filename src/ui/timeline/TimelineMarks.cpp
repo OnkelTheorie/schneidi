@@ -264,13 +264,18 @@ void TimelineView::addMarksActions(QMenu& menu, int frame)
     QAction* clear = menu.addAction(T("In/Out entfernen"));
     clear->setEnabled(tl.markIn >= 0 || tl.markOut >= 0);
     connect(clear, &QAction::triggered, this, [this] { m_editor->clearMarks(); });
-    // Loop playback in the range (per session, MainWindow's action "loop_inout"): only with a range to loop in
-    QAction* loop = menu.addAction(T("Im Bereich wiederholen"));
+    // Loop playback in the range (MainWindow's action "loop_inout"): only with a range to loop in, or the whole
+    // timeline when the user chose that for no range (Settings › Timeline)
+    const bool range = tl.markIn >= 0 || tl.markOut >= 0;
+    const bool whole = !range && TimelineOptions::loopWholeTimeline();
+    QAction* loop = menu.addAction(whole ? T("Ganze Timeline wiederholen") : T("Im Bereich wiederholen"));
     loop->setCheckable(true);
-    loop->setChecked(m_loopInOut);
-    loop->setEnabled(tl.markIn >= 0 || tl.markOut >= 0);
+    loop->setChecked(m_loopInOut || (whole && m_loopWhole));
+    loop->setEnabled(range || whole);
     connect(loop, &QAction::toggled, this, &TimelineView::loopInOutRequested);
 }
+
+void TimelineView::setLoopWhole(bool on) { m_loopWhole = on; }
 
 void TimelineView::setLoopInOut(bool on)
 {

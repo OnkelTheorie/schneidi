@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+#include "ui/timeline/TimelineOptions.h"
 #include "ui/ColorPanel.h"
 #include "ui/touch/Touch.h"
 
@@ -15,7 +16,6 @@
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
-#include "core/Timecode.h"
 #include "engine/ColorGrade.h"
 #include "engine/Tracker.h"
 #include "ui/CurveEditor.h"
@@ -1316,7 +1316,7 @@ void ColorPanel::startTracking(bool forward)
     });
     m_trackThread->setParent(this); // the destructor waits for it, then it goes with the panel
     const int generation = ++m_trackGeneration;
-    connect(m_trackThread, &QThread::finished, this, [this, result, clipId = clip.id, start = clip.start, n, from,
+    connect(m_trackThread, &QThread::finished, this, [this, result, clip, clipId = clip.id, start = clip.start, n, from,
                                                       generation] {
         m_trackThread->wait();
         delete m_trackThread;
@@ -1328,17 +1328,24 @@ void ColorPanel::startTracking(bool forward)
             // discarded: the clip id may name another clip by now
         } else if (!result->error.isEmpty()) {
             text = result->error;
+        } else if (const Clip* now = TimelineOps::findClip(m_editor->project()->timeline(), clipId);
+                   !now || now->mediaPath != clip.mediaPath || now->in != clip.in || now->out != clip.out
+                   || now->speed != clip.speed || now->reverse != clip.reverse || now->freeze != clip.freeze
+                   || now->freezeFrame != clip.freezeFrame || now->ramp != clip.ramp) {
+            // Slipped, head-trimmed or retimed while tracking (or another timeline shown): the path was measured on
+            // the frames the clip showed then and would land shifted (the keys are stored as source frames)
+            text = T("Verfolgung verworfen – Clip geändert");
         } else {
             // The clip may have moved meanwhile: the keyframes count from its start, so they still fit
             m_editor->setGradeWindowPath(clipId, n, from, result->points);
             const int last = result->points.isEmpty() ? from : result->points.last().frame;
             if (result->lost)
                 text = T("Ab %1 nicht mehr gefunden – Fenster dort neu setzen und weiter verfolgen")
-                           .arg(Timecode::format(start + result->lostAt, fmt.rate.timebase()));
+                           .arg(TimelineOptions::formatTime(start + result->lostAt, fmt.rate.fps()));
             else if (result->canceled)
-                text = T("Angehalten bei %1").arg(Timecode::format(start + last, fmt.rate.timebase()));
+                text = T("Angehalten bei %1").arg(TimelineOptions::formatTime(start + last, fmt.rate.fps()));
             else
-                text = T("Verfolgt bis %1").arg(Timecode::format(start + last, fmt.rate.timebase()));
+                text = T("Verfolgt bis %1").arg(TimelineOptions::formatTime(start + last, fmt.rate.fps()));
         }
         m_trackStatus->setText(text);
         refresh();

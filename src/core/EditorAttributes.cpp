@@ -144,8 +144,10 @@ void Editor::pasteAttributes(int attrs)
         }
     }
 
-    QUndoStack* undo = m_project->undoStack();
-    undo->beginMacro(T("Attribute einfügen"));
+    // No macro up front: beginMacro deletes the redo steps at once, also for a paste that changes nothing (the
+    // values equal the clips'); the steps it made become one afterwards
+    m_project->closeMerge();
+    const int before = m_project->undoStack()->index();
     modifyClips(ids, T("Attribute einfügen"), [&](Clip& c) {
         const bool audio = audioIds.contains(c.id);
         if (const Clip* s = audio ? nullptr : vsrc) {
@@ -211,7 +213,9 @@ void Editor::pasteAttributes(int attrs)
         if (!videoTargets.isEmpty() && vAny) setClipSpeed(videoTargets, retime(*vAny), true);
         if (!audioTargets.isEmpty() && aAny) setClipSpeed(audioTargets, retime(*aAny), true);
     }
-    undo->endMacro();
+    const QUndoStack* undo = m_project->undoStack();
+    if (undo->index() > before + 1 || (undo->index() == before + 1 && undo->undoText() != T("Attribute einfügen")))
+        m_project->combineSteps(before, T("Attribute einfügen"));
 }
 
 bool Editor::copyGrade(int clipId)

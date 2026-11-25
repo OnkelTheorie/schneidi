@@ -1111,7 +1111,8 @@ const QVector<Command>& commands()
                  "removed ids) and the timeline as a summary. Plan first (the user decides): plan:true changes "
                  "nothing and answers plan {id, steps:[{n, op, why, summary, changes}]}; then edit with plan_id and "
                  "run:[step numbers] or \"all\" (one edit, one undo step) or discard:true. A plan is void once the "
-                 "project changes (PLAN_STALE: plan again) and gone after a day.",
+                 "project changes (PLAN_STALE: plan again) and gone after a day. Errors and notes name an op by its "
+                 "index in ops (\"op 0\" = the first); of a plan by its step number n (\"step 1\" = the first).",
          {{"project", T::Path, "project file", true, true},
           {"ops", T::Json, editHelp() + " (Not with plan_id: a plan runs its own ops.)"},
           {"timeline", T::String, "timeline to edit (id or name from `info`; default: the open one)"},
@@ -1377,14 +1378,15 @@ const QVector<Command>& commands()
                                "in project_dir), and with timeline the material"},
           {"timeline", T::String, "suggest: the recordings of this timeline of the project as the material ('@current' = "
                                   "the open one)"},
-          {"options", T::Object, "suggest: the recipe's settings. short: for (shorts|reels|tiktok), min_s, max_s, "
+          {"options", T::Object, "suggest: the recipe's settings (seconds as 15 or \"15s\"; an option the recipe does not "
+                                 "know is refused). short: for (shorts|reels|tiktok), min_s, max_s, "
                                  "aspect (9:16|1:1|4:5), variants (1-3), hook (best|chronological), "
-                                 "reframe, game (cs2, valorant, none), audio_stream; highlights: length_s (seconds or "
+                                 "reframe, game (cs2, valorant, none), audio_stream, captions, sfx, language (for finish); highlights: length_s (seconds or "
                                  "'all'), aspect (16:9 keeps the recordings' shape), music ({file} or {mood} for the "
                                  "music bed, null = none), order (best|time), transitions (cut|soft), game; talk: "
                                  "min_pause_s, pad_s, fillers (whisper transcribes recordings without a transcript, "
                                  "verbatim), language, tracks, threshold, target_lufs, room_tone; template: template (id; "
-                                 "none = the project's own fields), game (the moments' kill feed, as highlights); script: script|script_file, takes, language. short, highlights "
+                                 "none = the project's own fields), auto, game (the moments' kill feed, as highlights); script: script|script_file, takes, language. short, highlights "
                                  "and script also: target_lufs (the result's loudness when applied, default -14, behind "
                                  "the master limiter; false = leave the sound as recorded)"},
           {"session", T::Object, "apply: the session id ('d3-7f2a') or the session object (as suggested, maybe changed)"},
@@ -1415,8 +1417,10 @@ const QVector<Command>& commands()
                                "crop_bars use it"}},
          cmdProbe},
         {"silence", "Find pauses in the audio of a media file or a project's timeline. Returns 'silence' and "
-                    "'sound' ranges [from, to); for a project they are timeline frames and 'sound' fits the 'keep' "
-                    "edit operation directly (jump cut).",
+                    "'sound' ranges [from, to). For a media file (with project set: in its frame rate) 'sound' fits the "
+                    "'keep' edit operation with that file as media (jump cut). For a project they are timeline "
+                    "frames: 'silence' fits 'delete_range' with ranges (all cut together, ripple) - not 'keep', "
+                    "which places source ranges of a file; or use 'cut_pauses'.",
          {{"file", T::Path, "media file, or a project (.schneidi or \"@app\"): its timeline sound as exported", true, true},
           {"project", T::Path, "for a media file: count frames in this project's frame rate"},
           {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},
@@ -1565,7 +1569,8 @@ const QVector<Command>& commands()
           {"threshold_db", T::Number, "loud moments: sample peak in dBFS (default 12 dB above the file's median)"},
           {"audio_stream", T::Integer, "which audio stream, 0 = first (loud moments and the shots behind hit_s; a "
                                        "recording whose first stream is silent: the stream with the game sound)"},
-          {"top", T::Integer, "only the best N candidates ('best' with several files)"},
+          {"top", T::Integer, "only the best N candidates, and 'keep' / 'keep_clean' made of only those (several "
+                               "files: each file its best N, 'best' the N best of all)"},
           {"project", T::Path, "count frames in this project's frame rate (recommended before 'keep')"}},
          cmdHighlights},
         {"transcribe", "Speech to text with whisper or Parakeet (offline; install them with `extensions`). Returns subtitle-sized "
@@ -1884,10 +1889,22 @@ QJsonObject inputSchema(const Command& cmd)
         case ParamType::Number: s["type"] = "number"; break;
         case ParamType::Boolean: s["type"] = "boolean"; break;
         case ParamType::Time: s["type"] = QJsonArray{"integer", "string"}; break;
-        case ParamType::Times: s["type"] = "array"; s["items"] = QJsonObject{{"type", QJsonArray{"integer", "string"}}}; break;
+        // a list, or the same as one comma-separated text ("1,2,4"; edit run: "all") - normalize takes both
+        case ParamType::Times:
+            s["type"] = QJsonArray{"array", "string"};
+            s["items"] = QJsonObject{{"type", QJsonArray{"integer", "string"}}};
+            break;
         case ParamType::Paths: s["type"] = "array"; s["items"] = QJsonObject{{"type", "string"}}; break;
         case ParamType::Sources: s["type"] = "array"; s["items"] = QJsonObject{{"type", QJsonArray{"string", "object"}}}; break;
-        case ParamType::Json: s["type"] = "array"; s["items"] = QJsonObject{{"type", "object"}}; break;
+        case ParamType::Json:
+            // review_hits is one kill feed object or false (an array is refused); the others are lists of objects
+            if (p.name == QLatin1String("review_hits")) {
+                s["type"] = QJsonArray{"object", "boolean", "string"};
+            } else {
+                s["type"] = "array";
+                s["items"] = QJsonObject{{"type", "object"}};
+            }
+            break;
         case ParamType::Object: s["type"] = QJsonArray{"object", "string"}; break;
         case ParamType::Data: s["type"] = QJsonArray{"string", "array", "object"}; break;
         }
@@ -2121,7 +2138,9 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
             }
             break;
         case ParamType::Json:
-            if (v.isString()) {
+            if (v.isString() && (str.trimmed() == QLatin1String("false") || str.trimmed() == QLatin1String("true"))) {
+                out[p.name] = str.trimmed() == QLatin1String("true"); // --review_hits false (no JSON document)
+            } else if (v.isString()) {
                 QJsonParseError err;
                 const QJsonDocument doc = QJsonDocument::fromJson(str.toUtf8(), &err);
                 if (err.error != QJsonParseError::NoError)

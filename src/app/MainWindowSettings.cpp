@@ -23,6 +23,8 @@
 #include "core/I18n.h"
 #include "core/StartTemplates.h"
 #include "engine/Background.h"
+#include "ui/DeliverPanel.h"
+#include "ui/RenderQueuePanel.h"
 #include "ui/timeline/TimelineOptions.h"
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
@@ -91,12 +93,20 @@ void MainWindow::settingsDialog(int tab)
         && (dlg.ownProjectFolder() != SettingsDialog::storedOwnFolder()
             || (dlg.ownProjectFolder() && dlg.projectFolder() != SettingsDialog::storedFolder())))
         SettingsDialog::store(dlg.ownProjectFolder(), dlg.projectFolder());
+    // The backup's interval: from now on (a test run has no backup and keeps the setting)
+    if (!m_autosaveDisabled && dlg.autosaveSeconds() != SettingsDialog::storedAutosaveSeconds()) {
+        SettingsDialog::setStoredAutosaveSeconds(dlg.autosaveSeconds());
+        m_autosaveTimer->start(SettingsDialog::storedAutosaveSeconds() * 1000);
+    }
     if (!m_autosaveDisabled && dlg.autoLinkNodes() != CompUi::autoLink()) CompUi::setAutoLink(dlg.autoLinkNodes());
     // Timeline tab: the timelines read the choices from the settings when they need them (no restart), so storing
     // is applying. A test run (disableAutosave) must not write the user's settings: there the tab is NOT applied
     // (unlike the other tabs, which apply without saving); tests set TimelineOptions themselves
     const bool magneticWas = m_timeline->view()->magneticMain();
+    const TimelineOptions::TrackHeight heightWas = TimelineOptions::trackHeight();
     if (!m_autosaveDisabled) dlg.timelinePage()->store();
+    // Another track height chosen: the tracks take it now (the same choice again leaves the user's wheel heights)
+    if (TimelineOptions::trackHeight() != heightWas) setTrackHeightStep(TimelineOptions::trackHeight());
     applyTimelineOptions();
     setSecondScreenMode(dlg.secondScreenMode());
     for (const auto target : {PreviewResolution::Target::Viewer, PreviewResolution::Target::Monitor})
@@ -167,6 +177,7 @@ void MainWindow::applyTimelineOptions()
         if (m_scrubAudioAction) m_scrubAudioAction->setChecked(TimelineOptions::scrubAudio());
     }
     updateStepTexts();
+    m_applyLoop(); // without a range: the whole timeline or nothing
     m_timeline->view()->update();
     m_timeline->overview()->update();
     if (m_studioPage) m_studioPage->tracks()->update();
@@ -174,6 +185,14 @@ void MainWindow::applyTimelineOptions()
     m_viewer->refreshTimeDisplay();
     m_mediaPool->refreshTimes();
     m_inspector->refreshTimes();
+    if (m_deliver) m_deliver->refreshTimes();
+}
+
+void MainWindow::setTrackHeightStep(TimelineOptions::TrackHeight height)
+{
+    TimelineView* tv = m_timeline->view();
+    tv->setTrackHeights(TimelineOptions::videoTrackHeight(height), TimelineOptions::audioTrackHeight(height));
+    emit tv->trackHeightsChanged();
 }
 
 void MainWindow::setProxyQuality(ProxyManager::Quality quality)

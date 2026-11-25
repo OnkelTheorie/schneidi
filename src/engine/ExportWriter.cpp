@@ -1062,6 +1062,7 @@ struct ExportWriter::Impl {
             Video::Reader::Options o;
             o.threads = 1;
             o.hardware = false;
+            o.deinterlace = false; // the pictures as the packets hold them
             QString error;
             auto reader = Video::Reader::open(path, o, &error);
             if (!reader) {
@@ -1072,6 +1073,10 @@ struct ExportWriter::Impl {
             const AVCodecParameters* par = reader->container()->streams[info.index]->codecpar;
             codec = par->codec_id;
             fields = par->field_order;
+            // Not stated by the stream: the decoder's flag on the first picture. Interlaced pictures are deinterlaced
+            // everywhere else (Video::Reader::Options::deinterlace): copied packets would put the woven fields back
+            if (fields == AV_FIELD_UNKNOWN && codec == codecId)
+                if (const auto first = reader->picture(0); first && !first->progressive) fields = AV_FIELD_TT;
         }
         auto why = [&]() -> const char* {
             if (codec != codecId) return "other codec";

@@ -13,6 +13,9 @@
 #include "engine/Exporter.h"
 #include "engine/HardwareEncoders.h"
 #include "engine/RenderQueue.h"
+#include "core/Timecode.h"
+#include "ui/timeline/TimelineOptions.h"
+#include "ui/ElidedLabel.h"
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
 
@@ -115,6 +118,17 @@ int main(int argc, char** argv)
         CHECK(RenderSettings::fromJson(a.toJson()) == a);
         a.size = QSize(1080, 1920);
         CHECK(RenderSettings::fromJson(a.toJson()) == a);
+        // Hand-written values stay within the project format's limits (100000 wide allocated 40 GB per layer)
+        const RenderSettings huge = RenderSettings::fromJson(QJsonObject{
+            {"width", 100000}, {"height", 1}, {"shortSide", 2000000000}, {"rate", "100000/1"}, {"maxFps", 99999}});
+        CHECK_EQ(huge.size, QSize(kMaxFrameSize, kMinFrameSize));
+        CHECK_EQ(huge.shortSide, kMaxFrameSize);
+        CHECK(huge.rateNum == RenderSettings().rateNum && huge.rateDen == RenderSettings().rateDen);
+        CHECK_EQ(huge.maxFps, 1000);
+        CHECK_EQ(RenderSettings::fromJson(QJsonObject{{"rate", "60000/1001"}}).rateNum, 60000); // real rates stay
+        const QVector<RenderJob> jobs = RenderQueueJson::fromJson(QJsonArray{QJsonObject{
+            {"id", 1}, {"path", "/tmp/a.mp4"}, {"width", 100000}, {"height", 100000}, {"settings", QJsonObject{}}}});
+        CHECK(jobs.size() == 1 && jobs[0].size == QSize(kMaxFrameSize, kMaxFrameSize));
     }
 
     // --- Smart render at "High" and "Web" (the writer copies below the cap only): copied pictures keep the file's bit
@@ -290,6 +304,41 @@ int main(int argc, char** argv)
         CHECK(press(Qt::Key_D, Qt::ControlModifier));
         CHECK_EQ(ids(p.renderQueue()), (QVector<int>{4, 3}));
         CHECK(!press(Qt::Key_A)); // other keys stay the list's
+    }
+
+    // --- Times as the user shows them (Settings › Timeline): a job card's In/Out and the Deliver range's tip, timecode
+    // by default, frames when chosen (refreshTimes after the settings changed)
+    {
+        QSettings().remove("timeline");
+        Project p;
+        RenderQueue queue(&p);
+        RenderQueuePanel panel(&p, &queue);
+        RenderJob j;
+        j.id = 1;
+        j.inOut = true;
+        j.from = 30;
+        j.to = 119;
+        j.path = "/x/a.mp4";
+        p.setRenderQueue({j});
+        const auto cardRange = [&] {
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete); // the cards before a rebuild
+            auto* l = dynamic_cast<ElidedLabel*>(panel.findChild<QWidget*>("jobRange")); // (no Q_OBJECT)
+            return l ? l->fullText() : QString();
+        };
+        CHECK_EQ(cardRange(), T("In/Out: %1 – %2").arg(Timecode::format(30, p.fps()), Timecode::format(119, p.fps())));
+        DeliverPanel deliver(&p);
+        p.edit("marks", [](Timeline& tl) {
+            tl.markIn = 30;
+            tl.markOut = 119;
+        });
+        auto* range = deliver.findChild<QComboBox*>("renderRange");
+        if (CHECK(range)) CHECK_EQ(range->toolTip(), Timecode::format(30, p.fps()) + " – " + Timecode::format(119, p.fps()));
+        TimelineOptions::setTimeFormat(TimelineOptions::TimeFormat::Frames);
+        panel.refreshTimes();
+        deliver.refreshTimes();
+        CHECK_EQ(cardRange(), T("In/Out: %1 – %2").arg("30", "119"));
+        if (range) CHECK_EQ(range->toolTip(), QString("30 – 119"));
+        QSettings().remove("timeline");
     }
 
     // --- Dropping dragged jobs (JobList::dropEvent): in front of the card under the mouse (its upper half), behind it
@@ -1044,6 +1093,26 @@ int main(int argc, char** argv)
             emit list->itemClicked(list->item(row));
             if (CHECK_EQ(seek.count(), 1)) CHECK_EQ(seek.first().first().toInt(), 10);
         }
+    }
+    {
+        // x-phone 1 + 3: Android's fixed export places by kind (exportCollection; the path itself is a device thing)
+        RenderSettings s;
+        s.format = "h264";
+        CHECK_EQ(DeliverPanel::exportCollection(s), QString("Movies"));
+        s.subtitles = RenderSettings::BurnSubtitles;
+        CHECK_EQ(DeliverPanel::exportCollection(s), QString("Movies"));
+        s.subtitles = RenderSettings::SrtFile; // a subtitle file beside it: only Download takes both
+        CHECK_EQ(DeliverPanel::exportCollection(s), QString("Download"));
+        s.subtitles = RenderSettings::VttFile;
+        CHECK_EQ(DeliverPanel::exportCollection(s), QString("Download"));
+        s.subtitles = RenderSettings::NoSubtitles;
+        s.format = "aac";
+        CHECK_EQ(DeliverPanel::exportCollection(s), QString("Music"));
+        s.format = "png";
+        CHECK_EQ(DeliverPanel::exportCollection(s), QString("Pictures"));
+        s.format = "gif";
+        CHECK_EQ(DeliverPanel::exportCollection(s), QString("Pictures"));
+        CHECK(DeliverPanel::androidFolder(s).endsWith("Pictures/schneidi"));
     }
     return Check::result();
 }

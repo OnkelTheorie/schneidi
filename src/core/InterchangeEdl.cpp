@@ -222,8 +222,8 @@ Sequence readEdl(const QByteArray& data, FrameRate rate)
         }
         if (const auto m = m2Re.match(line); m.hasMatch() && last) {
             const double v = m.captured(2).toDouble() / fps;
-            if (v != 0) {
-                last->speed = std::abs(v);
+            if (v != 0 && std::isfinite(v)) { // within the speeds a project file keeps (as ProjectFile)
+                last->speed = std::clamp(std::abs(v), Retime::kMinSpeed, Retime::kMaxSpeed);
                 last->reverse = v < 0;
             }
             continue;

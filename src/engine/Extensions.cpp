@@ -74,6 +74,12 @@ constexpr const char* kYamnetLabels = "yamnet_class_map.csv";
 QVector<Item> makeCatalog()
 {
     QVector<Item> list;
+#ifdef Q_OS_ANDROID
+    // Android (where Qt defines Q_OS_LINUX too): nothing to offer. The programs are glibc builds for desktop Linux and
+    // Android runs no program an app wrote (and the x64 FFmpeg is the GPL one, never in or for the APK); the voices,
+    // Whisper and Parakeet models need those programs, the face and cutout models an ONNX Runtime the device lacks.
+    return list;
+#endif
     const auto program = [&](const char* archive, const char* sha, qint64 size) {
         list << Item{"whisper", Kind::Program, N_("Whisper (Spracherkennung)"),
                      N_("whisper.cpp: erkennt Sprache offline und erzeugt Untertitel und Transkripte"),

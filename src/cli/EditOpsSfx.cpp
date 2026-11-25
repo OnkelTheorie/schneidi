@@ -232,7 +232,7 @@ void opSfx(Session& s, const QJsonObject& op)
     // 0.15 s swipes, 4 frames that went unheard over game sound (duel 17.11.). length '0s' takes the recording;
     // the Effects Library (by hand) keeps the entry the user picked
     const bool byHand = op.value("_by_hand").toBool();
-    const double length = op.contains("length")                                   ? seconds(timeOf(s, op, "length"), f)
+    const double length = op.contains("length")                                   ? seconds(spanOf(s, op, "length"), f)
                           : src.kind == SfxSynth::Kind::Whoosh && !byHand ? SfxSynth::defaultLength(*src.kind)
                                                                                   : 0;
 

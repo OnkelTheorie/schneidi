@@ -64,6 +64,27 @@ void setClipFormat(ClipFormat choice)
     store("timeline/firstClipFormat", choice == ClipFormat::Adapt ? "adapt" : "keep", choice == ClipFormat::Ask);
 }
 
+TrackHeight trackHeight()
+{
+    const QString v = stored("timeline/trackHeight");
+    return v == "small" ? TrackHeight::Small : v == "large" ? TrackHeight::Large : TrackHeight::Medium;
+}
+
+void setTrackHeight(TrackHeight height)
+{
+    store("timeline/trackHeight", height == TrackHeight::Small ? "small" : "large", height == TrackHeight::Medium);
+}
+
+int videoTrackHeight(TrackHeight height)
+{
+    return height == TrackHeight::Small ? 44 : height == TrackHeight::Large ? 96 : 64;
+}
+
+int audioTrackHeight(TrackHeight height)
+{
+    return height == TrackHeight::Small ? 36 : height == TrackHeight::Large ? 78 : 52;
+}
+
 ShuttleSteps shuttleSteps() { return stored("timeline/shuttleSteps") == "gentle" ? ShuttleSteps::Gentle : ShuttleSteps::Double; }
 
 void setShuttleSteps(ShuttleSteps steps) { store("timeline/shuttleSteps", "gentle", steps == ShuttleSteps::Double); }
@@ -86,6 +107,25 @@ void setSpaceReturns(bool on) { store("timeline/spaceStops", "return", !on); }
 bool scrubAudio() { return stored("timeline/scrubAudio") != "off"; }
 
 void setScrubAudio(bool on) { store("timeline/scrubAudio", "off", on); }
+
+bool loopWholeTimeline() { return stored("timeline/loopWithoutRange") == "timeline"; }
+
+void setLoopWholeTimeline(bool on) { store("timeline/loopWithoutRange", "timeline", !on); }
+
+bool rememberLoop() { return QSettings().value("timeline/rememberLoop").toBool(); }
+
+void setRememberLoop(bool on)
+{
+    store("timeline/rememberLoop", "true", !on);
+    if (!on) QSettings().remove("timeline/loopOn");
+}
+
+void setLoopWish(bool on)
+{
+    if (rememberLoop()) store("timeline/loopOn", "true", !on);
+}
+
+bool loopAtStart() { return rememberLoop() && QSettings().value("timeline/loopOn").toBool(); }
 
 bool snapping() { return QSettings().value("timeline/snapping", true).toBool(); }
 
@@ -134,6 +174,29 @@ void applyEditDefaults()
 {
     EditDefaults::setStillSeconds(stillSeconds());
     EditDefaults::setTransitionSeconds(transitionSeconds());
+}
+
+TransitionType transitionType()
+{
+    const QString v = stored("timeline/transitionType");
+    for (const auto& i : kTransitionTypes)
+        if (v == i.id && i.type != TransitionType::Luma) return i.type;
+    return TransitionType::CrossDissolve;
+}
+
+void setTransitionType(TransitionType type)
+{
+    if (type == TransitionType::Luma) type = TransitionType::CrossDissolve;
+    store("timeline/transitionType", transitionTypeInfo(type).id, type == TransitionType::CrossDissolve);
+}
+
+std::optional<TransitionStyle> transitionStyle()
+{
+    const TransitionType type = transitionType();
+    if (type == TransitionType::CrossDissolve) return std::nullopt;
+    TransitionStyle s;
+    s.type = type;
+    return s;
 }
 
 namespace {

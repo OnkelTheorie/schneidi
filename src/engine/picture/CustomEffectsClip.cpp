@@ -27,7 +27,8 @@ void warnOnce(const QString& effectId, const QString& why)
 
 } // namespace
 
-bool applyToClip(const Clip& c, const EffectInstance& inst, double t, double fps, uint8_t* rgba, int width, int height)
+bool applyToClip(const Clip& c, const EffectInstance& inst, double t, double fps, uint8_t* rgba, int width, int height,
+                 QSize project)
 {
     const EffectDescriptor* d = EffectRegistry::find(inst.effectId);
     if (!d) return false;
@@ -41,7 +42,7 @@ bool applyToClip(const Clip& c, const EffectInstance& inst, double t, double fps
         return false;
     }
     if (inst.effectId == QLatin1String(kFilterId)) {
-        ok = applyFilter(code, rgba, width, height, seconds, &why);
+        ok = applyFilter(code, rgba, width, height, seconds, &why, project);
     } else if (inst.effectId == QLatin1String(kShaderId)) {
         ShaderValues v;
         v.seconds = seconds;

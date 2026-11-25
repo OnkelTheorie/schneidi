@@ -47,8 +47,17 @@ public:
 private:
     static QPair<int, int> key(int track, AutoTarget t) { return {track, int(t)}; }
     double fps() const;
+    // The open timeline switched (an undo of another timeline's step) or a touched track is no longer at its index
+    // (added, removed or moved: an undo, an AI edit): its touches are dropped without writing (they would replace
+    // another track's curve), the others released, and the pass ends
+    void dropStale();
     Editor* m_editor;
     QHash<QPair<int, int>, Automation::Touch> m_touches;
+    struct Owner {
+        int sequence = 0;
+        quint64 track = 0; // Track::uid
+    };
+    QHash<QPair<int, int>, Owner> m_owners; // what each touch was started on
     QHash<QPair<int, int>, QElapsedTimer> m_recorded; // since the touch's last record (isJump)
     bool jumpFrom(const QPair<int, int>& k, int frame) const; // isJump from that touch's last record
     QString m_mergeKey; // of the running pass (empty = none)

@@ -96,6 +96,7 @@ private:
     QPointF toWidget(const QPointF& world) const;
     QPointF toWorld(const QPointF& widget) const;
     void pinchView(const QPointF& from, const QPointF& to, double scale); // two fingers: zoom + scroll
+    void cancelDrag(); // a cancelled touch: nothing of the drag is applied
     QPointF place(int node) const; // world top left of a node
     QSizeF nodeSize(const CompNode& n) const;
     QStringList inputsOf(const CompNode& n) const;

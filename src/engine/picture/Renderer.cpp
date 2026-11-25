@@ -776,9 +776,12 @@ struct Renderer::Impl {
                 const double sigma = std::max(0.0, Keys::valueAt(c, P::FxBlur, t)) * frameHeight / 2000.0;
                 VideoEffects::gaussian(img.data(), img.w, img.h, sigma);
             } else if (Custom::isCustom(inst.effectId)) {
-                Custom::applyToClip(c, inst, t, ctx.fps, img.data(), img.w, img.h); // filter chain, shader (0.19)
+                // Filter chain, shader (0.19). A chain works on the picture at its size in project pixels (`fit`):
+                // the same pixels in the preview (output size) and the export (decode size depends on the zoom)
+                const QSize project(std::max(1, int(std::lround(fit.width()))), std::max(1, int(std::lround(fit.height()))));
+                Custom::applyToClip(c, inst, t, ctx.fps, img.data(), img.w, img.h, project);
             } else if (!VideoEffects::apply(inst.effectId, img.data(), img.w, img.h, effectParams(c, inst, *d, t),
-                                            int64_t(c.in + t))) {
+                                            int64_t(c.in + t), frameHeight / std::max(1.0, ctx.PH))) {
                 static std::once_flag warned;
                 std::call_once(warned, [&] {
                     qWarning("Picture engine: effect %s not supported yet (skipped)", qPrintable(inst.effectId));
@@ -2439,14 +2442,19 @@ struct Renderer::Impl {
             const Captions::Pop pop = Captions::popIn((f - cue.start - times[active].from) * 1000.0 / ctx.fps, cs.popMs);
             p.lines = {{Text::Word{words[active], t.color, pop.scale, pop.opacity}}};
         } else {
-            const QFontMetricsF fm(font);
+            // Lines broken with the font at project size against the project's line width, then drawn scaled (as the
+            // Lines mode): the preview at another size breaks a cue where the export does (the font measured at
+            // output size rounds and hints differently, a cue near the limit broke elsewhere)
+            QFont projectFont = font;
+            projectFont.setPixelSize(std::max(1, int(std::lround(std::max(1.0, t.size)))));
+            const QFontMetricsF fm(projectFont);
             QVector<double> widths;
             p.reserve = std::max(1.0, cs.highlightScale);
             double widest = 0;
             for (const QString& w : words) widths << fm.horizontalAdvance(w), widest = std::max(widest, widths.last());
             // Room on every line for the widest word grown (Text::drawWords): the lines do not change as it moves
             const QVector<int> starts = Captions::lineStarts(widths, fm.horizontalAdvance(QLatin1Char(' ')),
-                                                             lineWidth * sx - widest * (p.reserve - 1), cs.maxWordsPerLine);
+                                                             lineWidth - widest * (p.reserve - 1), cs.maxWordsPerLine);
             for (int i = 0; i < words.size(); ++i) {
                 if (starts.contains(i)) p.lines.append(QVector<Text::Word>());
                 const bool now = i == active;
@@ -2603,9 +2611,14 @@ struct Renderer::Impl {
             // field by field (Video::toRgba); the card samples the chroma plane as one picture and blended the
             // fields' colours (stripes of one field tinted by the other). Converted here, the card draws the RGBA
             // picture (from the layer pool). Only the formats the CPU converts field by field: the others (NV12, P010
-            // of hardware decoding, 10 bit) the CPU converts as progressive too, the planes upload gives the same
+            // of hardware decoding, 10 bit) the CPU converts as progressive too, the planes upload gives the same.
+            // Deinterlaced 4:2:0 as well (Video::Reader's bwdif): where the picture stands still the filter keeps both
+            // fields, so its chroma rows still alternate between them - the CPU's conversion and the card's sampling
+            // of such rows differ widely (a static picture with fields of other colours: mean 27 levels); converted
+            // here, the card shows exactly the CPU's picture (and the export's)
             const auto fmt = AVPixelFormat(op.picture->frame->format);
-            if (!op.picture->progressive && (fmt == AV_PIX_FMT_YUV420P || fmt == AV_PIX_FMT_YUVJ420P) && nw > 0 && nh > 0) {
+            if ((!op.picture->progressive || op.picture->deinterlaced) && (fmt == AV_PIX_FMT_YUV420P || fmt == AV_PIX_FMT_YUVJ420P)
+                && nw > 0 && nh > 0) {
                 auto img = std::make_shared<Image>(nw, nh);
                 if (!Video::toRgba(*op.picture, op.info, img->data(), nw, nh, ctx.preview)) return false;
                 op.rgba = std::move(img);
@@ -3221,6 +3234,7 @@ Frame Renderer::renderFrame(int64_t frame, const RenderHints& hints)
     ctx.PH = d->options.format.height;
     ctx.fps = d->options.format.rate.fps();
     ctx.end = ctx.root ? TimelineOps::endFrame(*ctx.root) : 0;
+    if (d->options.timelineEnd) ctx.end = std::max(ctx.end, d->options.timelineEnd->load());
     if (d->options.rangeEnd >= 0) { // export of a range: the bar fills over the exported video
         ctx.begin = int(d->options.rangeStart);
         ctx.end = int(d->options.rangeEnd) + 1;
@@ -3340,6 +3354,7 @@ void Renderer::prepare(int64_t frame)
     ctx.root = tl;
     ctx.fps = fps;
     ctx.end = tl ? TimelineOps::endFrame(*tl) : 0;
+    if (d->options.timelineEnd) ctx.end = std::max(ctx.end, d->options.timelineEnd->load());
     if (d->options.rangeEnd >= 0) {
         ctx.begin = int(d->options.rangeStart);
         ctx.end = int(d->options.rangeEnd) + 1;

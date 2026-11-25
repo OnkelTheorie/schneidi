@@ -308,6 +308,8 @@ private:
     bool m_mixerOnlyNext = false;
     std::shared_ptr<std::atomic<bool>> m_gradeBypass = std::make_shared<std::atomic<bool>>(false);
     std::shared_ptr<std::atomic<int>> m_qualifierMask = std::make_shared<std::atomic<int>>(0);
+    // The timeline's end with its sound (the preview renderer gets the picture tracks only: Picture::Options::timelineEnd)
+    std::shared_ptr<std::atomic<int>> m_timelineEnd = std::make_shared<std::atomic<int>>(0);
     Timeline m_gridContent;
     QVector<MulticamAngle> m_gridAngles;
     int m_gridColumns = 0, m_gridPage = 0;
@@ -325,6 +327,11 @@ private:
     std::atomic<qint64> m_editAt{0};
     std::atomic<qint64> m_editShownEdit{0}, m_editShownAt{0};
     std::atomic<qint64> m_playingShownAt{0}; // steady ns of the last frame shown while playing
+    // Play / a jump while playing: the frame it starts from (producer frame) and how often a frame there was shown
+    // while playing (counted before its Player::release) - setSpeed/seek see one shown before their play()
+    std::atomic<int64_t> m_startFrame{-1};
+    void releaseIfShown(quint64 shownBefore);
+    std::atomic<quint64> m_startShown{0};
     qint64 m_prevEditAt = 0;                 // UI thread: steady ns of the edit before (paused)
     std::atomic<bool> m_editSeries{false};   // the pending edit came right after another one (a drag)
 protected:

@@ -102,6 +102,7 @@ SourceInfo probeSource(const QString& path)
     if (media && (media->isImage || !media->hasVideo)) return s;
     Video::Reader::Options options;
     options.hardware = false; // only the stream's description is read
+    options.deinterlace = false; // the first picture as decoded: is it interlaced?
     const std::unique_ptr<Video::Reader> reader = Video::Reader::open(path, options);
     if (!reader) return s;
     const Video::Info& in = reader->info();

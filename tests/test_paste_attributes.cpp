@@ -130,6 +130,18 @@ void testPaste()
     f.project.undoStack()->undo();
     CHECK(f.project.timeline().video[0].clips == before.video[0].clips);
     CHECK(f.project.timeline().audio[0].clips == before.audio[0].clips);
+    // A paste that changes nothing (onto the source clips themselves): no step, the redo steps stay (an empty
+    // macro deleted them)
+    {
+        QUndoStack* u = f.project.undoStack();
+        const int index = u->index(), count = u->count();
+        f.sel.set({1, 3});
+        f.editor.pasteAttributes(Editor::AttrZoom | Editor::AttrPosition | Editor::AttrVolume | Editor::AttrPan);
+        CHECK_EQ(u->index(), index);
+        CHECK_EQ(u->count(), count);
+        CHECK(u->canRedo());
+        f.sel.set({2, 4});
+    }
 
     // Only audio copied: video attributes not available, fades/speed are
     f.sel.set({3});

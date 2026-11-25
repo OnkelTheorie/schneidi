@@ -246,7 +246,7 @@ void fileTests(const QString& path, const QProcessEnvironment& env)
     // A plan with an op that fails is no plan
     r = cli({"edit", path, "--plan", "--ops", R"([{"op":"split","at":170},{"op":"delete","clips":[999]}])"}, env);
     CHECK_EQ(code(r), QString("NOT_FOUND"));
-    CHECK(std::as_const(r)["error"]["message"].toString().startsWith("op 1"));
+    CHECK(std::as_const(r)["error"]["message"].toString().startsWith("step 2")); // planning counts steps from 1
 
     // Expired (older than a day): gone
     QFile old(planFile(path, two));

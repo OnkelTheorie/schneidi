@@ -157,7 +157,7 @@ void packCues(SubtitleTrack& st, const QVector<Clip>& byStart, const QHash<int, 
 
 } // namespace
 
-Result pack(Timeline& tl, TrackRef ref, const QVector<int>& order, QString* why)
+Result pack(Timeline& tl, TrackRef ref, const QVector<int>& order, QString* why, const QHash<int, int>& keep)
 {
     if (ref.index < 0 || ref.index >= tl.tracks(ref.kind).size() || tl.track(ref).locked) return Result::Unchanged;
     QVector<Clip> clips = std::as_const(tl).track(ref).clips;
@@ -178,6 +178,7 @@ Result pack(Timeline& tl, TrackRef ref, const QVector<int>& order, QString* why)
     QVector<QPair<int, int>> ripple; // (frame before the edit, offset) as on a ripple: the time of each gap taken out
     int at = 0, last = 0;
     for (const Clip& c : clips) {
+        at += std::max(0, keep.value(c.id, 0));
         const int d = at - c.start;
         if (d != 0) shift.insert(c.id, d);
         if (d != last) ripple << qMakePair(c.start, d - last);
@@ -188,6 +189,64 @@ Result pack(Timeline& tl, TrackRef ref, const QVector<int>& order, QString* why)
     if (!sameOrder) ripple.clear();
     return shiftWithLinks(tl, ref, shift, ripple, [&](SubtitleTrack& st) { packCues(st, byStart, shift); },
                           T("Lücke auf %1 bleibt: "), why);
+}
+
+QHash<int, int> gapsBefore(const Track& t)
+{
+    QVector<Clip> clips = t.clips;
+    std::stable_sort(clips.begin(), clips.end(), [](const Clip& a, const Clip& b) { return a.start < b.start; });
+    QHash<int, int> gaps;
+    int end = 0;
+    for (const Clip& c : clips) {
+        if (c.start > end) gaps.insert(c.id, c.start - end);
+        end = std::max(end, c.end());
+    }
+    return gaps;
+}
+
+QHash<int, int> keptGaps(const Timeline& before, const Timeline& after, TrackRef ref)
+{
+    if (ref.index < 0 || ref.index >= before.tracks(ref.kind).size() || ref.index >= after.tracks(ref.kind).size())
+        return {};
+    const auto byStart = [](QVector<Clip> clips) {
+        std::stable_sort(clips.begin(), clips.end(), [](const Clip& a, const Clip& b) { return a.start < b.start; });
+        return clips;
+    };
+    const QVector<Clip> was = byStart(before.track(ref).clips);
+    const QVector<Clip> now = byStart(after.track(ref).clips);
+    QHash<int, int> nowIds, wasIds;
+    for (const Clip& c : now) nowIds.insert(c.id, 1);
+    for (const Clip& c : was) wasIds.insert(c.id, 1);
+    // Before: the gap frames up to each clip that stays on the track (the gaps before removed clips go to the next one)
+    QHash<int, int> budgetOf;
+    int pending = 0, end = 0;
+    for (const Clip& c : was) {
+        pending += std::max(0, c.start - end);
+        end = std::max(end, c.end());
+        if (nowIds.contains(c.id)) {
+            budgetOf.insert(c.id, pending);
+            pending = 0;
+        }
+    }
+    // After: each stretch up to an old clip (new clips in it included) keeps at most that clip's budget
+    QVector<int> budget(now.size(), 0);
+    int cur = 0;
+    for (int i = int(now.size()) - 1; i >= 0; --i) {
+        if (wasIds.contains(now[i].id)) cur = budgetOf.value(now[i].id, 0);
+        budget[i] = cur; // (the stretch's budget; clips after the last old clip: 0)
+    }
+    QHash<int, int> keep;
+    int left = 0;
+    end = 0;
+    for (int i = 0; i < now.size(); ++i) {
+        if (i == 0 || wasIds.contains(now[i - 1].id)) left = budget[i]; // a new stretch starts
+        const int gap = std::max(0, now[i].start - end);
+        const int k = std::min(gap, left);
+        if (k > 0) keep.insert(now[i].id, k);
+        left -= k;
+        end = std::max(end, now[i].end());
+    }
+    return keep;
 }
 
 Result openGap(Timeline& tl, TrackRef ref, int frame, int length, QString* why)

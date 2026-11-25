@@ -16,6 +16,7 @@
 #include "ui/FrameView.h"
 #include "ui/ViewerOverlay.h"
 #include "ui/timeline/PlayheadMove.h"
+#include "ui/touch/Touch.h"
 
 #include <QFontDatabase>
 #include <QFontInfo>
@@ -168,20 +169,37 @@ protected:
     void mousePressEvent(QMouseEvent* e) override { m_press = e->pos(); }
     void mouseMoveEvent(QMouseEvent* e) override
     {
+        // A finger (Qt's mouse events made of the touch: the label takes no touch): the touch layer carries the drag,
+        // QDrag's loop waits for a mouse (docs touch.md); the moves and the lift that follow move and drop it
+        if (m_touchDrag && TouchDrag::active()) {
+            TouchDrag::move(e->globalPosition());
+            return;
+        }
         if (!(e->buttons() & Qt::LeftButton) || m_press.x() < 0) return;
         if ((e->pos() - m_press).manhattanLength() < QApplication::startDragDistance()) return;
         m_press = QPoint(-1, -1);
         QMimeData* mime = m_data();
         if (!mime) return;
+        if (Touch::isTouch(e)) {
+            m_touchDrag = true;
+            TouchDrag::start(this, mime, grab(), e->globalPosition());
+            return;
+        }
         auto* drag = new QDrag(this);
         drag->setMimeData(mime);
         const NestedLoop::Guard nested; // (a platform's own drag loop: no rebuild of the window meanwhile)
         drag->exec(Qt::CopyAction);
     }
+    void mouseReleaseEvent(QMouseEvent* e) override
+    {
+        m_press = QPoint(-1, -1);
+        if (std::exchange(m_touchDrag, false) && TouchDrag::active()) TouchDrag::finish(e->globalPosition(), true);
+    }
 
 private:
     std::function<QMimeData*()> m_data;
     QPoint m_press{-1, -1};
+    bool m_touchDrag = false; // a finger's drag runs (TouchDrag)
 };
 
 } // namespace

@@ -6,12 +6,14 @@
 
 #include "core/Interchange.h"
 #include "core/Project.h"
+#include "core/Retime.h"
 #include "core/TimelineOps.h"
 #include "core/Timecode.h"
 
 #include <QCoreApplication>
 #include <QRegularExpression>
 
+#include <cmath>
 #include <functional>
 
 using namespace Interchange;
@@ -649,6 +651,71 @@ int main(int argc, char** argv)
         m.audioStreams = {AudioStreamInfo{2, "game"}, AudioStreamInfo{2, "mic"}};
         CHECK(m.audioStreamTrackLabel(-1).isEmpty());
         CHECK(!m.audioStreamName(-1).isEmpty() && m.audioStreamName(-1) != "game" && m.audioStreamName(-1) != "mic");
+    }
+    // Speeds outside what a project file keeps (0.01..100) are clamped on import: 1e-9 made materialForPicture's int
+    // conversion undefined, 200 played and then changed to 100 after save + reopen
+    {
+        auto otio = [](const char* scalar) {
+            return readOtio(QByteArray(R"({"OTIO_SCHEMA":"Timeline.1","tracks":{"children":[{"OTIO_SCHEMA":"Track.1",
+                "kind":"Video","children":[{"OTIO_SCHEMA":"Clip.1","name":"a","media_reference":{"target_url":"file:///m/a.mp4"},
+                "effects":[{"OTIO_SCHEMA":"LinearTimeWarp.1","time_scalar":)") + scalar + R"(}],
+                "source_range":{"duration":{"rate":25,"value":50},"start_time":{"rate":25,"value":100}}}]}]}})");
+        };
+        const Seq tiny = otio("1e-9"), fast = otio("-200");
+        if (CHECK(tiny.video.size() == 1 && tiny.video[0].items.size() == 1)) {
+            CHECK_EQ(tiny.video[0].items[0].speed, Retime::kMinSpeed);
+            CHECK(tiny.video[0].items[0].in >= 0 && tiny.video[0].items[0].in <= 100 / Retime::kMinSpeed);
+        }
+        if (CHECK(fast.video.size() == 1 && fast.video[0].items.size() == 1))
+            CHECK(fast.video[0].items[0].speed == Retime::kMaxSpeed && fast.video[0].items[0].reverse);
+        const Seq edl = readEdl("001  AX       V     C        00:00:10:00 00:00:11:00 01:00:00:00 01:00:01:00\n"
+                                "M2   AX       000.0001 00:00:10:00\n",
+                                {25, 1});
+        if (CHECK(edl.video.size() == 1 && edl.video[0].items.size() == 1))
+            CHECK_EQ(edl.video[0].items[0].speed, Retime::kMinSpeed);
+        Seq raw;
+        raw.video.resize(1);
+        Interchange::Item it;
+        it.path = "/m/a.mp4";
+        it.length = 10;
+        it.speed = 1e-6; // a reader that did not clamp
+        raw.video[0].items << it;
+        int id = 0, link = 0;
+        const Timeline tl = toTimeline(raw, [&] { return ++id; }, [&] { return ++link; });
+        if (CHECK(tl.video.size() == 1 && tl.video[0].clips.size() == 1))
+            CHECK_EQ(tl.video[0].clips[0].speed, Retime::kMinSpeed);
+        CHECK_EQ(RetimeMap::materialForPicture(1e10, 1e-9), 1 << 30);
+    }
+    // FCP7 values "nan" / "inf" are none (NaN reached the mix as a NaN gain); keys of a file come sorted by frame, one per
+    // frame (an unsorted track broke Keys::valueAt's binary search and changed after save + reopen)
+    {
+        bool ok = false;
+        const double nanValue = QString("nan").toDouble(&ok);
+        std::printf("QString::toDouble(\"nan\"): ok %d, finite %d\n", int(ok), int(std::isfinite(nanValue)));
+        const Seq s = readFcp7(R"(<xmeml version="4"><sequence><name>n</name><rate><timebase>25</timebase></rate><media>
+          <video><track><clipitem id="v"><name>a</name><start>0</start><end>100</end><in>0</in><out>100</out>
+            <file id="f"><pathurl>file:///m/a.mp4</pathurl></file>
+            <filter><effect><effectid>opacity</effectid><parameter><parameterid>opacity</parameterid><value>nan</value>
+              <keyframe><when>50</when><value>20</value></keyframe><keyframe><when>10</when><value>80</value></keyframe>
+              <keyframe><when>30</when><value>nan</value></keyframe><keyframe><when>10</when><value>60</value></keyframe>
+            </parameter></effect></filter></clipitem></track></video>
+          <audio><track><clipitem id="a"><name>a</name><start>0</start><end>100</end><in>0</in><out>100</out><file id="f"/>
+            <filter><effect><effectid>audiolevels</effectid><parameter><parameterid>level</parameterid><value>nan</value>
+            </parameter></effect></filter></clipitem></track></audio></media></sequence></xmeml>)");
+        if (CHECK(s.video.size() == 1 && s.video[0].items.size() == 1 && s.audio.size() == 1 && s.audio[0].items.size() == 1)) {
+            CHECK(std::isfinite(s.video[0].items[0].opacity));
+            CHECK(std::isfinite(s.audio[0].items[0].volumeDb));
+            CHECK_EQ(s.video[0].items[0].opacityKeys.size(), 3); // the "nan" key is left out
+        }
+        int id = 0, link = 0;
+        const Timeline tl = toTimeline(s, [&] { return ++id; }, [&] { return ++link; });
+        if (CHECK(tl.video.size() == 1 && tl.video[0].clips.size() == 1)) {
+            const KeyTrack keys = tl.video[0].clips[0].keys.value(AnimParam::Opacity);
+            if (CHECK_EQ(keys.size(), 2)) {
+                CHECK(keys[0].frame == 10 && keys[0].value == 60); // the later key of frame 10 wins
+                CHECK(keys[1].frame == 50 && keys[1].value == 20);
+            }
+        }
     }
     // Deeply nested files (an upload to `serve`): refused instead of overflowing the stack
     {

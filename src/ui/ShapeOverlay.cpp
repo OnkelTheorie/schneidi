@@ -333,6 +333,8 @@ bool ShapeOverlay::mouseMove(QMouseEvent* e, const QRectF& frame)
     return true;
 }
 
+QUndoStack* ShapeOverlay::undoStack() const { return m_editor->project()->undoStack(); }
+
 bool ShapeOverlay::mouseRelease(QMouseEvent* e, const QRectF&)
 {
     if (m_part == None || e->button() != Qt::LeftButton) return false;

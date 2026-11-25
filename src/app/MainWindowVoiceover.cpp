@@ -30,6 +30,10 @@
 #include <QStatusBar>
 #include <QTimer>
 #include <QUrl>
+#if defined(Q_OS_ANDROID) && QT_CONFIG(permissions)
+#include <QCoreApplication>
+#include <QPermission>
+#endif
 
 namespace {
 
@@ -180,8 +184,34 @@ void MainWindow::toggleVoiceover()
         m_voiceover->stop();
         return;
     }
+#if defined(Q_OS_ANDROID) && QT_CONFIG(permissions)
+    // Android: the microphone needs RECORD_AUDIO, granted at run time (declared in the manifest; without it the input
+    // opens silent or not at all). Asked at the first take; granted -> the take starts, refused -> said why.
+    const QMicrophonePermission mic;
+    switch (qApp->checkPermission(mic)) {
+    case Qt::PermissionStatus::Granted:
+        break;
+    case Qt::PermissionStatus::Undetermined:
+        qApp->requestPermission(mic, this, [this](const QPermission& p) {
+            if (p.status() == Qt::PermissionStatus::Granted) toggleVoiceover();
+            else micRefused();
+        });
+        return;
+    case Qt::PermissionStatus::Denied:
+        micRefused();
+        return;
+    }
+#endif
     QString error;
     if (!m_voiceover->start(&error)) QMessageBox::warning(this, T("Voiceover aufnehmen"), error);
+}
+
+void MainWindow::micRefused()
+{
+    QMessageBox::warning(this, T("Voiceover aufnehmen"),
+                         T("schneidi darf das Mikrofon nicht benutzen, daher kann keine Aufnahme starten. Erlauben "
+                           "lässt es sich in den Android-Einstellungen unter Apps › schneidi › Berechtigungen › "
+                           "Mikrofon."));
 }
 
 void MainWindow::endVoiceover()

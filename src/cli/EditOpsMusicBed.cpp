@@ -71,7 +71,7 @@ MusicBed::Options bedOptions(Session& s, const QJsonObject& op, int* at, int* fr
             fail("EMPTY", "length:'timeline' (the default): the timeline has nothing after 'at' to take the length "
                           "from - give a length (\"30s\")");
     } else {
-        *frames = timeOf(s, op, "length");
+        *frames = spanOf(s, op, "length");
     }
     checkFrameLimit(qint64(*at) + std::max(0, *frames), "music_bed");
     const double seconds = *frames / fps;
@@ -155,7 +155,10 @@ Bed ensureBed(const QString& projectPath, const MusicBed::Options& o)
     } catch (const std::system_error& e) {
         fail("FAILED", QString("cannot make the music bed: %1").arg(QString::fromLocal8Bit(e.what())));
     }
-    if (!MusicBed::writeWav(b.path, b.info)) fail("FAILED", "cannot write " + QDir::toNativeSeparators(b.path));
+    // The file is there, only its grid left the cache: made again for the grid only (the same options make the same
+    // sound). Written again, Windows refused to replace it while the app plays it (FAILED "cannot write")
+    if (!QFileInfo::exists(b.path) && !MusicBed::writeWav(b.path, b.info))
+        fail("FAILED", "cannot write " + QDir::toNativeSeparators(b.path));
     b.info.samples = {};
     storeSongBeats(b.path, 0, b.info.beats);
     b.made = true;

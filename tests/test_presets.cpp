@@ -554,6 +554,12 @@ int main(int argc, char** argv)
         const QString path = Presets::userPresetPath("Mein/Look: *1*");
         CHECK_EQ(QFileInfo(path).absolutePath(), QFileInfo(EffectFolders::presetDir()).absoluteFilePath());
         CHECK_EQ(QFileInfo(path).fileName(), QString("Mein_Look_ _1_.xml"));
+        // Windows device names are no files there (also with an extension), a trailing dot is dropped by Windows
+        CHECK_EQ(QFileInfo(Presets::userPresetPath("Con")).fileName(), QString("Con_.xml"));
+        CHECK_EQ(QFileInfo(Presets::userPresetPath("nul.look")).fileName(), QString("nul_.look.xml"));
+        CHECK_EQ(QFileInfo(Presets::userPresetPath("com1")).fileName(), QString("com1_.xml"));
+        CHECK_EQ(QFileInfo(Presets::userPresetPath("Console")).fileName(), QString("Console.xml"));
+        CHECK_EQ(QFileInfo(Presets::userPresetPath("Look.")).fileName(), QString("Look.xml"));
         QString err;
         CHECK(Presets::save(c, "Mein Look", path, &err));
         project.edit("clear", [](Timeline& tl) { tl.video[0].clips[0].effects.clear(); tl.video[0].clips[0].keys.clear(); });

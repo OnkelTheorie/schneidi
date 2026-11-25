@@ -6,6 +6,7 @@
 // Comp page does the same.
 
 #include "cli/CommandsDetail.h"
+#include "cli/Sandbox.h"
 
 #include "core/CodeTrust.h"
 #include "core/CompGraph.h"
@@ -284,7 +285,7 @@ CompGraph graphOfClip(const Clip& c, bool need = true)
 Parsed recipeGraph(Session& s, const QJsonObject& op)
 {
     QString err;
-    const std::optional<CompRecipe> r = CompRecipes::find(op.value("recipe").toString(), &err);
+    const std::optional<CompRecipe> r = CompRecipes::find(recipeKey(op.value("recipe").toString()), &err);
     if (!r) fail("NOT_FOUND", err);
     const QJsonValue w = op.value("with");
     if (!w.isUndefined() && !w.isNull() && !w.isObject())
@@ -312,6 +313,7 @@ Parsed recipeGraph(Session& s, const QJsonObject& op)
 // {op:'comp', clips:[one], save_recipe:'name', description?, replace?}: the clip's graph into the own recipes
 void saveRecipe(Session& s, const QJsonObject& op)
 {
+    Sandbox::checkLibraryWrite("save_recipe");
     const QVector<int> ids = clipsOn(s, op, TrackKind::Video, "a compositing graph");
     if (ids.size() != 1) fail("BAD_ARGUMENT", "save_recipe: give one clip");
     const Clip* c = TimelineOps::findClip(s.project.timeline(), ids.first());
@@ -350,7 +352,7 @@ void opComp(Session& s, const QJsonObject& op)
         const Parsed p = recipeGraph(s, op);
         QString err;
         if (!s.editor.setCompGraph(ids, p.graph, p.values, kKinds, &err)) fail("FAILED", err);
-        const std::optional<CompRecipe> r = CompRecipes::find(op.value("recipe").toString());
+        const std::optional<CompRecipe> r = CompRecipes::find(recipeKey(op.value("recipe").toString()));
         QJsonObject note{{"recipe", r->id}, {"clips", QJsonArray::fromVariantList([&] {
                                                 QVariantList l;
                                                 for (int id : ids) l << id;
@@ -1084,6 +1086,16 @@ void addCompOps(QVector<OpDef>& ops)
                  "surface's edge (notes: tracker_point, next = the track_node to run). One undo step. Check with "
                  "`frames` {clip, node} (the merge's output); points can be dragged on the Comp page afterwards.",
                  opPickRegion};
+}
+
+QString recipeKey(const QString& key)
+{
+    return Sandbox::libraryKey(key, {"json"}, [](const QString& k) {
+        const QVector<CompRecipe> list = CompRecipes::all();
+        return std::any_of(list.begin(), list.end(), [&k](const CompRecipe& r) {
+            return r.id.compare(k, Qt::CaseInsensitive) == 0 || r.name.compare(k, Qt::CaseInsensitive) == 0;
+        });
+    });
 }
 
 } // namespace Cli::detail

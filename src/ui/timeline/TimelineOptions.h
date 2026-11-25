@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 
+#include "core/Types.h"
+
 #include <QLine>
 #include <QRect>
 #include <QString>
+#include <optional>
 
 // The timeline's behaviour where editors differ: the user's choices in Settings › Timeline (QSettings "timeline/…",
 // app/TimelineSettingsPage). Each default is what schneidi did before the choice existed. The timelines read them when
@@ -57,6 +60,17 @@ void setSpaceReturns(bool on);
 bool scrubAudio();
 void setScrubAudio(bool on);
 
+// Loop playback (Playback › Loop, Settings › Timeline › Playback). Without an In/Out range: not available (default,
+// as before: nothing loops by accident) or the whole timeline loops (Premiere). Remembered: off at every start
+// (default, as before) or the loop's state as the user last switched it (the wish, stored at each switch by hand
+// while remembering is on; it comes back once a range or the whole timeline allows it).
+bool loopWholeTimeline();
+void setLoopWholeTimeline(bool on);
+bool rememberLoop();
+void setRememberLoop(bool on); // off also forgets the wish
+void setLoopWish(bool on);     // only stored while rememberLoop()
+bool loopAtStart();            // remembered and switched on last time
+
 // The speeds J/L step through when pressed again (Settings › Timeline › Playback): doubling 1-2-4-8-16 (default, as
 // before; DaVinci) or gentle 1-2-3-5-8 (Avid; Premiere 1-2-3-4). shuttleSpeed: the speed after a press of J
 // (direction -1) or L (+1) at the current speed - the other direction (or paused) starts at 1x, a slower one (half
@@ -100,6 +114,14 @@ double transitionSeconds();
 void setTransitionSeconds(double seconds);
 void applyEditDefaults();
 
+// The kind of transition "Add transition" (Ctrl+T) makes on video tracks (Settings › Timeline › New clips): a cross
+// dissolve (default, as before) or another of kTransitionTypes except the gradient wipe (it needs a picture). Audio
+// tracks always crossfade; a transition dragged from the Effects keeps its own kind; the CLI is not affected.
+TransitionType transitionType();
+void setTransitionType(TransitionType type);
+// The style handed to Editor::addTransitions: none for the cross dissolve (exactly the call from before)
+std::optional<TransitionStyle> transitionStyle();
+
 // Step sizes (Settings › Timeline › Keys): the big step of the playhead (Shift+arrow: 1 second, as before; Premiere
 // 5 frames, Final Cut and Avid 10) and the big nudge of clips/edit points (Shift+, and Shift+.: 5 frames, as before).
 // A number of frames or of seconds; read at every key press.
@@ -130,6 +152,16 @@ void setThumbnails(Thumbnails thumbnails);
 // shape mirrored around the middle (default, as before; DaVinci, Kdenlive, Audacity) or from the bottom (rectified,
 // Premiere and Final Cut: twice as tall on low tracks); height in dB, -48..0 dB (default, as before: speech does not
 // look flat) or linear (the plain amplitude, Avid's choice).
+// The height of the tracks (Settings › Timeline › Display): small 44/36, medium 64/52 (default, as before), large
+// 96/78 px for video/audio tracks. The timeline takes it at the start (not in touch mode, which has its own taller
+// rows) and when the choice changes; Timeline › Timeline View › Track Height sets the steps at once, and the
+// track-height wheel (Shift+wheel by default) changes them freely from there. Heights are not kept in the project.
+enum class TrackHeight { Small, Medium, Large };
+TrackHeight trackHeight();
+void setTrackHeight(TrackHeight height);
+int videoTrackHeight(TrackHeight height);
+int audioTrackHeight(TrackHeight height);
+
 enum class WaveShape { Mirrored, Bottom };
 enum class WaveScale { Db, Linear };
 WaveShape waveShape();

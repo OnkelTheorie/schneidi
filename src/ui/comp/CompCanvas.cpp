@@ -139,6 +139,18 @@ CompCanvas::CompCanvas(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
     // and scroll with them, long press = the context menu
     auto* touch = new TouchGestures(this);
     touch->onPinch = [this](const QPointF& from, const QPointF& to, double scale) { pinchView(from, to, scale); };
+    touch->onCancel = [this] { cancelDrag(); };
+}
+
+void CompCanvas::cancelDrag()
+{
+    // A touch the system cancelled: a dragged node goes back, a wire is dropped (both apply only on the release, which
+    // now finds no drag) - a cancelled touch commits nothing
+    if (m_drag == Drag::Node && m_selected && m_moved) m_places[m_selected] = m_pressPlace;
+    m_drag = Drag::None;
+    m_detachTo = 0;
+    m_detachInput.clear();
+    refresh();
 }
 
 void CompCanvas::pinchView(const QPointF& from, const QPointF& to, double scale)

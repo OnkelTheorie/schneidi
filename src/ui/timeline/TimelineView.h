@@ -205,6 +205,8 @@ public slots:
     // entry checked
     void setLoopInOut(bool on);
     bool loopInOut() const { return m_loopInOut; }
+    // The whole timeline loops (no range, Settings › Timeline): the ruler's menu shows the loop switched on
+    void setLoopWhole(bool on);
 
     // A gap clicked on a track (highlighted; cleared by any other click or a clip selection)
     bool hasGap() const { return m_gap.on; }
@@ -506,6 +508,7 @@ private:
     void marksRelease();
     bool m_markRight = false; // the running Marks drag is the right button's (a click opens the menu)
     bool m_loopInOut = false;
+    bool m_loopWhole = false;
     int marksSnap(const QVector<int>& edges, Qt::KeyboardModifiers mods) const; // correction, 0 = none
     QString marksToolTip(MarkGrab grab) const;
     void addMarksActions(QMenu& menu, int frame);

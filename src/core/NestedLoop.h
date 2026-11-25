@@ -16,5 +16,8 @@ public:
 
 // A nested loop runs now (a Guard is alive, or the GUI thread is in an event loop inside the main loop)
 bool running();
+// Only a Guard's loop (a measuring loop's processEvents, a drag): the app's Live server refuses changes meanwhile.
+// Not every exec: a modal dialog is asked for on its own, other loops (a test's wait) deliver requests as before.
+bool guarded();
 
 } // namespace NestedLoop

@@ -45,6 +45,7 @@ public:
     bool mousePress(QMouseEvent* e, const QRectF& frame) override;
     bool mouseMove(QMouseEvent* e, const QRectF& frame) override;
     bool mouseRelease(QMouseEvent* e, const QRectF& frame) override;
+    QUndoStack* undoStack() const override;
     Qt::CursorShape cursorAt(const QPointF& pos, const QRectF& frame) const override;
 
     struct Handle {
@@ -96,6 +97,7 @@ private:
     int m_repickNode = 0;
     QPointF m_repickPlaced{-1, -1}; // m_last.placed before that step
     bool m_inRepick = false;
+    QMetaObject::Connection m_undoIndex; // to the history in use (Project::undoStackChanged: a tour's own one)
     QString m_pickStatus;
     std::function<QImage(int, int)> m_source;
     QString m_sourceKey;

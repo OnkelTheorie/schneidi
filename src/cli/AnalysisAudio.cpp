@@ -223,7 +223,7 @@ QJsonObject cmdSilence(const QJsonObject& a, Context& ctx)
     };
     const QString file = a["file"].toString();
     if (isProjectFile(file)) {
-        // The timeline's sound as exported (optionally some tracks); ranges in timeline frames, ready for keep
+        // The timeline's sound as exported (optionally some tracks); ranges in timeline frames (for delete_range, not keep)
         Session s(file);
         s.selectTimeline(a["timeline"]);
         const ProjectFormat& f = s.format();

@@ -35,9 +35,20 @@ public:
     ~DeliverPanel() override;
 
     RenderQueuePanel* queuePanel() const { return m_queuePanel; }
+    // The time format changed (Settings › Timeline): the range's tip and the queue's job cards anew (the check list
+    // takes it with its next run)
+    void refreshTimes();
     // Where exports go at first: the folder the user chose last (Browse or typed; setting render/folder), else the
     // videos folder (Android: the shared Movies folder)
     static QString defaultFolder();
+    // Android has no free folder choice (its folder picker answers with a content:// address nothing here can write
+    // to): each kind of export goes to a fixed, visible place - schneidi's folder in the shared collection Android lets
+    // an app put that kind of file in (Android 11+ refuses other file types there). The collection's name (Android's
+    // Environment.DIRECTORY_*): "Movies" for videos, "Music" for audio only, "Pictures" for GIFs and image sequences,
+    // "Download" for anything with a subtitle file beside it (any file type may go there, so the pair stays together).
+    // Pure (tested on the desktop); androidFolder() is the path on the device.
+    static QString exportCollection(const RenderSettings& s);
+    static QString androidFolder(const RenderSettings& s);
     RenderQueue* renderQueue() const { return m_queue; }
     // The queue out of this panel (it goes on without it; the caller hands it to the next panel). Once, before deleting
     RenderQueue* takeRenderQueue();

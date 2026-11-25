@@ -122,7 +122,10 @@ QJsonObject cmdBrand(const QJsonObject& a, Context&)
         fail("BAD_ARGUMENT", "action: show, set, apply, unset, logo or intro_outro");
     if (action != "show" && action != "set" && project.isEmpty())
         fail("BAD_ARGUMENT", QString("%1 needs a project (a .schneidi file or \"@app\")").arg(action));
-    const bool global = a.contains("global") ? a["global"].toBool() : true;
+    // In a work folder the global kit is the server user's (read-only there): a project's set changes its own kit
+    const bool global = a.contains("global") ? a["global"].toBool()
+                                             : project.isEmpty() || Sandbox::libraryWritesAllowed();
+    if (action == "set" && global) Sandbox::checkLibraryWrite("brand set (the global kit)");
     if (action == "set" && !global && project.isEmpty())
         fail("BAD_ARGUMENT", "global:false sets the project's own kit: give the project");
     if (action == "set" && !hasFields(a))

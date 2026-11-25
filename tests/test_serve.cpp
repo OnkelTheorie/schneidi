@@ -10,11 +10,14 @@
 #include "cli/Mcp.h"
 #include "cli/Sandbox.h"
 #include "cli/Serve.h"
+#include "cli/ServeDetail.h"
 #include "cli/ServeJobs.h"
 #include "core/BrandKit.h"
 #include "core/CompGraph.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
+#include "core/TemplateZip.h"
+#include "core/Zip.h"
 
 #include "check.h"
 
@@ -24,6 +27,7 @@
 #include <QEventLoop>
 #include <QImage>
 #include <QGuiApplication>
+#include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QNetworkAccessManager>
@@ -34,6 +38,7 @@
 #include <QTemporaryDir>
 #include <QThread>
 #include <QTimer>
+#include <QUrl>
 
 namespace {
 
@@ -106,6 +111,24 @@ void sandboxRules(const QString& base)
         CHECK_EQ(codeOf([] { resolve("keys/new.mp4"); }), QString("HIDDEN"));
         CHECK_EQ(codeOf([] { resolve("keys"); }), QString("HIDDEN"));
     }
+    // Windows' places that run or configure programs, by name (a profile as work folder; hidden() uses this there,
+    // with the hidden/system attributes)
+    using Cli::Sandbox::windowsProtected;
+    CHECK(windowsProtected("AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/run.bat"));
+    CHECK(windowsProtected("u/appdata/local/x"));
+    CHECK(windowsProtected("AppData./Roaming/x"));
+    CHECK(windowsProtected("AppData /x"));
+    CHECK(windowsProtected("APPDATA::$INDEX_ALLOCATION/x"));
+    CHECK(windowsProtected("Application Data\\x"));
+    CHECK(windowsProtected("Local Settings"));
+    CHECK(windowsProtected("ProgramData/Microsoft/Windows/Start Menu/Programs/StartUp/x.lnk"));
+    CHECK(!windowsProtected("clips/AppDataBackup/a.mp4"));
+    CHECK(!windowsProtected("Videos/a.mp4"));
+    CHECK(!windowsProtected(""));
+#ifdef Q_OS_WIN
+    CHECK_EQ(codeOf([] { resolve("AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/run.bat"); }),
+             QString("HIDDEN"));
+#endif
     // Files that make MLT/FFmpeg read other files or addresses (MLT XML, playlists) are no media here, by name or
     // content; other XML (a timeline of another program) is fine
     const auto write = [&](const QString& rel, const QByteArray& data) {
@@ -504,6 +527,158 @@ void waitMs(int ms)
     loop.exec();
 }
 
+// Template and recipe keys are paths too: in a work folder an absolute (or relative) one must stay inside it and not be
+// hidden, and a template ZIP never packs hidden files nor the folder a loose project happens to sit in
+void sandboxLibraryKeys(const QString& base)
+{
+    QDir(base).mkpath("root/tpl/media");
+    QDir(base).mkpath("root/tpl/.git");
+    QDir(base).mkpath("root/.hid");
+    QDir(base).mkpath("root/bad");
+    QDir(base).mkpath("outside/old/media");
+    const QString root = QDir(base).filePath("root"), outside = QDir(base).filePath("outside");
+    const auto write = [](const QString& path, const QByteArray& data) {
+        QFile f(path);
+        return f.open(QIODevice::WriteOnly) && f.write(data) == data.size();
+    };
+    const auto project = [](const QString& file, const QString& media) {
+        Project p;
+        ProjectData d;
+        d.timeline = emptyTimeline();
+        p.load(d);
+        if (!media.isEmpty()) p.addMedia({media, QFileInfo(media).fileName(), 100, true, true, false});
+        QString err;
+        return ProjectFile::save(p.data(), file, &err);
+    };
+    CHECK(write(root + "/tpl/media/a.png", "png"));
+    CHECK(write(root + "/tpl/.secret", "secret"));
+    CHECK(write(root + "/tpl/.git/config", "secret"));
+    CHECK(write(root + "/.hid/a.png", "png"));
+    CHECK(write(outside + "/old/media/b.png", "png"));
+    CHECK(write(outside + "/secret.png", "png"));
+    CHECK(project(root + "/tpl/template.schneidi", root + "/tpl/media/a.png"));
+    CHECK(project(root + "/x.schneidi", {}));
+    CHECK(project(root + "/.hid/template.schneidi", {}));
+    CHECK(project(root + "/bad/template.schneidi", outside + "/secret.png")); // inside, naming a file outside
+    CHECK(project(outside + "/old/template.schneidi", outside + "/old/media/b.png"));
+    const auto names = [](const QString& zip) {
+        QStringList out;
+        if (const auto e = Zip::entries(zip))
+            for (const Zip::Entry& x : *e) out << x.name;
+        return out;
+    };
+    const auto anyHidden = [](const QStringList& list) {
+        return std::any_of(list.begin(), list.end(), [](const QString& n) { return n.contains("/."); });
+    };
+    // Without a work folder too: no hidden files in a template ZIP, and only a template folder is one
+    {
+        QString err, code;
+        CHECK(TemplateLibrary::exportZip(root + "/tpl", base + "/plain.zip", true, &err, &code));
+        const QStringList in = names(base + "/plain.zip");
+        CHECK(in.contains("tpl/template.schneidi") && in.contains("tpl/media/a.png"));
+        CHECK(!anyHidden(in));
+        CHECK(!TemplateLibrary::exportZip(root + "/x.schneidi", base + "/loose.zip", true, &err, &code));
+        CHECK_EQ(code, QString("BAD_TEMPLATE"));
+        CHECK(!QFileInfo::exists(base + "/loose.zip"));
+    }
+    const QString cwd = QDir::currentPath();
+    Cli::Sandbox::configure({root});
+    const auto run = [](const QString& name, const QJsonObject& args) {
+        const Cli::Command* cmd = Cli::find(name);
+        Cli::Context ctx;
+        return codeOf([&] { cmd->run(Cli::normalize(*cmd, args), ctx); });
+    };
+    // The request of the review: a loose project's folder (the work folder, its .ssh …) as a template ZIP
+    CHECK_EQ(run("templates", {{"export", root + "/x.schneidi"}, {"zip", "loot.zip"}}), QString("BAD_TEMPLATE"));
+    CHECK(!QFileInfo::exists(root + "/loot.zip"));
+    CHECK(project(root + "/bad/y.schneidi", {})); // next to another project named template.schneidi: not that one
+    CHECK_EQ(run("templates", {{"export", "bad/y.schneidi"}, {"zip", "loot.zip"}}), QString("BAD_TEMPLATE"));
+    CHECK(!QFileInfo::exists(root + "/loot.zip"));
+    CHECK(project(root + "/template.schneidi", {}));
+    CHECK_EQ(run("templates", {{"export", root + "/template.schneidi"}, {"zip", "loot.zip"}}), QString("BAD_ARGUMENT"));
+    CHECK_EQ(run("templates", {{"export", root}, {"zip", "loot.zip"}}), QString("BAD_ARGUMENT"));
+    CHECK(!QFileInfo::exists(root + "/loot.zip"));
+    QFile::remove(root + "/template.schneidi");
+    // Outside the work folder: export, fill, info, template - absolute, relative, as a file URL
+    for (const QString& key : {outside + "/old/template.schneidi", outside + "/old", QString("../outside/old"),
+                               QUrl::fromLocalFile(outside + "/old").toString()}) {
+        CHECK_EQ(run("templates", {{"export", key}, {"zip", "v.zip"}}), QString("OUTSIDE_ROOT"));
+        CHECK_EQ(run("templates", {{"fill", key}, {"out_project", "o.schneidi"}}), QString("OUTSIDE_ROOT"));
+        CHECK_EQ(run("templates", {{"info", key}}), QString("OUTSIDE_ROOT"));
+        CHECK_EQ(run("templates", {{"template", key}}), QString("OUTSIDE_ROOT"));
+    }
+    CHECK(!QFileInfo::exists(root + "/v.zip") && !QFileInfo::exists(root + "/o.schneidi"));
+    CHECK(!QFileInfo::exists(root + "/o media"));
+    // Hidden: refused like any hidden path
+    CHECK_EQ(run("templates", {{"export", ".hid/template.schneidi"}, {"zip", "h.zip"}}), QString("HIDDEN"));
+    CHECK_EQ(run("templates", {{"fill", root + "/.hid/template.schneidi"}, {"out_project", "h.schneidi"}}), QString("HIDDEN"));
+    // A template inside that names a file outside: never copied in
+    CHECK_EQ(run("templates", {{"fill", "bad/template.schneidi"}, {"out_project", "b.schneidi"}}), QString("OUTSIDE_ROOT"));
+    CHECK(!QFileInfo::exists(root + "/b.schneidi") && !QFileInfo::exists(root + "/b media"));
+    // Legitimate: a template folder in the work folder (without its hidden files), a library template by id
+    CHECK_EQ(run("templates", {{"export", "tpl"}, {"zip", "t.zip"}}), QString("NOT_FOUND")); // a name, no library one
+    CHECK_EQ(run("templates", {{"export", "tpl/template.schneidi"}, {"zip", "t.zip"}}), QString("none"));
+    const QStringList in = names(root + "/t.zip");
+    CHECK(in.contains("tpl/template.schneidi") && in.contains("tpl/media/a.png"));
+    CHECK(!anyHidden(in));
+    CHECK_EQ(run("templates", {{"export", root + "/tpl"}, {"zip", "t2.zip"}}), QString("none"));
+    CHECK_EQ(run("templates", {{"info", "tpl/template.schneidi"}}), QString("none"));
+    CHECK_EQ(run("templates", {{"export", "intro-outro"}, {"zip", "lib.zip"}}), QString("none"));
+    CHECK(names(root + "/lib.zip").contains("intro-outro/template.schneidi"));
+    // Recipes: a key with a separator or ending in .json is a path as well
+    QDir(outside).mkpath("r");
+    CHECK(write(outside + "/r/recipe.json", "{}"));
+    CHECK_EQ(run("effects", {{"kind", "recipes"}, {"export", outside + "/r/recipe.json"}, {"to", "r.zip"}}),
+             QString("OUTSIDE_ROOT"));
+    CHECK_EQ(run("effects", {{"kind", "recipes"}, {"export", "../outside/r/recipe.json"}, {"to", "r.zip"}}),
+             QString("OUTSIDE_ROOT"));
+    CHECK_EQ(run("effects", {{"kind", "recipes"}, {"export", ".hid/recipe.json"}, {"to", "r.zip"}}), QString("HIDDEN"));
+    CHECK(!QFileInfo::exists(root + "/r.zip"));
+    {
+        ProjectData d;
+        d.timeline = emptyTimeline();
+        Clip c;
+        c.id = 1;
+        c.kind = ClipKind::Title;
+        c.out = 24;
+        d.timeline.video[0].clips << c;
+        QString err;
+        CHECK(ProjectFile::save(d, root + "/c.schneidi", &err));
+    }
+    CHECK_EQ(run("edit", {{"project", "c.schneidi"},
+                          {"ops", QJsonArray{QJsonObject{{"op", "comp"}, {"clips", QJsonArray{1}},
+                                                         {"recipe", outside + "/r/recipe.json"}}}}}),
+             QString("OUTSIDE_ROOT"));
+    // The server user's own libraries and global brand kit are read-only for clients of a work folder
+    CHECK_EQ(run("templates", {{"save", "tpl/template.schneidi"}, {"name", "Mine"}}), QString("READ_ONLY"));
+    CHECK_EQ(run("templates", {{"import", "t.zip"}}), QString("READ_ONLY"));
+    CHECK_EQ(run("templates", {{"remove", "intro-outro"}}), QString("READ_ONLY"));
+    CHECK_EQ(run("templates", {{"rename", "intro-outro"}, {"name", "Gone"}}), QString("READ_ONLY"));
+    CHECK_EQ(run("effects", {{"kind", "recipes"}, {"import", "t.zip"}}), QString("READ_ONLY"));
+    CHECK_EQ(run("effects", {{"kind", "recipes"}, {"remove", "anything"}}), QString("READ_ONLY"));
+    CHECK_EQ(run("edit", {{"project", "c.schneidi"},
+                          {"ops", QJsonArray{QJsonObject{{"op", "comp"}, {"clips", QJsonArray{1}}, {"save_recipe", "Mine"}}}}}),
+             QString("READ_ONLY"));
+    const BrandKit before = Brand::global();
+    CHECK_EQ(run("brand", {{"action", "set"}, {"colors", "#00ff00"}}), QString("READ_ONLY"));
+    CHECK_EQ(run("brand", {{"action", "set"}, {"global", true}, {"project", "c.schneidi"}, {"colors", "#00ff00"}}),
+             QString("READ_ONLY"));
+    // ... a project's set changes its own kit then
+    CHECK_EQ(run("brand", {{"action", "set"}, {"project", "c.schneidi"}, {"colors", "#00ff00"}}), QString("none"));
+    CHECK(Brand::global().colors == before.colors);
+    {
+        ProjectData d;
+        QString err;
+        if (CHECK(ProjectFile::load(root + "/c.schneidi", &d, &err)) && CHECK(d.brand.has_value()))
+            CHECK_EQ(d.brand->colors.size(), qsizetype(1));
+    }
+    // The server's owner can allow it (--allow-library-writes)
+    Cli::Sandbox::configure({root, {}, false, true});
+    CHECK_EQ(run("templates", {{"remove", "no-such-template"}}), QString("NOT_FOUND"));
+    Cli::Sandbox::configure({});
+    QDir::setCurrent(cwd);
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -514,6 +689,22 @@ int main(int argc, char* argv[])
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg missing");
     QTemporaryDir tmp;
     sandboxRules(tmp.filePath("rules"));
+    // Addresses upload by URL refuses on a server others reach (cli/ServeFiles.cpp checkHost)
+    {
+        using Cli::Serve::privateAddress;
+        using Cli::Serve::refusedAddress;
+        for (const char* a : {"127.0.0.1", "::1", "0.0.0.0", "0.1.2.3", "169.254.169.254", "fe80::1", "224.0.0.1", "::",
+                              "::ffff:127.0.0.1", "::ffff:169.254.169.254"})
+            CHECK(refusedAddress(QHostAddress(QString(a))));
+        for (const char* a : {"10.0.0.1", "172.16.0.1", "172.31.255.255", "192.168.178.1", "100.64.0.1", "fc00::1",
+                              "fd12:3456::1", "::ffff:10.1.2.3", "::ffff:192.168.0.1"})
+            CHECK(privateAddress(QHostAddress(QString(a))));
+        for (const char* a : {"8.8.8.8", "172.32.0.1", "192.169.0.1", "100.128.0.1", "2a00:1450::1", "::ffff:8.8.8.8"}) {
+            CHECK(!privateAddress(QHostAddress(QString(a))));
+            CHECK(!refusedAddress(QHostAddress(QString(a))));
+        }
+    }
+    sandboxLibraryKeys(tmp.filePath("library-keys"));
 
     // Replacing a file (the end of a long-name upload): a replace that fails keeps the old file; the old one is never
     // removed before the new one is in place (a sharing violation on Windows used to lose both)
@@ -719,6 +910,12 @@ int main(int argc, char* argv[])
             const QJsonObject a = proxied.call("upload", {{"url", proxied.base + "/files/clip.mp4"}, {"path", "self.mp4"}});
             CHECK_EQ(errorCode(a), QString("BAD_URL"));
             CHECK(!QFileInfo::exists(root + "/self.mp4"));
+            // Nor from the private network it stands in (router, NAS, internal services)
+            for (const char* url : {"http://192.168.178.1/", "http://10.1.2.3/x.mp4", "http://[::ffff:172.16.0.9]/"}) {
+                const QJsonObject b = proxied.call("upload", {{"url", url}, {"path", "lan.html"}});
+                CHECK_EQ(errorCode(b), QString("BAD_URL"));
+            }
+            CHECK(!QFileInfo::exists(root + "/lan.html"));
         }
     }
 
@@ -746,6 +943,16 @@ int main(int argc, char* argv[])
             if (t["name"].toString() == "help")
                 CHECK(!t["inputSchema"]["properties"].toObject().contains("all")
                       && t["inputSchema"]["properties"].toObject().contains("command"));
+            // The schema allows what the help documents (review 25.11.): review_hits an object or false (an array is
+            // refused by render), edit run a list or "all"
+            if (t["name"].toString() == "render") {
+                const QJsonArray type = t["inputSchema"]["properties"]["review_hits"]["type"].toArray();
+                CHECK(type.contains("object") && type.contains("boolean") && !type.contains("array"));
+            }
+            if (t["name"].toString() == "edit") {
+                const QJsonArray type = t["inputSchema"]["properties"]["run"]["type"].toArray();
+                CHECK(type.contains("array") && type.contains("string"));
+            }
         }
         CHECK(tools.contains("render") && tools.contains("jobs") && tools.contains("files") && tools.contains("upload"));
         CHECK(!tools.contains("app") && !tools.contains("extensions"));
@@ -811,6 +1018,9 @@ int main(int argc, char* argv[])
                      QString("OUTSIDE_ROOT"));
         }
         CHECK_EQ(errorCode(s.call("render", {{"project", "film.schneidi"}, {"out", "../outside/x.mp4"}})), QString("OUTSIDE_ROOT"));
+        // A template key is a path too: the folder of a loose project (the work folder) is no template to pack
+        CHECK_EQ(errorCode(s.call("templates", {{"export", root + "/film.schneidi"}, {"zip", "loot.zip"}})), QString("BAD_TEMPLATE"));
+        CHECK(!QFileInfo::exists(root + "/loot.zip"));
         CHECK(!QFileInfo::exists(tmp.filePath("outside/x.mp4")));
         CHECK_EQ(errorCode(s.call("info", {{"project", "@app"}})), QString("APP_OFF"));
         CHECK_EQ(errorCode(s.call("app", {{"action", "state"}})), QString("NOT_FOUND"));

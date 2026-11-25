@@ -23,7 +23,9 @@
 #include "check.h"
 #include "synth_sounds.h"
 
+#include <QDateTime>
 #include <QDir>
+#include <QFile>
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -581,6 +583,23 @@ int main(int argc, char* argv[])
         const auto p = load(project);
         const Clip* c = clipById(*p, n["clip"].toInt());
         CHECK(c && c->volumeDb == -6 && !Keys::animated(*c, AnimParam::Volume));
+    }
+    // Its grid gone from the cache (cleared, evicted): the grid is made again, the file stays as it is (written again,
+    // Windows refused to replace it while the app plays it: FAILED "cannot write")
+    {
+        const QString file = n["file"].toString();
+        const QDateTime old = QDateTime::currentDateTime().addDays(-1);
+        QFile f(file);
+        CHECK(f.open(QIODevice::ReadWrite) && f.setFileTime(old, QFileDevice::FileModificationTime));
+        f.close();
+        CHECK(QDir(tmp.path() + "/cache").removeRecursively());
+        CHECK(!Cli::detail::cachedSongBeats(file, 0));
+        const QJsonObject again = bedNote(
+            edit(project, QString(R"([{"op":"music_bed","mood":"lofi","length":"timeline","duck":false,"track":"A%1"}])")
+                              .arg(load(project)->timeline().audio.size() + 1)));
+        CHECK_EQ(again["file"].toString(), file);
+        CHECK(std::abs(QFileInfo(file).lastModified().secsTo(old)) <= 1);
+        CHECK(Cli::detail::cachedSongBeats(file, 0).has_value());
     }
     // Ducking only under voice and recorded sound: not under the effect sounds (track "SFX"), a track named "Music",
     // another bed or an audio-only song with analysed beats

@@ -407,13 +407,18 @@ QWidget* MainWindow::buildPhoneTopBar()
         connect(b, &QToolButton::clicked, this, [action] { trigger(action); });
         return b;
     };
-    QUndoStack* stack = m_project->undoStack();
     QToolButton* undo = historyButton("phoneUndo", QStringLiteral("↶"), T("Rückgängig"), "undo");
     QToolButton* redo = historyButton("phoneRedo", QStringLiteral("↷"), T("Wiederherstellen"), "redo");
-    undo->setEnabled(stack->canUndo());
-    redo->setEnabled(stack->canRedo());
-    connect(stack, &QUndoStack::canUndoChanged, undo, &QWidget::setEnabled);
-    connect(stack, &QUndoStack::canRedoChanged, redo, &QWidget::setEnabled);
+    // The history in use, also during a tour (its own one; the buttons showed the user's while undoing the practice's)
+    const auto followUndo = [this, undo, redo] {
+        QUndoStack* stack = m_project->undoStack();
+        connect(stack, &QUndoStack::canUndoChanged, undo, &QWidget::setEnabled, Qt::UniqueConnection);
+        connect(stack, &QUndoStack::canRedoChanged, redo, &QWidget::setEnabled, Qt::UniqueConnection);
+        undo->setEnabled(stack->canUndo());
+        redo->setEnabled(stack->canRedo());
+    };
+    followUndo();
+    connect(m_project, &Project::undoStackChanged, undo, followUndo);
     m_phoneTopBar = bar;
     phoneArrangeTopBar(false);
     return bar;

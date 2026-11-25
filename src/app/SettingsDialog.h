@@ -75,6 +75,12 @@ public:
     static bool storedOwnFolder();
     static QString storedFolder();
     static void store(bool own, const QString& folder);
+    // How often the backup copy of the open project is written (QSettings "project/autosaveSeconds", 60 by default:
+    // the minute schneidi always had; the default is not stored)
+    int autosaveSeconds() const;
+    static constexpr int kDefaultAutosaveSeconds = 60;
+    static int storedAutosaveSeconds();
+    static void setStoredAutosaveSeconds(int seconds);
     // The start page (General › Interface): the pages to choose from as (id, shown name) in bar order, the chosen id
     void setStartPages(const QVector<QPair<QString, QString>>& pages, const QString& current);
     QString startPage() const;
@@ -114,6 +120,7 @@ private:
     QComboBox* m_startPage = nullptr;
     QComboBox* m_threads = nullptr;
     QCheckBox* m_ownFolder = nullptr;
+    QComboBox* m_autosave = nullptr;
     QCheckBox* m_autoLink = nullptr;
     QComboBox* m_secondScreen = nullptr;
     QComboBox* m_proxyImport = nullptr;

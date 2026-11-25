@@ -56,6 +56,7 @@
 #include <QJsonDocument>
 #include <QPainter>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QTimer>
 #include <QUndoStack>
 
@@ -452,6 +453,8 @@ QByteArray planBase(const Session& s, const QString& path)
 {
     ProjectData d = Live::host() ? Live::host()->liveProject()->data() : s.project.data();
     d.playhead = 0;
+    d.views.clear();     // UI state carried from the file (Project::data), as the playhead
+    d.missingAt.clear(); // where missing files were expected when read: no part of the edit
     d.renderQueue.clear();
     d.currentSequence = -1; // every timeline in "sequences"
     d.timeline = emptyTimeline();
@@ -585,12 +588,15 @@ QJsonObject applyEdit(Session& s, const QJsonArray& ops, const QJsonObject& a, b
             if (noteUnchanged && name != QLatin1String("timeline") && !name.startsWith('_')) {
                 const QJsonObject now = projectState(s);
                 if (now == stateLast && s.notes.size() == notes)
-                    s.notes << QString("op %1 (%2): changed nothing").arg(i).arg(name);
+                    s.notes << (steps ? QString("step %1 (%2): changed nothing").arg(i + 1) // as plan.steps n
+                                      : QString("op %1 (%2): changed nothing").arg(i)).arg(name);
                 stateLast = now;
             }
         } catch (const Error& e) {
             if (!numbers.isEmpty())
                 throw Error{e.code, QString("step %1 (%2): %3").arg(numbers.value(i)).arg(ops[i]["op"].toString(), e.message)};
+            if (steps) // making a plan: the step numbers its answer gives (n, from 1)
+                throw Error{e.code, QString("step %1 (%2): %3").arg(i + 1).arg(ops[i]["op"].toString(), e.message)};
             throw Error{e.code, QString("op %1 (%2): %3").arg(i).arg(ops[i]["op"].toString(), e.message)};
         }
         if (steps) {
@@ -617,7 +623,16 @@ QJsonObject applyEdit(Session& s, const QJsonArray& ops, const QJsonObject& a, b
     }
     if (s.live) o["live"] = true; // changed in the app (one undo step there), the user saves
     if (!s.notes.isEmpty()) o["notes"] = s.notes;
-    if (!s.why.isEmpty()) o["why"] = s.why; // the reasons the ops were given, by op index
+    if (!s.why.isEmpty()) { // the reasons the ops were given, by op index (a plan: by step number n)
+        QJsonArray why = s.why;
+        if (steps)
+            for (QJsonValueRef v : why) {
+                QJsonObject w = v.toObject();
+                if (w.contains("index")) w["step"] = w.take("index").toInt() + 1;
+                v = w;
+            }
+        o["why"] = why;
+    }
     if (s.project.sequences().size() > 1) o["timelines"] = timelinesJson(s.project, s.multicamSync);
     if (!dry) {
         const QString backup = s.save();
@@ -772,10 +787,9 @@ QJsonObject cmdEdit(const QJsonObject& a, Context&)
     const QJsonObject stored{{"id", id},         {"created", now.toString(Qt::ISODate)}, {"project", s.path},
                              {"timeline", sequence}, {"base", QString::fromLatin1(base)},  {"ops", ops},
                              {"adds", adds}};
-    QFile f(QDir(dir).filePath(id + ".json"));
-    if (!f.open(QIODevice::WriteOnly) || f.write(QJsonDocument(stored).toJson(QJsonDocument::Compact)) < 0)
+    QSaveFile f(QDir(dir).filePath(id + ".json")); // complete or not at all (a cut-off plan was read as broken later)
+    if (!f.open(QIODevice::WriteOnly) || f.write(QJsonDocument(stored).toJson(QJsonDocument::Compact)) < 0 || !f.commit())
         fail("SAVE_FAILED", "cannot write the plan " + f.fileName());
-    f.close();
     int added = 0, changed = 0, removed = 0;
     const QJsonObject total = o["changes"].toObject();
     added = total["added"].toArray().size();
@@ -1371,7 +1385,7 @@ QJsonObject libraryEntryJson(const QString& key)
         ShapeKind k;
         if (Shapes::kindFromId(rest, &k)) return {{"type", "shape"}, {"shape", rest}};
     }
-    if (prefix == "recipe:" && CompRecipes::find(rest)) return {{"type", "recipe"}, {"recipe", rest}};
+    if (prefix == "recipe:" && CompRecipes::find(recipeKey(rest))) return {{"type", "recipe"}, {"recipe", rest}};
     if (prefix == "lut:" || prefix == "luma:" || prefix == "preset:") {
         const QString path = EffectFavorites::filePath(key);
         const QVector<EffectFolders::LutEntry> list =
@@ -1435,17 +1449,19 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
         if (a.contains("export")) { // a recipe as ZIP
             if (!a.contains("to")) fail("BAD_ARGUMENT", "export: give 'to' (the .zip file)");
             int files = 0;
-            if (!CompRecipes::exportZip(a["export"].toString(), a["to"].toString(), a["replace"].toBool(), &err, &code, &files))
+            if (!CompRecipes::exportZip(recipeKey(a["export"].toString()), a["to"].toString(), a["replace"].toBool(), &err, &code, &files))
                 fail(code, err);
             return {{"exported", a["export"].toString()}, {"zip", QDir::toNativeSeparators(a["to"].toString())}, {"files", files}};
         }
         if (a.contains("import")) {
+            Sandbox::checkLibraryWrite("recipes import");
             const std::optional<CompRecipe> r = CompRecipes::importZip(a["import"].toString(), a["replace"].toBool(), &err, &code);
             if (!r) fail(code, err);
             return {{"imported", r->id}, {"name", r->name}, {"folder", QDir::toNativeSeparators(r->dir)},
                     {"slots", recipeSlotsJson(*r)}};
         }
         if (a.contains("remove")) {
+            Sandbox::checkLibraryWrite("recipes remove");
             if (!CompRecipes::remove(a["remove"].toString(), &err, &code)) fail(code, err);
             return {{"removed", a["remove"].toString()}};
         }
@@ -1487,7 +1503,10 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
             if (!Picture::Custom::canRender(d.id, &why)) o["unavailable"] = why;
             if (d.id == QLatin1String(Picture::Custom::kFilterId))
                 o["note"] = "params.chain = an FFmpeg filter chain on the clip's picture (one linear chain, filters "
-                            "separated by ','; expressions see t = clip seconds; the size stays). Checked when set: "
+                            "separated by ','; expressions see t = clip seconds; the size stays). Sizes in the chain are project "
+                            "pixels: the chain sees the clip's picture at its size in the project (a 1920x1080 clip "
+                            "in a 1080p project: 1920x1080) in the preview and in every export size, so "
+                            "pixelize=w=24 or crop=1280:720 look the same everywhere. Checked when set: "
                             "bad chains and forbidden filters are refused with the reason";
             else
                 o["note"] = "params.code = " + Picture::Custom::shaderHelp()

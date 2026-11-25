@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+#include "ui/timeline/TimelineOptions.h"
 #include "ui/RenderQueuePanel.h"
 #include "core/NestedLoop.h"
 
@@ -6,7 +7,6 @@
 #include "app/Theme.h"
 #include "core/I18n.h"
 #include "core/Project.h"
-#include "core/Timecode.h"
 #include "engine/RenderQueue.h"
 #include "ui/ElidedLabel.h"
 
@@ -56,6 +56,7 @@ public:
             (*l)->setStyleSheet(QString("color: %1; font-size: 8pt;").arg(Theme::textDim.name()));
             lay->addWidget(*l);
         }
+        range->setObjectName("jobRange"); // (tests)
         message->setStyleSheet(QString("color: %1; font-size: 8pt;").arg(Theme::warning.name()));
         progress = new QProgressBar;
         progress->setRange(0, 100);
@@ -122,8 +123,8 @@ protected:
         const NestedLoop::Guard nested; // (a platform's own drag loop: no rebuild of the window meanwhile)
         drag->exec(Qt::MoveAction); // (not QAbstractItemView::startDrag: it would remove the moved rows itself)
     }
-    // Only a drag that started in this list (files or another list's items are ignored). QDrag cannot run without a
-    // display: a test's synthetic drag names the list in its data's property "schneidi_drag_source" instead.
+    // Only a drag that started in this list (files or another list's items are ignored). A finger's drag (TouchDrag,
+    // no QDrag: no source()) and a test's synthetic one name the list in the data's property "schneidi_drag_source".
     bool fromHere(const QDropEvent* e) const
     {
         return e->source() == this
@@ -132,7 +133,12 @@ protected:
     void dragEnterEvent(QDragEnterEvent* e) override
     {
         QListWidget::dragEnterEvent(e); // takes its own drags (InternalMove)
-        if (!e->isAccepted() && fromHere(e)) e->acceptProposedAction(); // a test's synthetic one (see fromHere)
+        if (!e->isAccepted() && fromHere(e)) e->acceptProposedAction(); // a finger's or a test's (see fromHere)
+    }
+    void dragMoveEvent(QDragMoveEvent* e) override
+    {
+        QListWidget::dragMoveEvent(e); // (InternalMove: it takes only a drag whose source() is the list)
+        if (!e->isAccepted() && fromHere(e)) e->acceptProposedAction();
     }
     void dropEvent(QDropEvent* e) override
     {
@@ -240,7 +246,6 @@ void RenderQueuePanel::rebuild()
     const QVector<int> selected = selectedJobs();
     m_list->clear();
     const auto& jobs = m_project->renderQueue();
-    const int fps = m_project->fps();
     for (int n = 0; n < jobs.size(); ++n) {
         const RenderJob& j = jobs[n];
         auto* item = new QListWidgetItem(m_list);
@@ -276,8 +281,9 @@ void RenderQueuePanel::rebuild()
                                          : j.settings.summary(j.size, j.sourceBitrateK);
         card->summary->setFullText(timeline.isEmpty() ? summary : timeline + QStringLiteral(" · ") + summary);
         card->range->setFullText(j.inOut ? T("In/Out: %1 – %2")
-                                           .arg(Timecode::format(j.from, fps),
-                                                j.to >= 0 ? Timecode::format(j.to, fps) : T("Ende"))
+                                           .arg(TimelineOptions::formatTime(j.from, m_project->frameRate()),
+                                                j.to >= 0 ? TimelineOptions::formatTime(j.to, m_project->frameRate())
+                                                          : T("Ende"))
                                      : T("Ganze Timeline"));
         card->path->setFullText(QDir::toNativeSeparators(j.path));
         card->progress->setValue(j.status == RenderStatus::Done ? 100

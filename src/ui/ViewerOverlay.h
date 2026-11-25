@@ -11,6 +11,7 @@
 class QMouseEvent;
 class QTabletEvent;
 class QPainter;
+class QUndoStack;
 
 class ViewerOverlay : public QObject {
     Q_OBJECT
@@ -31,6 +32,9 @@ public:
     // Mouse over the picture without a button pressed, resp. left the viewer
     virtual void hover(const QPointF&, const QRectF&) {}
     virtual void leave() {}
+    // The undo stack its drags edit: a touch the system cancels (an edge gesture, the notification shade) takes back
+    // every step since the press (FrameView::cancelOverlayDrag); none = nothing to take back
+    virtual QUndoStack* undoStack() const { return nullptr; }
 
 signals:
     void changed(); // repaint

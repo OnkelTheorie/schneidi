@@ -124,6 +124,10 @@ struct Options {
     // Preview: the clip (id) whose grade shows its qualifier's selection instead of the picture (Color page "show
     // mask"; read at every render); 0 or below = none
     std::shared_ptr<const std::atomic<int>> qualifierMask;
+    // The end of the whole timeline (frames, sound included) when the renderer gets the picture tracks only (the
+    // preview: Engine's pictureOnly), so a progress bar over the timeline ends where the export's does; read at every
+    // render; unset = the end of what the renderer gets
+    std::shared_ptr<const std::atomic<int>> timelineEnd;
     // Composite on the graphics card when Gpu::Service::instance() has a hardware device (CPU path otherwise)
     bool gpu = true;
     // Drawn onto every finished frame (RGBA, straight alpha, output size) after everything else, e.g. the marks of a

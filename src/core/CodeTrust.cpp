@@ -237,9 +237,16 @@ bool remembered(const QString& path, const QStringList& codes)
     return QSettings().value(settingsKey(path)).toString() == hashOf(codes);
 }
 
+namespace {
+std::atomic<bool> g_sessionOnly{false};
+} // namespace
+
+void setSessionOnly(bool on) { g_sessionOnly = on; }
+bool sessionOnly() { return g_sessionOnly; }
+
 void remember(const QString& path, const QStringList& codes)
 {
-    if (path.isEmpty() || codes.isEmpty()) return;
+    if (path.isEmpty() || codes.isEmpty() || g_sessionOnly) return;
     QSettings s;
     s.setValue(settingsKey(path), hashOf(codes));
     s.setValue(fileKey(path), QFileInfo(path).absoluteFilePath());

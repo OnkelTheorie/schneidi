@@ -134,6 +134,7 @@ schneidi_test(test_picture_passthrough) # export: a plain full-size video hands 
 schneidi_test(test_video_convert) # toRgba sets the colour matrix per conversion (BT.2020 after/before 601)
 schneidi_test(test_hdr_tone) # HDR -> SDR (HLG/PQ): known values, tables and the card's LUT against the exact function, real 10-bit files, Clip::hdrToSdr
 schneidi_test(test_video_reader) # own decoder: jumps/threads/hardware = pictures in order, hibernation, rotation, file properties
+schneidi_test(test_deinterlace) # interlaced sources deinterlaced by the reader: no combing, played = seeked to, preview = export
 schneidi_test(test_picture_regression) # picture engine against independent references: timing, layers, transitions, outline, downscale, threads
 schneidi_test(test_crop)
 schneidi_test(test_picture_pump) # preview frame pump: sync under load, catch-up, seek, live change, backward
@@ -305,6 +306,7 @@ set_tests_properties(test_audio_player test_scrub_audio PROPERTIES RUN_SERIAL TR
 schneidi_test(test_still_refresh) # paused: an edit is shown at once (shape handle drag)
 schneidi_test(test_shape_drag_app) # the whole app: a shape corner drag, the picture follows the box
 schneidi_test(test_play_end) # playback stops at the end and stays stopped
+schneidi_test(test_play_start) # play starts at once: the still's release before Player::play is not lost (no 0.3 s hold)
 schneidi_test(test_play_loop) # loop playback in the In/Out range: wraps Out -> In, no click, off/removed plays to the end
 set_tests_properties(test_av_sync PROPERTIES RUN_SERIAL TRUE) # preview timing
 schneidi_test(test_dynamics_eq)
@@ -388,12 +390,12 @@ foreach(name test_stabilize_denoise test_retime test_effects_render test_effect_
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SCHNEIDI_AUDIO_DEVICE=null;SCHNEIDI_GPU=0;LC_ALL=de_DE.UTF-8;LANG=de_DE.UTF-8")
 endforeach()
 
-set_tests_properties(test_av_sync test_preview_audio test_play_end test_play_loop PROPERTIES RUN_SERIAL TRUE) # preview timing
+set_tests_properties(test_av_sync test_preview_audio test_play_end test_play_loop test_play_start PROPERTIES RUN_SERIAL TRUE) # preview timing
 
 # Label "timing": tests that measure real time or wait for other processes. They fail when the machine is busy (other
 # builds, a game, a parallel ctest), not when the code is wrong. tools/run_tests.py runs everything else in parallel,
 # then these one by one, and once more what failed (ctest -LE timing / -L timing work by hand too).
-set_tests_properties(test_av_sync test_preview_audio test_play_end test_play_loop test_audio_player test_speed test_serve
+set_tests_properties(test_av_sync test_preview_audio test_play_end test_play_loop test_play_start test_audio_player test_speed test_serve
                      test_watch_folders test_voiceover test_voiceover_app test_handover
                      PROPERTIES LABELS timing)
 

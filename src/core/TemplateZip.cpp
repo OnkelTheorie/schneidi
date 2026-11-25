@@ -56,6 +56,14 @@ QString portablePath(const QString& rel, QSet<QString>& used)
     return out;
 }
 
+// A path relative to a template's folder with a dot-named part (".ssh/id_rsa"): Windows does not mark those hidden,
+// so QDir's own filter keeps them there
+bool hiddenPart(const QString& rel)
+{
+    const QStringList parts = rel.split('/', Qt::SkipEmptyParts);
+    return std::any_of(parts.begin(), parts.end(), [](const QString& p) { return p.startsWith('.'); });
+}
+
 // Media references of a project moved to other files (old absolute path -> new)
 void redirectMedia(ProjectData& d, const QHash<QString, QString>& moved)
 {
@@ -84,10 +92,20 @@ bool exportZip(const QString& idOrName, const QString& zip, bool overwrite, QStr
     if (!zip.endsWith(".zip", Qt::CaseInsensitive)) return failWith(error, code, "BAD_ARGUMENT", "zip must end in .zip");
     if (QFileInfo::exists(zip) && !overwrite)
         return failWith(error, code, "EXISTS", "file exists (pass overwrite to replace it): " + zip);
+    // Only a template folder (its project is template.schneidi): a loose project file names the folder it happens to
+    // sit in, which may be a whole home folder
+    if (QFileInfo(t->project).fileName() != QLatin1String(ProjectFileName))
+        return failWith(error, code, "BAD_TEMPLATE",
+                        QString("not a template folder (no %1 in it): %2").arg(ProjectFileName, t->dir));
     const QDir root(t->dir);
     QStringList rels;
-    QDirIterator it(t->dir, QDir::Files | QDir::Hidden | QDir::NoSymLinks, QDirIterator::Subdirectories);
-    while (it.hasNext()) rels << root.relativeFilePath(it.next());
+    // Never hidden files or folders (".ssh", ".config", Windows' hidden attribute): a template saved by schneidi has
+    // none, and a folder that holds them is not one to hand out
+    QDirIterator it(t->dir, QDir::Files | QDir::NoSymLinks, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        const QString rel = root.relativeFilePath(it.next());
+        if (!hiddenPart(rel)) rels << rel;
+    }
     rels.sort();
     // Names legal here but not everywhere ("a:b.mp4", "x\y.png" on Linux) get a portable one in the archive (import
     // refuses the others), the project in it points at those

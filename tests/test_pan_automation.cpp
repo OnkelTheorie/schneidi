@@ -505,6 +505,25 @@ void testWriter()
             undo->undo();
         }
         CHECK(!w.isJump(100, 100 + 20, 0) && w.isJump(100, 100 + 30, 0) && w.isJump(100, 50, 0) && !w.isJump(100, 99, 0));
+        // The tracks change under a touch (an undo, an AI edit puts a track before it): the touch is dropped and the
+        // pass ends; its curve is not written onto the track now at that index (it replaced that track's automation)
+        {
+            const int at0 = undo->index();
+            for (int f = 25; f <= 50; ++f) w.move(0, AutoTarget::Volume, f, -6);
+            const AutoCurve recorded = p.timeline().audio[0].volumeAuto;
+            CHECK(!recorded.isEmpty());
+            p.edit("track before", [](Timeline& tl) { tl.audio.insert(0, Track{TrackKind::Audio}); });
+            w.release(0, AutoTarget::Volume, 60);
+            CHECK(!w.touching() && !w.inPass());
+            CHECK(p.timeline().audio[0].volumeAuto.isEmpty());
+            CHECK(p.timeline().audio[1].volumeAuto == recorded); // what was written before stays
+            // A fader moved again: a new touch on the track now there
+            for (int f = 70; f <= 80; ++f) w.move(0, AutoTarget::Volume, f, -9);
+            w.endPass(80);
+            CHECK(near(Automation::levelAt(p.timeline().audio[0], 75), -9, 0.15));
+            CHECK(p.timeline().audio[1].volumeAuto == recorded);
+            undo->setIndex(at0);
+        }
     }
 }
 

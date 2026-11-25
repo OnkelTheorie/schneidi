@@ -252,17 +252,27 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
             streams |= pr["audio_streams"].toArray().size() > 1;
         }
         // 2. The project: a new one next to the video unless one is given (that one gets the new timelines)
-        if (project.isEmpty()) {
-            const QFileInfo o(out);
-            project = freeName(o.absolutePath(), o.completeBaseName(), "." + QString(ProjectFile::Extension));
-        }
+        const QFileInfo o(out);
+        const auto freeProject = [&] { return freeName(o.absolutePath(), o.completeBaseName(), "." + QString(ProjectFile::Extension)); };
+        const bool chosen = project.isEmpty(); // a free name of our own: always a new project, never one made meanwhile
+        if (chosen) project = freeProject();
         bool created = false;
-        if (project != QLatin1String(Live::AppProject) && !QFileInfo::exists(project)) {
+        if (project != QLatin1String(Live::AppProject) && (chosen || !QFileInfo::exists(project))) {
             // game: the Mix stream of a multi-stream recording comes in muted (nothing plays twice), master limiter
-            QJsonObject n{{"project", project}, {"media", QJsonArray::fromStringList(files)},
-                          {"template", game || streams ? "game" : "neutral"}};
+            QJsonObject n{{"media", QJsonArray::fromStringList(files)}, {"template", game || streams ? "game" : "neutral"}};
             if (fps > 0) n["fps"] = fps;
-            run("new", n, step(0.01, 0.02));
+            // The free name can be taken between choosing and creating (another short of the same video): `new`
+            // answers EXISTS, the next free name is tried (a few times)
+            for (int attempt = 0;; ++attempt) {
+                n["project"] = project;
+                try {
+                    run("new", n, step(0.01, 0.02));
+                    break;
+                } catch (const Error& e) {
+                    if (!chosen || e.code != QLatin1String("EXISTS") || attempt >= 8) throw;
+                    project = freeProject();
+                }
+            }
             created = true;
             done << QString("new project %1 (template %2)").arg(project, n["template"].toString());
         }

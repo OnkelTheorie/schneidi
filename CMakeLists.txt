@@ -316,6 +316,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/engine/BlurFill.h         src/engine/BlurFill.cpp
     src/engine/video/Compose.h    src/engine/video/Compose.cpp
     src/engine/video/Convert.h    src/engine/video/Convert.cpp
+    src/engine/video/Deinterlace.h src/engine/video/Deinterlace.cpp
     src/engine/FfmpegLog.h        src/engine/FfmpegLog.cpp
     src/engine/OpenMedia.h        src/engine/OpenMedia.cpp
     src/engine/ContentUri.h       src/engine/ContentUri.cpp
@@ -591,8 +592,9 @@ target_link_libraries(schneidi_lib PRIVATE rnnoise)
 # Custom effect "ffmpeg_filter" (0.19, engine/picture/FilterEffect.cpp): libavfilter is optional. Found by pkg-config
 # (Debian libavfilter-dev; the bundled LGPL FFmpeg of packaging/ has it), or given by hand with
 # SCHNEIDI_AVFILTER_INCLUDE_DIR + SCHNEIDI_AVFILTER_LIBRARY (headers of the same FFmpeg version as the other libraries).
-# Without it the effect says "not available in this build". Only FilterEffect.cpp sees the define and headers (the
-# rest of the build keeps its flags and compiler cache).
+# Without it the effect says "not available in this build" and interlaced pictures stay woven (engine/video/Deinterlace:
+# bwdif/yadif). Only FilterEffect.cpp and Deinterlace.cpp see the define and headers (the rest of the build keeps its
+# flags and compiler cache).
 option(SCHNEIDI_AVFILTER "FFmpeg filter chains as an effect (needs libavfilter)" ON)
 set(SCHNEIDI_AVFILTER_INCLUDE_DIR "" CACHE PATH "libavfilter headers (when pkg-config does not find libavfilter)")
 set(SCHNEIDI_AVFILTER_LIBRARY "" CACHE FILEPATH "libavfilter library (when pkg-config does not find libavfilter)")
@@ -600,12 +602,15 @@ if(SCHNEIDI_AVFILTER)
     pkg_check_modules(AVFILTER QUIET IMPORTED_TARGET libavfilter)
     if(AVFILTER_FOUND)
         target_link_libraries(schneidi_lib PRIVATE PkgConfig::AVFILTER)
-        set_property(SOURCE src/engine/picture/FilterEffect.cpp APPEND PROPERTY COMPILE_DEFINITIONS SCHNEIDI_HAVE_AVFILTER)
+        set_property(SOURCE src/engine/picture/FilterEffect.cpp src/engine/video/Deinterlace.cpp APPEND PROPERTY
+                     COMPILE_DEFINITIONS SCHNEIDI_HAVE_AVFILTER)
         message(STATUS "FFmpeg filter effect: libavfilter ${AVFILTER_VERSION}")
     elseif(SCHNEIDI_AVFILTER_INCLUDE_DIR AND SCHNEIDI_AVFILTER_LIBRARY)
         target_link_libraries(schneidi_lib PRIVATE ${SCHNEIDI_AVFILTER_LIBRARY})
-        set_property(SOURCE src/engine/picture/FilterEffect.cpp APPEND PROPERTY COMPILE_DEFINITIONS SCHNEIDI_HAVE_AVFILTER)
-        set_property(SOURCE src/engine/picture/FilterEffect.cpp APPEND PROPERTY INCLUDE_DIRECTORIES
+        set_property(SOURCE src/engine/picture/FilterEffect.cpp src/engine/video/Deinterlace.cpp APPEND PROPERTY
+                     COMPILE_DEFINITIONS SCHNEIDI_HAVE_AVFILTER)
+        set_property(SOURCE src/engine/picture/FilterEffect.cpp src/engine/video/Deinterlace.cpp APPEND PROPERTY
+                     INCLUDE_DIRECTORIES
                      ${SCHNEIDI_AVFILTER_INCLUDE_DIR})
         message(STATUS "FFmpeg filter effect: libavfilter ${SCHNEIDI_AVFILTER_LIBRARY}")
     else()

@@ -27,6 +27,7 @@ public:
     bool mousePress(QMouseEvent* e, const QRectF& frame) override;
     bool mouseMove(QMouseEvent* e, const QRectF& frame) override;
     bool mouseRelease(QMouseEvent* e, const QRectF& frame) override;
+    QUndoStack* undoStack() const override;
     Qt::CursorShape cursorAt(const QPointF& pos, const QRectF& frame) const override;
 
     // Phone: a selected text title gets a box too (drag inside = move, a corner = size around its centre), and every

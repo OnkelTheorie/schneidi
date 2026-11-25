@@ -66,6 +66,11 @@ struct ProjectData {
     // The last Direct page / `direct` session (core/Direction.h as JSON, no pictures; optional, 0.25): UI state, not
     // part of the edit (no undo step, not in a plan's base)
     QJsonObject direction;
+    // Files that were missing when the project was read (media, watch folders, LUTs, wipe and texture pictures): the
+    // stored absolute path -> where the stored relative path pointed from the project's folder then. A save writes the
+    // relative path from that place while the file is still missing, not from the stale absolute path: a project
+    // moved (or copied to another OS) before its media keeps finding them once they arrive next to it.
+    QHash<QString, QString> missingAt;
 };
 
 namespace ProjectFile {

@@ -441,6 +441,7 @@ QImage Engine::ownStill(const Timeline& tl, int position, bool transparent)
     o.transparent = transparent;
     Timeline picture = pictureOnly(tl);
     picture.audio.clear();
+    o.timelineEnd = std::make_shared<std::atomic<int>>(TimelineOps::endFrame(tl)); // as the export's progress bars
     Picture::Renderer renderer(picture, o);
     return renderer.render(position).toImage();
 }
@@ -562,6 +563,7 @@ Picture::Options Engine::previewOptions(const QSize& output) const
     o.renderCache = [resolved](const Clip& c) { return resolved->cached(c); };
     o.gradeBypass = m_gradeBypass;
     o.qualifierMask = m_qualifierMask;
+    o.timelineEnd = m_timelineEnd;
     o.parallelFrames = m_pump ? m_pump->workers() : 1;
     // From a rendering thread: the signal is queued to the receivers (the window names the file)
     o.sourceLost = [self = QPointer<Engine>(const_cast<Engine*>(this))](const QString& path) {
@@ -635,6 +637,7 @@ void Engine::applyTimeline(const Timeline& tl)
         Stabilizer::instance()->sync(Stabilizer::missing(tl, m_format));
     }
     m_built = tl;
+    m_timelineEnd->store(TimelineOps::endFrame(tl)); // before the renderer draws the new timeline
     const QSize output = m_previewSize;
     if (!m_renderer) {
         m_renderer = std::make_shared<Picture::Renderer>(pictureOnly(tl), previewOptions(output));
@@ -828,7 +831,10 @@ void Engine::showContent(std::shared_ptr<const Picture::Pump::Content> content, 
 
 void Engine::onPumpShown(const QImage& image, int64_t position, double speed)
 {
-    if (speed != 0.0) m_player->release(); // the picture is there: the sound may start
+    if (speed != 0.0) { // the picture is there: the sound may start
+        if (position == m_startFrame.load()) m_startShown.fetch_add(1);
+        m_player->release();
+    }
     const int shown = int(position) + m_offset;        // timeline frame
     // Loop playback: a frame after the range's end is never shown; the clock reached it, so jump back now (once)
     if (speed > 0 && loopCrossed(shown)) {
@@ -1104,6 +1110,14 @@ void Engine::stopAtEnd()
     pause();
 }
 
+// The pump shows a frame it has (the still at the playhead, a frame shown moments ago) at once, often before play()
+// set the sound's hold (always when play() still opens the device): that release() came too early and the clock stood
+// the hold's 0.3 s waiting for the next frame. The start frame is there: release again.
+void Engine::releaseIfShown(quint64 shownBefore)
+{
+    if (m_startShown.load() != shownBefore) m_player->release();
+}
+
 void Engine::setSpeed(double speed)
 {
     if (!connected()) return;
@@ -1135,9 +1149,12 @@ void Engine::setSpeed(double speed)
         m_pump->setSpeed(speed, at);
         m_player->play(m_player->position(), speed); // faster/slower from where the sound is
     } else {
+        m_startFrame = at;
+        const quint64 shown = m_startShown.load();
         m_pump->setSpeed(speed, at);
         if (wasPlaying) ++m_seekEpoch; // turning around: positions on their way lie the other way (after the pump)
         m_player->play(soundStart(at, speed), speed);
+        releaseIfShown(shown);
     }
     applyAudioState();
     emit speedChanged(speed);
@@ -1152,6 +1169,8 @@ void Engine::seek(int frame)
     // Stopped and the last seek moments ago: scrubbing (dragging, a held arrow key)
     const bool scrub = !playing && m_lastSeek.isValid() && m_lastSeek.elapsed() < kScrubMs;
     retryLostSources(); // before the pump renders the new frame
+    m_startFrame = at;
+    const quint64 shown = m_startShown.load();
     m_pump->seek(at, scrub); // first: no frame from before the jump is shown after this
     ++m_seekEpoch; // then: a frame shown while the pump was being told carries the old epoch and is dropped
     if (playing) {
@@ -1161,6 +1180,7 @@ void Engine::seek(int frame)
             m_seekRelease->start();
         }
         m_player->play(soundStart(at, m_speed), m_speed);
+        releaseIfShown(shown);
     }
     m_lastSeek.start();
     m_position = frame;

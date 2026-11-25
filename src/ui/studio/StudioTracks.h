@@ -9,7 +9,8 @@
 // a running voice-over take shows on its lane (setLiveTake).
 //
 // Core rule (docs/architektur.md): zoom and scroll are the lanes' own (ViewState) and change only by user input - the
-// mouse wheel (the wheel settings of the timeline), two fingers, the scrollbars, the Fit button. A model change never touches them;
+// mouse wheel (the wheel settings of the timeline), two fingers, the scrollbars, the Fit button - and, by the user's
+// choice, along with the playing playhead (setPlaying). A model change never touches them;
 // the scroll range grows with the project and never shrinks under the view. The first showing takes the timeline's
 // zoom and scroll once (setView). The lanes fill the height (a few tracks: tall lanes, many: they scroll); the
 // track-height wheel (Shift+wheel by default) gives them a height of their own.
@@ -43,6 +44,11 @@ public:
 
     void setPlayhead(int frame);
     int playhead() const { return m_playhead; }
+    // Playback speed (0 = paused; Engine::speedChanged): while it plays the lanes follow the playhead as the Edit
+    // timeline does, by the user's choice only (TimelineOptions::follow, read at the start; off by default). Scrolling
+    // or zooming sideways (wheel, scrollbar, two fingers, keys, Fit) stops that until the next start.
+    void setPlaying(double speed);
+    bool following() const { return m_following; }
     void setTool(Tool tool);
     Tool tool() const { return m_tool; }
     // Smoothing of a pen stroke: frames to each side of the moving average (0 = as drawn)
@@ -143,6 +149,7 @@ private:
     // The drag ends (a release; also a move without the button or the lanes hidden mid-drag): the pen's stroke
     // becomes one undo step (addPoint: the release point too), a dragged point's merge closes
     void endDrag(const QPoint& pos, bool addPoint);
+    void cancelDrag(); // a cancelled touch: nothing of the drag is applied
     void paintPart(class QPainter& p); // what lies in m_dirty
     void drawRuler(class QPainter& p);
     void drawLane(class QPainter& p, int track);
@@ -168,6 +175,12 @@ private:
     bool onLine(int track, const QPoint& pos) const;
     void resetPoint(const KeyHit& hit); // to 0 dB (the level heard)
 
+    void followPlayhead(int frame); // turn the view along with the playing playhead (only from setPlayhead)
+    void stopFollowing() { m_following = false; } // the user moved the view
+    double m_playSpeed = 0;
+    bool m_following = false;
+    int m_followMode = 0; // TimelineOptions::Follow at the play start
+
     Editor* m_editor;
     QPointer<MediaCache> m_cache;
     ViewState m_view;
@@ -186,6 +199,7 @@ private:
 
     enum class Drag { None, Scrub, Pen, Key };
     Drag m_drag = Drag::None;
+    int m_pressUndo = 0; // the undo index at the press (cancelDrag)
     KeyHit m_key;          // the keyframe being dragged
     QString m_keyMerge;    // its drag's undo merge key
     KeyHit m_added;        // the point the last press set (a double click on it joins that undo step)

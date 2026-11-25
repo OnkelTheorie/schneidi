@@ -57,6 +57,7 @@
 #include <QWheelEvent>
 #include "ui/timeline/TimelinePanel.h"
 #include "ui/timeline/TimelineView.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "ui/timeline/ZoomAnchor.h"
 
 #include <QAbstractButton>
@@ -194,6 +195,44 @@ void testWindow(Engine& engine, const QString& audioFile)
         swipe(Qt::ControlModifier);
         CHECK(tracks->view().pxPerFrame != 2.0);
         InputBindings::instance().applyWheelPreset("standard");
+        tracks->setView(before, left);
+    }
+    {
+        // Following the playing playhead (Settings › Timeline, as the Edit timeline): off by default (the view stays);
+        // page: a playhead leaving the view turns a page; a sideways wheel stops it until the next start; centre: the
+        // playhead in the middle; paused: never
+        QSettings().remove("timeline");
+        const double before = tracks->view().pxPerFrame, left = tracks->view().leftFrame;
+        tracks->setView(4.0, 0);
+        const double vis = tracks->laneRect(0).width() / 4.0;
+        tracks->setPlaying(1.0);
+        tracks->setPlayhead(int(vis) + 5);
+        CHECK_EQ(tracks->view().leftFrame, 0.0);
+        CHECK(!tracks->following());
+        tracks->setPlaying(0);
+        TimelineOptions::setFollow(TimelineOptions::Follow::Page);
+        tracks->setPlayhead(int(vis) * 3); // paused: stays
+        CHECK_EQ(tracks->view().leftFrame, 0.0);
+        tracks->setPlayhead(0);
+        tracks->setPlaying(1.0);
+        CHECK(tracks->following());
+        tracks->setPlayhead(int(vis) + 5);
+        CHECK_EQ(tracks->view().leftFrame, double(int(vis) + 5));
+        const QPointF at(StudioTracks::kHeaderW + 50, 40);
+        QWheelEvent side(at, tracks->mapToGlobal(at), QPoint(), QPoint(-120, 0), Qt::NoButton, Qt::NoModifier,
+                         Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(tracks, &side);
+        CHECK(!tracks->following());
+        const double scrolled = tracks->view().leftFrame;
+        tracks->setPlayhead(int(vis) * 10);
+        CHECK_EQ(tracks->view().leftFrame, scrolled);
+        tracks->setPlaying(0);
+        TimelineOptions::setFollow(TimelineOptions::Follow::Center);
+        tracks->setPlaying(1.0);
+        tracks->setPlayhead(int(vis) * 4);
+        CHECK(std::abs(tracks->view().leftFrame - (int(vis) * 4 - vis / 2)) < 1e-6);
+        tracks->setPlaying(0);
+        QSettings().remove("timeline");
         tracks->setView(before, left);
     }
     {

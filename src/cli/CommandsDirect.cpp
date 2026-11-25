@@ -61,6 +61,70 @@ QString freeFile(const QString& dir, const QString& base, const QString& suffix)
 
 Direction::Note note(const QString& key, const QJsonObject& values = {}) { return Direction::makeNote(key, values); }
 
+// The options a recipe knows (help of `direct` + what the app's Direct page sends); anything else is refused, a
+// misspelt option was ignored silently
+const QStringList& recipeOptionKeys(const QString& recipe)
+{
+    static const QHash<QString, QStringList> keys{
+        {"short", {"for", "min_s", "max_s", "aspect", "variants", "hook", "reframe", "game", "audio_stream", "target_lufs",
+                   "captions", "sfx", "language"}},
+        {"highlights", {"length_s", "aspect", "music", "order", "transitions", "game", "audio_stream", "target_lufs"}},
+        {"talk", {"min_pause_s", "pad_s", "fillers", "language", "tracks", "threshold", "target_lufs", "room_tone"}},
+        {"template", {"template", "auto", "game", "target_lufs"}},
+        {"script", {"script", "script_file", "takes", "language", "target_lufs"}}};
+    static const QStringList none;
+    const auto it = keys.find(recipe);
+    return it == keys.end() ? none : *it;
+}
+
+// The options typed once: seconds as a number or text ("15", "15s"), counts as a whole number ("2" too), switches as
+// true/false. Text read as a number was 0 before (a talk cut every 1-frame pause, a short became 1 s long).
+void checkOptions(QJsonObject& o, const QString& recipe)
+{
+    for (auto it = o.begin(); it != o.end();) {
+        if (it.key().startsWith('_')) it = o.erase(it); // internal values of an earlier session (re-suggested)
+        else ++it;
+    }
+    const QStringList& known = recipeOptionKeys(recipe);
+    for (const QString& k : o.keys())
+        if (!known.contains(k))
+            fail("BAD_ARGUMENT", QString("recipe %1 has no option '%2' (options: %3)").arg(recipe, k, known.join(", ")));
+    const auto number = [](const QJsonValue& v, bool* ok) {
+        if (v.isDouble()) return *ok = true, v.toDouble();
+        QString t = v.toString().trimmed().toLower();
+        if (t.endsWith('s')) t.chop(1);
+        return v.isString() ? t.trimmed().toDouble(ok) : (*ok = false, 0.0);
+    };
+    for (const char* k : {"min_s", "max_s", "length_s", "min_pause_s", "pad_s"}) {
+        const QJsonValue v = o.value(k);
+        if (!o.contains(k) || v.isNull()) continue;
+        if (QLatin1String(k) == QLatin1String("length_s") && v.toString().trimmed().toLower() == QLatin1String("all"))
+            continue;
+        bool ok = false;
+        const double x = number(v, &ok);
+        if (!ok || !std::isfinite(x) || x < 0)
+            fail("BAD_ARGUMENT", QString("options.%1 is seconds: a number (15) or text with s (\"15s\")%2")
+                                     .arg(k, QLatin1String(k) == QLatin1String("length_s") ? " or 'all'" : ""));
+        o[k] = x;
+    }
+    for (const char* k : {"variants", "takes"}) {
+        const QJsonValue v = o.value(k);
+        if (!o.contains(k) || v.isNull()) continue;
+        bool ok = false;
+        const double x = v.isDouble() ? (ok = true, v.toDouble()) : v.toString().trimmed().toDouble(&ok);
+        if (!ok || x != std::floor(x)) fail("BAD_ARGUMENT", QString("options.%1 is a whole number (e.g. 2)").arg(k));
+        o[k] = int(x);
+    }
+    for (const char* k : {"fillers", "room_tone", "auto"}) {
+        const QJsonValue v = o.value(k);
+        if (!o.contains(k) || v.isNull() || v.isBool()) continue;
+        const QString t = v.toString().trimmed().toLower();
+        if (t == QLatin1String("true") || t == QLatin1String("on")) o[k] = true;
+        else if (t == QLatin1String("false") || t == QLatin1String("off")) o[k] = false;
+        else fail("BAD_ARGUMENT", QString("options.%1 is true or false").arg(k));
+    }
+}
+
 // The game whose kill feed gives the moments: given (id or "none"), else from the first file's folder or name
 QString gameOf(const QJsonObject& options, const QStringList& files)
 {
@@ -562,7 +626,10 @@ Direction::Session directSuggest(const QJsonObject& a, Context& ctx, CollectedMo
     static const QStringList recipes{"short", "highlights", "talk", "template", "script"};
     if (!recipes.contains(s.recipe))
         fail("UNKNOWN_RECIPE", QString("no recipe '%1' (%2)").arg(s.recipe, recipes.join(", ")));
+    if (a.contains("options") && !a["options"].isObject() && !a["options"].isNull())
+        fail("BAD_ARGUMENT", "options is an object of the recipe's settings, e.g. {min_s:15, max_s:40}");
     s.options = a["options"].toObject();
+    checkOptions(s.options, s.recipe);
     // `short`'s own settings given at the top level count as options too (one call from the command line)
     for (const char* k : {"game", "hook", "audio_stream"})
         if (a.contains(k) && !s.options.contains(k)) s.options[k] = a[k];
@@ -785,6 +852,7 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
     bool created = args["_created"].toBool();
     const bool missing = !project.isEmpty() && !Live::isAppProject(project) && !QFileInfo::exists(project);
     if (project.isEmpty() || missing) {
+        QString freeDir, freeBase; // set when the name is our own free choice (it may be taken before `new` runs)
         if (project.isEmpty()) {
             const QFileInfo first(files.first());
             // In project_dir when given, else the folder for projects (Settings > Project; never the recordings'
@@ -796,7 +864,9 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
                   : Sandbox::active() ? Sandbox::root()
                                      : AppPaths::projectFolder();
             if (!dry && !QDir().mkpath(dir)) fail("SAVE_FAILED", "cannot make the folder " + dir);
-            project = freeFile(dir, first.completeBaseName() + "-" + s.recipe, "." + QString(ProjectFile::Extension));
+            freeDir = dir;
+            freeBase = first.completeBaseName() + "-" + s.recipe;
+            project = freeFile(freeDir, freeBase, "." + QString(ProjectFile::Extension));
         } else if (QFileInfo(project).suffix().isEmpty()) {
             project += "." + QString(ProjectFile::Extension);
         }
@@ -811,8 +881,19 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
                       {"template", game != QLatin1String("none") || streams ? "game" : "neutral"}};
         if (s.material.first().fps > 0) n["fps"] = s.material.first().fps;
         failIfCanceled();
-        *hadBackups = QFileInfo::exists(ProjectFile::backupDir(project));
-        run("new", n);
+        // Another apply can take the free name between choosing and creating: `new` answers EXISTS, the next free
+        // name is tried (a few times) instead of failing the whole apply
+        for (int attempt = 0;; ++attempt) {
+            n["project"] = project;
+            *hadBackups = QFileInfo::exists(ProjectFile::backupDir(project));
+            try {
+                run("new", n);
+                break;
+            } catch (const Error& e) {
+                if (freeDir.isEmpty() || e.code != QLatin1String("EXISTS") || attempt >= 8) throw;
+                project = freeFile(freeDir, freeBase, "." + QString(ProjectFile::Extension));
+            }
+        }
         *madeProject = project;
         created = true;
         done << QString("new project %1 (template %2)").arg(project, n["template"].toString());

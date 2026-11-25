@@ -330,6 +330,11 @@ ProjectData Project::data() const
     d.watchFolders = m_watchFolders;
     d.watchLog = m_watchLog;
     d.watchRevision = m_watchRevision;
+    d.missingAt = m_missingAt;
+    d.playhead = m_playhead;
+    for (const SavedView& v : m_views) // of timelines still there
+        if (std::any_of(m_sequences.cbegin(), m_sequences.cend(), [&](const Sequence& s) { return s.id == v.sequence; }))
+            d.views << v;
     return d;
 }
 
@@ -420,6 +425,9 @@ void Project::load(const ProjectData& d)
     m_brand = d.brand;
     m_stills = d.stills;
     m_direction = d.direction;
+    m_missingAt = d.missingAt;
+    m_views = d.views;
+    m_playhead = d.playhead;
     m_templateInfo = d.templateInfo;
     m_watchFolders = d.watchFolders;
     for (WatchFolder& w : m_watchFolders)
@@ -474,7 +482,7 @@ void Project::edit(const QString& text, const std::function<void(Timeline&)>& fn
     // A clip overwritten in place: its kill feed copy is cut the same way (every overwrite path at once)
     TimelineOps::cutCopiesLikeBases(timeline(), after, [this] { return newClipId(); });
     TimelineOps::resolvePendingLinks(after, [this] { return newLinkId(); }); // leftover pieces from clearRange
-    // The magnetic main track closes what the edit opened on V1 (the same undo step)
+    // The magnetic main track closes what the edit opened on V1 (the same undo step); gaps that were there stay
     const QString gapKept = magnetActive() ? magnetize(after) : QString();
     TimelineOps::unpairBrokenDissolves(timeline(), after);
     TimelineOps::keepFadesApart(timeline(), after);
@@ -506,7 +514,7 @@ QString Project::magnetize(Timeline& after) const
 {
     if (!magnetActive() || !MainTrack::touched(timeline(), after, MainTrack::kMain)) return {};
     QString why;
-    MainTrack::pack(after, MainTrack::kMain, {}, &why);
+    MainTrack::pack(after, MainTrack::kMain, {}, &why, MainTrack::keptGaps(timeline(), after, MainTrack::kMain));
     return why;
 }
 
@@ -1290,9 +1298,14 @@ void Project::setHistoryAside(bool aside)
         connect(m_asideUndo.get(), &QUndoStack::cleanChanged, this, [this] { emit modifiedChanged(isModified()); });
         m_undo = m_asideUndo.get();
         m_asideMediaDirty = std::exchange(m_mediaDirty, false);
+        m_asideLastBinId = m_lastBinId;
+        m_asideBinsUndone = m_binsUndone;
     } else {
         m_undo = &m_ownUndo;
         m_mediaDirty = m_asideMediaDirty;
+        // Bin ids are never reused: one a step still on the user's stack removed is not handed out again
+        m_lastBinId = std::max(m_lastBinId, m_asideLastBinId);
+        m_binsUndone = std::exchange(m_asideBinsUndone, {});
         m_asideUndo.reset(); // the practice steps go
     }
     emit undoStackChanged();

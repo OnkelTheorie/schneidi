@@ -328,6 +328,11 @@ private:
     std::optional<BrandKit> m_brand;
     QVector<GradeStill> m_stills;
     QJsonObject m_direction;
+    QHash<QString, QString> m_missingAt; // ProjectData::missingAt, carried from load to save
+    // How the timelines were shown when the file was read (zoom, scroll, playhead): carried to the next save, so a
+    // CLI/MCP edit of a closed project does not reset them (the app saves its own instead)
+    QVector<SavedView> m_views;
+    int m_playhead = 0;
     std::optional<TemplateInfo> m_templateInfo;
     int m_lastBinId = 0;
     // Files imported (outside the undo history) into a bin that an undo then removed: their bin, so that the redo
@@ -337,6 +342,10 @@ private:
     std::unique_ptr<QUndoStack> m_asideUndo; // while the user's history is aside: the one in use
     QUndoStack* m_undo = &m_ownUndo;
     bool m_asideMediaDirty = false;
+    // The user's bin counter and m_binsUndone while the history is aside: the load() of the practice project and of
+    // the user's project after it recount them, while the user's undo steps (with removed bins) stay
+    int m_asideLastBinId = 0;
+    QHash<QString, int> m_asideBinsUndone;
     quint64 m_generation = 0;
     int m_lastClipId = 0;
     int m_lastLinkId = 0;

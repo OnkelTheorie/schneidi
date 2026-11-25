@@ -33,6 +33,7 @@
 #include "app/PasteAttributesDialog.h"
 #include "core/Loudness.h"
 #include "app/ProjectSettingsDialog.h"
+#include "app/SettingsDialog.h"
 #include "core/Accents.h"
 #include "core/Editor.h"
 #include "core/EffectRegistry.h"
@@ -81,6 +82,7 @@
 #include "ui/comp/CompPage.h"
 #include "ui/timeline/TimelineView.h"
 #include "ui/timeline/TimelineOptions.h"
+#include "ui/touch/Touch.h"
 
 #include <QAction>
 #include <QCursor>
@@ -219,14 +221,21 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     applyCenterPlayhead(); // (the desktop: only when set to "on")
     qApp->installEventFilter(this); // Mouse side buttons -> actions (keybindings.json, section "mouse")
 
-    // Automatic backup every minute (only on changes), separate from the project file
+    // Automatic backup every minute or as the user chose (Settings › General › Projects; only on changes), separate
+    // from the project file
     m_autosaveTimer = new QTimer(this);
     connect(m_autosaveTimer, &QTimer::timeout, this, &MainWindow::autosave);
-    m_autosaveTimer->start(60 * 1000);
+    m_autosaveTimer->start(SettingsDialog::storedAutosaveSeconds() * 1000);
 #ifdef Q_OS_ANDROID
-    // Going to the background may be the end (the system frees the memory without asking): the backup now
+    // Going to the background may be the end (the system frees the memory without asking): the backup now.
+    // And playback pauses (a running voice-over take ends and is placed, as with Space): the sound runs on its own
+    // threads, it would go on behind the home screen, another app or a call while the picture stands still. Qt for
+    // Android reports Inactive on the activity's onPause (not in split screen, where the app stays visible and Active)
+    // and Suspended on onStop. It starts again only by the user (no resume on Active). The desktop keeps playing.
     connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
-        if (state != Qt::ApplicationActive && !m_autosaveDisabled) autosave();
+        if (state == Qt::ApplicationActive) return;
+        if (m_engine && m_engine->speed() != 0.0) m_engine->pause();
+        if (!m_autosaveDisabled) autosave();
     });
 #endif
     // Outside changes of the project file (schneidi-cli): QSaveFile replaces the file, so the watcher loses it
@@ -360,6 +369,8 @@ void MainWindow::buildUi()
         if (m_engine->timelinePositions()) tv->setPlayhead(f);
     });
     TimelineOptions::applyEditDefaults(); // the user's still and transition lengths (Settings › Timeline)
+    // The tracks' height chosen in Settings › Timeline (medium = the view's own 64/52); touch mode keeps its taller rows
+    if (!Touch::modeActive()) setTrackHeightStep(TimelineOptions::trackHeight());
     // Snapping on/off is remembered across starts (test runs leave the settings alone)
     connect(tv, &TimelineView::snappingChanged, this, [this](bool on) {
         if (!m_autosaveDisabled) TimelineOptions::setSnapping(on);
@@ -1472,8 +1483,9 @@ void MainWindow::speechDialog()
     // The words as the file's transcript (Transcript panel, op 'captions' later), as the CLI op 'speak' does
     if (!r.words.isEmpty())
         m_project->setTranscript(m.path, MediaTranscript{0, Speech::voiceLanguage(Extensions::voiceName(r.voice)), r.words});
-    QUndoStack* undo = m_project->undoStack();
-    undo->beginMacro(T("Sprechertext"));
+    // No macro up front (it deleted the redo steps also when the voice found no place): the steps become one after
+    m_project->closeMerge();
+    const int before = m_project->undoStack()->index();
     const int len = m_editor->placeSourceRange(m.path, 0, m.length - 1, at, track);
     if (len > 0 && dlg.captions()) {
         // Word captions of this clip only (like the Transcript panel's, karaoke style)
@@ -1489,7 +1501,7 @@ void MainWindow::speechDialog()
         if (const QVector<SubtitleCue> cues = Captions::fromWords(words, o); !cues.isEmpty())
             m_editor->addCaptions(cues, T("Wort-Untertitel"), style);
     }
-    undo->endMacro();
+    if (m_project->undoStack()->index() > before) m_project->combineSteps(before, T("Sprechertext"));
 }
 
 void MainWindow::exportSubtitlesDialog()

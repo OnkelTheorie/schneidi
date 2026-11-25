@@ -19,7 +19,10 @@
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
+#include "engine/RenderQueue.h"
 #include "ui/FrameView.h"
+#include "ui/RenderQueuePanel.h"
+#include "ui/ViewerOverlay.h"
 #include "ui/MediaPool.h"
 #include "ui/comp/CompCanvas.h"
 #include "ui/studio/StudioTracks.h"
@@ -52,6 +55,7 @@
 #include <QSpinBox>
 #include <QStyleHints>
 #include <QTest>
+#include <QUndoStack>
 #include <QVBoxLayout>
 #include <cmath>
 
@@ -1323,6 +1327,121 @@ void testReviewFixes()
     }
 }
 
+// x-phone 8: a cancelled touch commits nothing outside the timeline either; the render queue reorders by finger
+class StepOverlay : public ViewerOverlay {
+public:
+    explicit StepOverlay(Project* p) : m_project(p) {}
+    void paint(QPainter&, const QRectF&) override {}
+    bool mousePress(QMouseEvent*, const QRectF&) override { return true; }
+    bool mouseMove(QMouseEvent* e, const QRectF&) override
+    {
+        const int x = int(e->position().x());
+        m_project->edit("overlay drag", [x](Timeline& tl) { TimelineOps::findClip(tl, 2)->start = 1000 + x; }, "overlay");
+        return true;
+    }
+    bool mouseRelease(QMouseEvent*, const QRectF&) override
+    {
+        m_project->closeMerge();
+        ++released;
+        return true;
+    }
+    QUndoStack* undoStack() const override { return m_project->undoStack(); }
+    int released = 0;
+
+private:
+    Project* m_project;
+};
+
+void testCancelOutsideTimeline()
+{
+    {
+        // The viewer overlay (titles, shapes, masks, drawing): its drag edits as it goes; cancelled -> taken back
+        Fixture f;
+        FrameView view;
+        view.resize(640, 360);
+        view.show();
+        view.setFrame(card({1920, 1080}));
+        StepOverlay overlay(&f.project);
+        view.setOverlay(&overlay);
+        QApplication::processEvents();
+        const int undo = f.project.undoStack()->index();
+        const int start = TimelineOps::findClip(f.project.timeline(), 2)->start;
+        QTest::touchEvent(&view, g_touch).press(0, {200, 180}, &view);
+        for (int i = 1; i <= 5; ++i) QTest::touchEvent(&view, g_touch).move(0, QPoint(200 + 20 * i, 180), &view);
+        CHECK(TimelineOps::findClip(f.project.timeline(), 2)->start != start); // (the drag ran)
+        QTouchEvent cancel(QEvent::TouchCancel, g_touch);
+        QApplication::sendEvent(&view, &cancel);
+        CHECK_EQ(TimelineOps::findClip(f.project.timeline(), 2)->start, start);
+        CHECK_EQ(f.project.undoStack()->index(), undo);
+        CHECK_EQ(overlay.released, 1); // its state ended once (the release after the cancel finds no drag)
+        pauseTaps();
+        swipe(&view, {200, 180}, {300, 180}); // and a normal drag still works: one step
+        CHECK_EQ(f.project.undoStack()->index(), undo + 1);
+        view.setOverlay(nullptr);
+    }
+    {
+        // Studio's pen: a cancelled stroke draws nothing
+        Project project;
+        Selection sel;
+        Editor editor(&project, &sel);
+        project.addMedia(MediaInfo{"/x/a.mp4", "a.mp4", 3000, true, false, false});
+        Timeline tl;
+        tl.video.resize(1);
+        tl.audio.resize(1);
+        tl.audio[0].clips << clip(1, 0, 400);
+        project.load(ProjectData{ProjectFormat{}, 0, project.media(), {}, tl, 5, 0});
+        StudioTracks tracks(&editor, nullptr);
+        tracks.resize(780, 400);
+        tracks.show();
+        CHECK(QTest::qWaitForWindowExposed(&tracks));
+        tracks.setView(1.0, 0);
+        tracks.setTool(StudioTracks::Tool::Pen);
+        const int undo = project.undoStack()->index();
+        const QRect lane = tracks.laneRect(0);
+        const QPoint a(int(tracks.xOf(50)), lane.top() + 8), b(int(tracks.xOf(300)), lane.bottom() - 8);
+        QTest::touchEvent(&tracks, g_touch).press(0, a, &tracks);
+        for (int i = 1; i <= 8; ++i) QTest::touchEvent(&tracks, g_touch).move(0, a + (b - a) * i / 8, &tracks);
+        QTouchEvent cancel(QEvent::TouchCancel, g_touch);
+        QApplication::sendEvent(&tracks, &cancel);
+        CHECK_EQ(project.undoStack()->index(), undo);
+        pauseTaps();
+        swipe(&tracks, a, b, 8); // the same stroke lifted: one step
+        CHECK_EQ(project.undoStack()->index(), undo + 1);
+    }
+    {
+        // The render queue: long press on a card, move, lift - the queue is reordered (the drop has no source())
+        Project p;
+        QVector<RenderJob> q;
+        for (int id = 1; id <= 3; ++id) {
+            RenderJob j;
+            j.id = id;
+            j.path = QString("/tmp/x%1.mp4").arg(id);
+            q << j;
+        }
+        p.setRenderQueue(q);
+        RenderQueue queue(&p);
+        RenderQueuePanel panel(&p, &queue);
+        panel.resize(340, 700);
+        panel.show();
+        CHECK(QTest::qWaitForWindowExposed(&panel));
+        auto* list = panel.findChild<QListWidget*>();
+        if (!CHECK(list && list->count() == 3)) return;
+        QWidget* vp = list->viewport();
+        const QRect first = list->visualItemRect(list->item(0));
+        const QRect last = list->visualItemRect(list->item(2));
+        const QPoint from = first.center(), to(last.center().x(), last.bottom() - 3);
+        QTest::touchEvent(vp, g_touch).press(0, from, vp);
+        QTest::qWait(Touch::longPressMs() + 150);
+        for (int i = 1; i <= 6; ++i) QTest::touchEvent(vp, g_touch).move(0, from + (to - from) * i / 6, vp);
+        CHECK(TouchDrag::active());
+        QTest::touchEvent(vp, g_touch).release(0, to, vp);
+        QApplication::processEvents(); // (the move comes after the drag)
+        QVector<int> ids;
+        for (const RenderJob& j : p.renderQueue()) ids << j.id;
+        CHECK_EQ(ids, (QVector<int>{2, 3, 1}));
+    }
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -1358,5 +1477,6 @@ int main(int argc, char** argv)
     testMomentumAndAxis();
     testPackTrack();
     testReviewFixes();
+    testCancelOutsideTimeline();
     return Check::result();
 }

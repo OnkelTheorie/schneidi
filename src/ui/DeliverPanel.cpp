@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+#include "ui/timeline/TimelineOptions.h"
 #include "ui/DeliverPanel.h"
 #include "core/NestedLoop.h"
 #include "ui/WheelGuard.h"
@@ -9,7 +10,6 @@
 #include "core/ExportCheck.h"
 #include "core/SourceBitrate.h"
 #include "core/Project.h"
-#include "core/Timecode.h"
 #include "core/TimelineOps.h"
 #include "core/TranscriptCut.h"
 #include "engine/AudioAnalysis.h"
@@ -46,7 +46,10 @@
 #include <QScrollBar>
 #include <QScrollArea>
 #ifdef Q_OS_ANDROID
+#include <QCoreApplication>
+#include <QFutureWatcher>
 #include <QJniObject>
+#include <QtCore/private/qandroidextras_p.h>
 #endif
 #include <QEvent>
 #include <algorithm>
@@ -117,31 +120,45 @@ public:
 
 QString DeliverPanel::defaultFolder()
 {
-    // The folder the last export went to; else the videos folder. Android: the shared one (/storage/emulated/0/
-    // Movies, the gallery sees it), not the app's own (writableLocation's first answer, hidden from the user)
-    const QString last = QSettings().value("render/folder").toString();
+    // The folder the last export went to; else the videos folder. Android: no choice (exportCollection), the shared
+    // Movies folder's schneidi folder for a video
 #ifdef Q_OS_ANDROID
-    // (an app-private folder remembered from an older build: hidden from the gallery and the user, not kept)
-    const auto appPrivate = [](const QString& dir) {
-        return dir.contains("/Android/data/") || dir.contains("/data/user/") || dir.contains("/data/data/");
-    };
-    if (!last.isEmpty() && QFileInfo(last).isDir() && !appPrivate(last)) return last;
-    const QStringList all = QStandardPaths::standardLocations(QStandardPaths::MoviesLocation);
-    for (const QString& dir : all)
-        if (!appPrivate(dir)) return dir;
-    // Qt listed only the app's own folders: Android's shared Movies folder from the system
-    const QJniObject kind = QJniObject::getStaticObjectField<jstring>("android/os/Environment", "DIRECTORY_MOVIES");
+    return androidFolder(RenderSettings());
+#else
+    const QString last = QSettings().value("render/folder").toString();
+    if (!last.isEmpty() && QFileInfo(last).isDir()) return last;
+    return QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
+#endif
+}
+
+QString DeliverPanel::exportCollection(const RenderSettings& s)
+{
+    if (s.subtitles == RenderSettings::SrtFile || s.subtitles == RenderSettings::VttFile) return QStringLiteral("Download");
+    switch (renderFormat(s.format).kind) {
+    case RenderKind::Audio: return QStringLiteral("Music");
+    case RenderKind::Gif:
+    case RenderKind::ImageSequence: return QStringLiteral("Pictures");
+    case RenderKind::Video: break;
+    }
+    return QStringLiteral("Movies");
+}
+
+QString DeliverPanel::androidFolder(const RenderSettings& s)
+{
+    const QString collection = exportCollection(s);
+#ifdef Q_OS_ANDROID
+    // Android's shared folder of that kind (/storage/emulated/0/Movies …: the gallery and file apps see it), not the
+    // app's own (QStandardPaths' first answer, hidden from the user)
     const QJniObject movies = QJniObject::callStaticObjectMethod(
         "android/os/Environment", "getExternalStoragePublicDirectory", "(Ljava/lang/String;)Ljava/io/File;",
-        kind.object<jstring>());
-    if (movies.isValid()) {
-        const QString path = movies.callObjectMethod<jstring>("getAbsolutePath").toString();
-        if (!path.isEmpty()) return path;
-    }
+        QJniObject::fromString(collection).object<jstring>());
+    QString base = movies.isValid() ? movies.callObjectMethod<jstring>("getAbsolutePath").toString() : QString();
+    if (base.isEmpty()) base = QStringLiteral("/storage/emulated/0/") + collection;
+    return QDir(base).filePath(QStringLiteral("schneidi"));
 #else
-    if (!last.isEmpty() && QFileInfo(last).isDir()) return last;
+    // (elsewhere: the same layout under the user's home, for tests and a look at the rule)
+    return QDir(QDir::homePath()).filePath(collection + QStringLiteral("/schneidi"));
 #endif
-    return QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
 }
 
 DeliverPanel::DeliverPanel(Project* project, QWidget* parent, RenderQueue* queue)
@@ -168,6 +185,11 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent, RenderQueue* queue
     m_name = new QLineEdit;
     m_name->setObjectName("renderName");
     m_name->setToolTip(T("Name der Datei. Leer oder unverändert: der Name der geöffneten Timeline"));
+#ifdef Q_OS_ANDROID
+    // A folder remembered by an older build (the system's folder picker: a content:// address no export can write to,
+    // or a typed path): not used any more, forgotten (the place is fixed now, exportCollection)
+    QSettings().remove("render/folder");
+#endif
     m_folder = new QLineEdit(QDir::toNativeSeparators(defaultFolder()));
     m_folder->setObjectName("renderFolder");
     // A folder typed by hand is the user's choice too (a review render or a preset never sets it)
@@ -182,6 +204,14 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent, RenderQueue* queue
     auto* folderRow = new QHBoxLayout;
     folderRow->addWidget(m_folder, 1);
     folderRow->addWidget(browseBtn);
+#ifdef Q_OS_ANDROID
+    // Android: the fixed place of the chosen kind of export, shown (it follows the format and the subtitle choice)
+    browseBtn->hide();
+    m_folder->setReadOnly(true);
+    m_folder->setToolTip(T("Auf Android landet jeder Export an einem festen Ort, den Galerie und Dateien-App sehen: "
+                           "Videos in Movies, Ton in Music, Bilder in Pictures, mit Untertiteldatei in Download "
+                           "(je im Ordner schneidi)."));
+#endif
 
     m_format = new QComboBox;
     m_format->setObjectName("renderFormat");
@@ -290,6 +320,7 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent, RenderQueue* queue
                            "sind ins Bild eingebrannt. Die Datei bekommt den Zusatz „Prüf-Render“; der normale Export "
                            "bleibt ohne Markierungen."));
     m_range = new QComboBox;
+    m_range->setObjectName("renderRange");
     m_range->addItem(T("Ganze Timeline"));
     m_range->addItem(T("In/Out-Bereich"));
     connect(project, &Project::timelineChanged, this, &DeliverPanel::updateRange);
@@ -463,7 +494,9 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent, RenderQueue* queue
                 const QString suffix = " - " + T("Prüf-Render");
                 if (j.review && name.endsWith(suffix)) name.chop(suffix.size());
                 m_name->setText(name);
+#ifndef Q_OS_ANDROID
                 m_folder->setText(QDir::toNativeSeparators(fi.absolutePath()));
+#endif
             }
     });
 
@@ -724,6 +757,9 @@ void DeliverPanel::updateControls()
     if (!video && m_subtitles->currentIndex() == 1) m_subtitles->setCurrentIndex(0);
     m_embed->setEnabled(f.kind == RenderKind::Video);
     m_review->setEnabled(f.kind == RenderKind::Video); // the marks need a video file
+#ifdef Q_OS_ANDROID
+    m_folder->setText(androidFolder(settings())); // (the fixed place of this kind of export)
+#endif
     // A review render is always 540 p and encodes every frame: resolution and smart render do not apply to it
     const bool review = m_review->isEnabled() && m_review->isChecked();
     m_resolution->setEnabled(video && !review);
@@ -831,16 +867,22 @@ void DeliverPanel::updateName()
     m_autoName = name;
 }
 
+void DeliverPanel::refreshTimes()
+{
+    updateRange();
+    if (m_queuePanel) m_queuePanel->refreshTimes();
+}
+
 void DeliverPanel::updateRange()
 {
     // Range only selectable if In or Out is set; then preselected automatically
     const Timeline& tl = m_project->timeline();
     const bool has = tl.markIn >= 0 || tl.markOut >= 0;
-    const int fps = m_project->fps();
+    const double fps = m_project->frameRate();
     m_range->setItemText(1, has ? T("In/Out-Bereich") : T("In/Out-Bereich (nicht gesetzt)"));
     m_range->setToolTip(has ? QString("%1 – %2")
-                                  .arg(tl.markIn >= 0 ? Timecode::format(tl.markIn, fps) : T("Anfang"),
-                                       tl.markOut >= 0 ? Timecode::format(tl.markOut, fps) : T("Ende"))
+                                  .arg(tl.markIn >= 0 ? TimelineOptions::formatTime(tl.markIn, fps) : T("Anfang"),
+                                       tl.markOut >= 0 ? TimelineOptions::formatTime(tl.markOut, fps) : T("Ende"))
                             : T("In/Out mit I und O in der Timeline setzen"));
     auto* model = qobject_cast<QStandardItemModel*>(m_range->model());
     if (auto* item = model ? model->item(1) : nullptr) item->setEnabled(has);
@@ -914,7 +956,11 @@ RenderJob DeliverPanel::makeJob() const
     name = renderFileBaseName(name.isEmpty() ? m_project->sequenceName(m_project->currentSequence()) : name);
     job.review = m_review->isChecked() && m_review->isEnabled();
     if (job.review) name = renderFileBaseName(name + " - " + T("Prüf-Render")); // never over the real export
+#ifdef Q_OS_ANDROID
+    job.path = QDir(androidFolder(job.settings)).absoluteFilePath(name + ext); // (never a typed or picked folder)
+#else
     job.path = QDir(QDir::fromNativeSeparators(m_folder->text().trimmed())).absoluteFilePath(name + ext);
+#endif
     const int idx = currentPreset();
     if (idx >= 0 && idx < m_presets.size()) job.preset = m_presets[idx].name;
     if (!job.settings.audioOnly()) job.size = m_resolution->currentData().toSize();
@@ -938,6 +984,34 @@ RenderJob DeliverPanel::makeJob() const
 
 bool DeliverPanel::addToQueue(bool confirm)
 {
+#ifdef Q_OS_ANDROID
+    // Android 9 and 10: writing into the shared folders (androidFolder) needs WRITE_EXTERNAL_STORAGE, granted at run
+    // time (declared up to API 29 in the manifest; from Android 11 an app may create its own files there without it).
+    // Asked here, before the first export; granted -> added then, refused -> told why nothing was added.
+    if (QNativeInterface::QAndroidApplication::sdkVersion() <= 29) {
+        const QString perm = QStringLiteral("android.permission.WRITE_EXTERNAL_STORAGE");
+        if (QtAndroidPrivate::checkPermission(perm).result() != QtAndroidPrivate::Authorized) {
+            auto* watch = new QFutureWatcher<QtAndroidPrivate::PermissionResult>(this);
+            connect(watch, &QFutureWatcherBase::finished, this, [this, watch, confirm] {
+                const bool ok = watch->result() == QtAndroidPrivate::Authorized;
+                watch->deleteLater();
+                if (ok) {
+                    addToQueue(confirm);
+                    return;
+                }
+                m_status->setText(QString());
+                QMessageBox::warning(this, T("Zur Render-Warteschlange hinzufügen"),
+                                     T("Ohne die Erlaubnis für Dateien kann schneidi auf diesem Android (9 oder 10) "
+                                       "nichts in %1 speichern. Erlauben lässt sie sich beim nächsten Versuch oder in "
+                                       "den Android-Einstellungen unter Apps › schneidi › Berechtigungen.")
+                                         .arg(androidFolder(settings())));
+            });
+            watch->setFuture(QtAndroidPrivate::requestPermission(perm));
+            m_status->setText(T("Erlaubnis zum Speichern wird angefragt …"));
+            return false;
+        }
+    }
+#endif
     const RenderJob job = makeJob();
     const QString file = QFileInfo(job.path).fileName();
     if (Exporter::readsFile(m_project->renderTimeline(job.sequence), job.path)) {
@@ -1070,10 +1144,10 @@ bool DeliverPanel::runCheck()
     std::stable_sort(issues.begin(), issues.end(), [](const ExportCheck::Issue& a, const ExportCheck::Issue& b) {
         return a.severity != b.severity ? int(a.severity) < int(b.severity) : a.from < b.from;
     });
-    const int fps = m_project->fps();
+    const double fps = m_project->frameRate();
     for (const ExportCheck::Issue& i : issues) {
-        // Time first: the message may wrap
-        const QString at = i.from >= 0 ? Timecode::format(i.from, fps) + "  " : QString();
+        // Time first (as the user shows times, Settings › Timeline): the message may wrap
+        const QString at = i.from >= 0 ? TimelineOptions::formatTime(i.from, fps) + "  " : QString();
         auto* item = new QListWidgetItem(QString::fromUtf8("● ") + at + i.message, m_checkList);
         item->setToolTip(i.message);
         item->setForeground(i.severity == ExportCheck::Severity::Error     ? Theme::warning

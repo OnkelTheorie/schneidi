@@ -12,6 +12,8 @@ int s_depth = 0; // (GUI thread only)
 Guard::Guard() { ++s_depth; }
 Guard::~Guard() { --s_depth; }
 
+bool guarded() { return s_depth > 0; }
+
 bool running()
 {
     // loopLevel(): 1 = the main loop (app.exec); 0 = none yet (tests call rebuildUi directly)

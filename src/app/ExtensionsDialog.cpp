@@ -67,6 +67,13 @@ ExtensionsDialog::ExtensionsDialog(QWidget* parent) : QDialog(parent)
         ++r;
     }
     lay->addLayout(grid);
+#ifdef Q_OS_ANDROID
+    // (the catalog is empty here: Extensions::catalog)
+    m_programNote = new QLabel(T("Auf Android gibt es keine Erweiterungen: die Programme dafür laufen nur auf Windows "
+                                 "und Linux."));
+    m_programNote->setWordWrap(true);
+    lay->addWidget(m_programNote);
+#else
     if (!Extensions::find("whisper")) {
         // No ready-made whisper for this system (e.g. Linux on ARM): an own whisper-cli on PATH works too
         m_programNote = new QLabel(T("Für dieses System gibt es kein fertiges Whisper-Programm. Ein selbst gebautes "
@@ -74,6 +81,7 @@ ExtensionsDialog::ExtensionsDialog(QWidget* parent) : QDialog(parent)
         m_programNote->setWordWrap(true);
         lay->addWidget(m_programNote);
     }
+#endif
 
     m_progressLabel = new QLabel;
     m_progress = new QProgressBar;

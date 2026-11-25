@@ -36,6 +36,9 @@ namespace Cli::detail {
 QString absolute(const QString& path);
 // "cannot read media: <path> (<why>)" for a file Engine::probe found nothing playable in (MediaProbe::whyUnreadable)
 QString unreadableMessage(const QString& path);
+// The key to look a compositing recipe up with (CompRecipes::find opens any existing file with a separator or ending
+// in .json): in a work folder such a key that is no recipe's id or name goes through the sandbox (EditOpsComp.cpp)
+QString recipeKey(const QString& key);
 
 // ---------- Times ----------
 
@@ -116,6 +119,7 @@ public:
     void selectTimeline(const QJsonValue& v, bool open = false);
     int sequenceOf(const QJsonValue& v) const; // sequence id from an id or a name; throws if there is none
     QString save(); // path of the backup copy (empty = none)
+    bool inApp() const { return m_inApp; } // edits the app's project itself (not a file or a copy)
     // EMPTY for the timeline looked at, naming it and the timelines that have clips (on a file the open timeline
     // stays the user's: an AI that made a new one has to pass 'timeline')
     [[noreturn]] void failEmpty() const;
@@ -289,6 +293,12 @@ QVector<int> onTracks(Session& s, const QVector<int>& ids, TrackKind kind, const
 // linked:true = all linked partners of this kind, linked:false = strictly the given clips. Fails if none is left
 QVector<int> clipsOn(Session& s, const QJsonObject& op, TrackKind kind, const char* what);
 int timeOf(Session& s, const QJsonObject& op, const char* key, int fallback = -1);
+// A length or source time (fade in/out, length, in/out of a file): frames, "2s", a timecode - not a timeline
+// position {clip, …} (timeOf), which resolved to a place on the timeline used as a length
+int spanOf(Session& s, const QJsonObject& op, const char* key, int fallback = -1);
+// One range of a `ranges` list: a [from, to] pair, {from, to, ...} (silence, transcribe words, cut_pauses' list) or
+// {start, end}; false for anything else (the caller names the op in its error)
+bool rangeEnds(const QJsonValue& r, QJsonValue* from, QJsonValue* to);
 double numberOf(const QJsonObject& op, const char* key, double lo, double hi);
 QColor colorOf(const QJsonValue& v, const QString& what);
 // A picture shape (EditOpsLook.cpp): '4:3', a number (width / height, 0.1..10) or 'file' (0 = the file's own shape)

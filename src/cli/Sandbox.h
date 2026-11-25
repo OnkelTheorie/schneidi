@@ -10,6 +10,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <functional>
+
 class Project;
 struct ProjectData;
 
@@ -20,25 +22,45 @@ struct Settings {
     QStringList maps;  // "client prefix=server prefix"
     bool app = true;   // live connection to the desktop app ("@app", `app`); off with a root (the app does not
                        // know the work folder)
+    bool libraryWrites = false; // --allow-library-writes: with a root, clients may change the server user's own
+                                // template/recipe libraries and global brand kit
 };
 
-// Throws Error (BAD_ARGUMENT) for a root that is not a folder or a map without '='
+// Throws Error (BAD_ARGUMENT) for a root that is not a folder or a map without '='. With a root, trust in custom code
+// given here is not remembered for the desktop app (CodeTrust::setSessionOnly)
 void configure(const Settings& s);
 bool active();       // a root is set
 QString root();      // absolute, clean
 bool appAllowed();
+// The server user's own libraries (content templates, compositing recipes) and global brand kit are theirs, not the
+// work folder's: with a root they are read-only unless allowed (Settings::libraryWrites). Throws READ_ONLY, `what`
+// names the change ("templates remove")
+void checkLibraryWrite(const QString& what);
+bool libraryWritesAllowed();
 
 // A path from a client -> absolute path on this computer: mapped, relative ones in the root (or the working
 // directory). Throws OUTSIDE_ROOT if it leaves the root, also through a symlink, HIDDEN for a hidden file or folder in
 // it (or something inside one); "@app" stays (APP_OFF if not allowed)
 QString resolve(const QString& path);
+// A key of a library a client gives (content template, compositing recipe): an id or name, or a file. With a root, a
+// key that names a file - absolute (also after --map), a file URL, with a separator or ending in ".<suffix>" - and is
+// no id or name `inLibrary` knows goes through resolve() like a path parameter (OUTSIDE_ROOT, HIDDEN) and comes back
+// absolute; any other key (or no root) comes back as given. The libraries open any existing file named so.
+QString libraryKey(const QString& key, const QStringList& suffixes, const std::function<bool(const QString&)>& inLibrary);
+bool namesFile(const QString& key, const QStringList& suffixes);
 // Only the path mapping (--map) of a client's path, nothing resolved or checked; unmapped paths stay as given
 QString mapPath(const QString& path);
 // Path relative to the root ("" = the root itself); null if outside (or no root)
 QString relative(const QString& absolutePath);
 // A hidden file or folder in the work folder, or something in one (".ssh/id_rsa", ".config/…"): the server's own file
 // access (/files, `files`, `upload`) leaves them out, as its listings do
+// On Windows also what Windows marks hidden or system (AppData, NTUSER.DAT, desktop.ini) and windowsProtected() by name
 bool hidden(const QString& absolutePath);
+// A path relative to the work folder that leads into a place Windows runs or reads settings from, by name (a profile
+// as work folder): "AppData" (the Startup folder, every program's settings), its old names "Application Data" and
+// "Local Settings", "Start Menu"; any case, with what Windows ignores at the end of a name (dots, spaces, ":stream").
+// Pure, on every system; hidden() uses it on Windows.
+bool windowsProtected(const QString& relativePath);
 // With a root: an existing file that makes MLT or FFmpeg read other files or addresses when opened as media (MLT XML,
 // .kdenlive, m3u/HLS playlists, ffconcat, SDP, DASH manifests), by name or content; a path inside the root would
 // otherwise read anything. checkMedia() throws BAD_MEDIA for one. Only a clear early answer for the known kinds: the

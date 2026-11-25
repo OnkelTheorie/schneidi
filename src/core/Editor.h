@@ -261,7 +261,11 @@ public:
     // The main track as phone editors keep it (magnetic): its clips back to back from frame 0 in `order` (clip ids;
     // empty = by their start), clips linked to them (the same linkId, on other tracks) move along (MainTrack::pack).
     // One undo step `text`; nothing when nothing moves, a refusal is told (notice). Returns whether something moved.
-    bool packTrack(TrackRef ref, const QVector<int>& order = {}, const QString& text = {});
+    // `keep`: gaps left before clips (MainTrack::pack); empty = every gap closes (the switch turned on).
+    bool packTrack(TrackRef ref, const QVector<int>& order = {}, const QString& text = {}, const QHash<int, int>& keep = {});
+    // The phone's hold-and-drag reorder of V1 (`order`: clip ids): the gaps that were there stay before their clips,
+    // the `moved` clips close the gap before them. One undo step `text`.
+    bool reorderMain(const QVector<int>& order, const QVector<int>& moved, const QString& text);
     // The magnetic main track (core/MainTrack.h; desktop "Lücken automatisch schließen (Spur 1)", phone "Hauptspur
     // magnetisch"), off by default. On: an edit that changes V1 closes its gaps in the same undo step (Project::edit);
     // placing onto V1 (addMediaAt, placeSourceRange, paste, a title dropped there, clips moved onto it) pushes the
@@ -807,6 +811,8 @@ private:
     // a move (the plain move, then Project::edit closes V1).
     bool moveOnMain(const QVector<int>& ids, int deltaFrames, TrackKind kind, int trackDelta,
                     const QVector<int>& cues, int cueDelta);
+    // A reorder of V1: the gaps before its clips stay, the `moved` ones' close (for MainTrack::pack's keep)
+    static QHash<int, int> keptOnReorder(const Track& main, const QVector<int>& moved);
     // Magnetic main track, a V1 clip made longer: the timeline with room after (or before) it, *at/*room the gap
     // opened (MainTrack::openGap); nullopt = not such a trim (or no room)
     std::optional<Timeline> mainTrimRoom(int clipId, TimelineOps::Edge edge, int delta, int* at = nullptr,

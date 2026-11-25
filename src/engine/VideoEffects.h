@@ -35,10 +35,13 @@ void glow(uint8_t* rgba, int width, int height, double blur, double strength = 1
 // Color halftone: per channel dots of its ink (cyan for red …) on rotated grids, black in that channel, the picture
 // between them (dot 0..1 = cell size, angles 0..1 = 0..360°)
 void halftone(uint8_t* rgba, int width, int height, double dot, double cyan, double magenta, double yellow);
-// Noise per channel (amount 0..1), different on every frame (seed)
-void noise(uint8_t* rgba, int width, int height, double amount, uint32_t seed);
-// Every other line at half brightness, like an interlaced TV picture
-void scanlines(uint8_t* rgba, int width, int height);
+// Noise per channel (amount 0..1), different on every frame (seed). The grain is one project pixel: `scale` = picture
+// pixels per project pixel (a preview at half size averages the grain of the 2x2 project pixels each pixel covers,
+// as the export scaled down shows it; 1 = one grain per pixel)
+void noise(uint8_t* rgba, int width, int height, double amount, uint32_t seed, double scale = 1.0);
+// Every other line at half brightness, like an interlaced TV picture: every other PROJECT line (`scale` = picture
+// pixels per project pixel; a pixel covering both kinds of line gets their mean, as the export scaled down)
+void scanlines(uint8_t* rgba, int width, int height, double scale = 1.0);
 // Broken sync: the picture rolled up by offset 0..1 of its height, the top coming in again from the bottom
 void noSync(uint8_t* rgba, int width, int height, double offset);
 
@@ -76,8 +79,11 @@ struct Params {
     std::function<QColor(const char*)> color;
     std::function<QString(const char*)> text;
 };
-// Applies the own effect effectId (isOwn) to an RGBA picture; frameNo seeds per-frame patterns (noise). false = not own.
-bool apply(const QString& effectId, uint8_t* rgba, int width, int height, const Params& params, int64_t frameNo);
+// Applies the own effect effectId (isOwn) to an RGBA picture; frameNo seeds per-frame patterns (noise). `scale`:
+// picture pixels per project pixel (effects with a pixel pitch - noise, scanlines - keep it in project pixels, so the
+// preview at another size shows what the export shows). false = not own.
+bool apply(const QString& effectId, uint8_t* rgba, int width, int height, const Params& params, int64_t frameNo,
+           double scale = 1.0);
 // Gaussian blur (three box blurs) of an RGBA picture with straight alpha, sigma in pixels
 void gaussian(uint8_t* rgba, int width, int height, double sigma);
 // The same blur on one 16-bit plane (e.g. a premultiplied alpha 0..65535: gaussian's values for that channel)

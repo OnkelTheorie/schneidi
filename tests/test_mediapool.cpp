@@ -150,6 +150,21 @@ int main(int argc, char** argv)
         CHECK_EQ(binOf(q, "f.mp4"), 0); // where it was before the move
         u->redo();
         CHECK_EQ(binOf(q, "f.mp4"), bin);
+        // A tour (history aside, the practice project and then the user's loaded): a bin removed by a step still on
+        // the user's stack keeps its id to itself (load() recounted the ids and handed it out again)
+        const int gone = q.addBin(0, "Weg");
+        q.removeBin(gone);
+        CHECK(!q.bin(gone));
+        const ProjectData user = q.data();
+        q.setHistoryAside(true);
+        q.load(ProjectData{});
+        q.load(user);
+        q.setHistoryAside(false);
+        const int next = q.addBin(0, "Danach");
+        CHECK(next > gone);
+        u->undo();
+        u->undo(); // the removal taken back: the old bin, not the new one
+        CHECK(q.bin(gone) && q.bin(gone)->name == QString("Weg") && !q.bin(next));
     }
 
     // --- Save -> load: everything the same, new bin ID after loading not duplicated
