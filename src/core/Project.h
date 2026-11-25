@@ -328,6 +328,7 @@ private:
     std::optional<BrandKit> m_brand;
     QVector<GradeStill> m_stills;
     QJsonObject m_direction;
+    QHash<QString, QString> m_missingAt; // ProjectData::missingAt, carried from load to save
     std::optional<TemplateInfo> m_templateInfo;
     int m_lastBinId = 0;
     // Files imported (outside the undo history) into a bin that an undo then removed: their bin, so that the redo

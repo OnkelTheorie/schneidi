@@ -330,6 +330,7 @@ ProjectData Project::data() const
     d.watchFolders = m_watchFolders;
     d.watchLog = m_watchLog;
     d.watchRevision = m_watchRevision;
+    d.missingAt = m_missingAt;
     return d;
 }
 
@@ -420,6 +421,7 @@ void Project::load(const ProjectData& d)
     m_brand = d.brand;
     m_stills = d.stills;
     m_direction = d.direction;
+    m_missingAt = d.missingAt;
     m_templateInfo = d.templateInfo;
     m_watchFolders = d.watchFolders;
     for (WatchFolder& w : m_watchFolders)
