@@ -11,6 +11,7 @@
 #include "core/AppPaths.h"
 #include "core/SettingsIsolation.h"
 #include "core/I18n.h"
+#include "core/Vocabulary.h"
 #include "engine/Engine.h"
 #include "engine/audio/Device.h"
 #include "engine/Background.h"
@@ -29,6 +30,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollArea>
 #include <algorithm>
@@ -264,6 +266,28 @@ QWidget* SettingsDialog::buildGeneral()
                          "Musik, Spiele und andere Programme laufen nebenbei flüssiger, die Arbeit dauert länger. "
                          "Den Export stellst du auf der Seite Export ein.")));
     lay->addWidget(performance);
+
+    // Speech recognition: the user's word list (names, slang), given to whisper as its starting text
+    auto* transcription = new QGroupBox(T("Transkription"));
+    auto* trform = new QFormLayout(transcription);
+    trform->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    m_vocabulary = new QPlainTextEdit;
+    m_vocabulary->setObjectName("transcribe_vocabulary");
+    m_vocabulary->setPlainText(Vocabulary::stored().join('\n'));
+    m_vocabulary->setPlaceholderText(T("Ein Wort oder Ausdruck pro Zeile, z. B. Namen, Spitznamen, Slang"));
+    m_vocabulary->setTabChangesFocus(true);
+    m_vocabulary->setFixedHeight(m_vocabulary->fontMetrics().lineSpacing() * 5 + 12);
+    trform->addRow(T("Wörterliste"), m_vocabulary);
+    trform->addRow(hint(T("Whisper bekommt die Wörter als Starttext und schreibt sie dann eher so. Das hilft bei der "
+                          "Schreibweise, es erfindet keine Wörter, die nicht gesagt werden. Parakeet nutzt die Liste nicht.")));
+    m_gameTerms = new QCheckBox(T("Bei Spielaufnahmen Spielbegriffe ergänzen (z. B. CS2: Headshot, AWP, Eco)"));
+    m_gameTerms->setObjectName("transcribe_game_terms");
+    m_gameTerms->setChecked(Vocabulary::gameTermsOn());
+    m_gameTerms->setToolTip(T("Für die Untertitel von Shorts aus Spielaufnahmen, wenn das Spiel bekannt ist. Die "
+                              "Begriffe werden richtiger geschrieben, andere Wörter können aber in ihre Richtung "
+                              "kippen."));
+    trform->addRow(m_gameTerms);
+    lay->addWidget(transcription);
 
     // Projects: "Save as" next to the footage (default) or in a folder of their own, only if the user wants that
     auto* projects = new QGroupBox(T("Projekte"));
@@ -546,6 +570,9 @@ QString SettingsDialog::language() const { return m_language->currentData().toSt
 double SettingsDialog::uiScale() const { return m_uiScale->currentData().toDouble(); }
 bool SettingsDialog::magneticMain() const { return m_magneticMain->isChecked(); }
 QString SettingsDialog::clipDrag() const { return m_clipDrag->currentData().toString(); }
+QStringList SettingsDialog::vocabulary() const { return Vocabulary::parse(m_vocabulary->toPlainText()); }
+bool SettingsDialog::gameTerms() const { return m_gameTerms->isChecked(); }
+
 QString SettingsDialog::timelineMomentum() const { return m_momentum->currentData().toString(); }
 
 QString SettingsDialog::centerPlayhead() const { return m_centerPlayhead->currentData().toString(); }

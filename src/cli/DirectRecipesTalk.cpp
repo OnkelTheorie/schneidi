@@ -18,6 +18,7 @@
 #include "core/LiveHost.h"
 #include "core/ProjectFile.h"
 #include "core/TimelineOps.h"
+#include "core/Vocabulary.h"
 #include "engine/Extensions.h"
 #include "core/TranscriptCut.h"
 
@@ -108,14 +109,18 @@ QJsonObject verbatimTranscripts(const QString& project, int timeline, const QStr
 } // namespace
 
 std::optional<QJsonObject> streamTranscript(const QString& file, int stream, const QString& language, bool verbatim,
-                                            Context& ctx)
+                                            Context& ctx, const QStringList& vocabulary)
 {
     if (!QFileInfo::exists(file)) return std::nullopt;
     QJsonObject keyOptions{{"language", language}, {"stream", stream}};
     keyOptions["verbatim"] = verbatim; // (the key of the verbatim ones as before)
+    // Another word list is another transcript (no list: the key as before)
+    if (const QString id = Vocabulary::cacheId(Vocabulary::combine(Vocabulary::stored(), vocabulary)); !id.isEmpty())
+        keyOptions["vocabulary"] = id;
     const AnalysisCache::Key key = AnalysisCache::key("speech-words", file, keyOptions, 1);
     if (const auto hit = AnalysisCache::get(key)) return *hit;
     QJsonObject t{{"source", file}, {"words", true}, {"audio_stream", QString::number(stream)}};
+    if (!vocabulary.isEmpty()) t["vocabulary"] = QJsonArray::fromStringList(vocabulary);
     if (verbatim) t["verbatim"] = true;
     if (!language.isEmpty()) t["language"] = language;
     QJsonObject r;
@@ -557,7 +562,8 @@ void suggestScript(Direction::Session& s, const QStringList& files, Context& ctx
     // Files without a transcript: whisper here (a background job), once per file and language - what it made is kept
     // (AnalysisCache "speech-words") for the next suggestion and goes into the project with the apply
     if (!files.isEmpty()) {
-        const QJsonObject keyOptions{{"language", s.options["language"].toString()}};
+        QJsonObject keyOptions{{"language", s.options["language"].toString()}};
+        if (const QString id = Vocabulary::cacheId(Vocabulary::stored()); !id.isEmpty()) keyOptions["vocabulary"] = id;
         QJsonObject prepared;
         QStringList missing;
         for (const QString& f : files) {

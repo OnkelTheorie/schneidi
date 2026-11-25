@@ -10,6 +10,7 @@
 #include "cli/Sandbox.h"
 
 #include "core/AppPaths.h"
+#include "core/Vocabulary.h"
 #include "core/GameHud.h"
 #include "core/I18n.h"
 #include "core/LiveHost.h"
@@ -69,7 +70,7 @@ const QStringList& recipeOptionKeys(const QString& recipe)
 {
     static const QHash<QString, QStringList> keys{
         {"short", {"for", "min_s", "max_s", "aspect", "variants", "hook", "reframe", "game", "audio_stream", "target_lufs",
-                   "captions", "sfx", "language", "accents"}},
+                   "captions", "sfx", "language", "accents", "game_terms"}},
         {"highlights", {"length_s", "aspect", "music", "order", "transitions", "game", "audio_stream", "target_lufs"}},
         {"talk", {"min_pause_s", "pad_s", "fillers", "language", "tracks", "threshold", "target_lufs", "room_tone"}},
         {"template", {"template", "auto", "game", "target_lufs"}},
@@ -1278,12 +1279,15 @@ QJsonObject cmdDirect(const QJsonObject& a, Context& ctx)
         if (!QStringList{"off", "mild"}.contains(sf.sfx)) fail("BAD_ARGUMENT", "sfx must be off or mild");
         // The game as the short's session saw it (given, or from the recordings' folder/name): hits on its kills
         QString game = f["game"].toString();
+        QJsonValue terms = f["game_terms"];
         if (f["session"].isObject())
             if (const auto session = Direction::fromJson(f["session"].toObject())) {
                 QStringList files;
                 for (const Direction::Material& m : session->material) files << m.file;
                 game = gameOf(session->options, files);
+                if (!terms.isBool()) terms = session->options["game_terms"];
             }
+        sf.gameTerms = Vocabulary::useGameTerms(terms);
         if (!game.isEmpty() && game != QLatin1String("none")) sf.game = game;
         sf.language = f["language"].toString();
         if (f["prepare"].toBool()) {

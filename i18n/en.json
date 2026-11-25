@@ -2879,6 +2879,7 @@
  "Sprache und Design wechseln sofort. Eine neue Größe braucht einen Neustart; das Projekt und die Ansicht kommen danach so zurück, wie sie waren.": "Language and design change at once. A new size needs a restart; the project and the view come back as they were.",
  "Sprache wird erkannt … (%1 von %2)": "Recognising speech … (%1 of %2)",
  "Sprechen": "Speech",
+ "Sprecher %1": "Speaker %1",
  "Sprechertext": "Narration",
  "Sprechertext…": "Narration…",
  "Sprechtempo": "Speed",
@@ -3936,5 +3937,11 @@
  "Lachen im Sprachkanal ({stream})": "laughter in the voice chat ({stream})",
  "Stimmen werden laut ({stream})": "voices get loud ({stream})",
  "Spiel: {game} (im Bild erkannt).": "Game: {game} (recognised in the picture).",
- "Nur {s} s Action (Minimum {min} s): Der Short bleibt kürzer, statt die Zeit vor den Momenten oder nach dem Tod des Spielers zu zeigen.": "Only {s} s of action (minimum {min} s): the short stays shorter rather than showing the time before the moments or after the player's death."
+ "Nur {s} s Action (Minimum {min} s): Der Short bleibt kürzer, statt die Zeit vor den Momenten oder nach dem Tod des Spielers zu zeigen.": "Only {s} s of action (minimum {min} s): the short stays shorter rather than showing the time before the moments or after the player's death.",
+ "Transkription": "Transcription",
+ "Wörterliste": "Word list",
+ "Ein Wort oder Ausdruck pro Zeile, z. B. Namen, Spitznamen, Slang": "One word or phrase per line, e.g. names, nicknames, slang",
+ "Whisper bekommt die Wörter als Starttext und schreibt sie dann eher so. Das hilft bei der Schreibweise, es erfindet keine Wörter, die nicht gesagt werden. Parakeet nutzt die Liste nicht.": "Whisper gets the words as its starting text and then tends to spell them like this. It helps with spelling, it does not make up words that are not said. Parakeet does not use the list.",
+ "Bei Spielaufnahmen Spielbegriffe ergänzen (z. B. CS2: Headshot, AWP, Eco)": "Add game terms for game recordings (e.g. CS2: Headshot, AWP, Eco)",
+ "Für die Untertitel von Shorts aus Spielaufnahmen, wenn das Spiel bekannt ist. Die Begriffe werden richtiger geschrieben, andere Wörter können aber in ihre Richtung kippen.": "For the captions of shorts from game recordings when the game is known. The terms get spelled right more often, but other words can tip towards them."
 }

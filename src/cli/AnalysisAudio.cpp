@@ -7,6 +7,7 @@
 #include "core/Subtitles.h"
 #include "core/TimelineOps.h"
 #include "core/Transcript.h"
+#include "core/Vocabulary.h"
 #include "engine/AnalysisCache.h"
 #include "engine/AudioAnalysis.h"
 #include "engine/AudioEvents.h"
@@ -18,6 +19,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QTimer>
 
 #include <algorithm>
@@ -403,6 +405,17 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     req.threads = a["threads"].toInt();
     req.music = a["music"].toBool();
     req.verbatim = a["verbatim"].toBool();
+    // The word list: the settings' (File > Settings) and this call's
+    {
+        QJsonValue v = a["vocabulary"];
+        if (v.isString() && v.toString().trimmed().startsWith('['))
+            v = QJsonDocument::fromJson(v.toString().toUtf8()).array();
+        QStringList given;
+        if (v.isArray())
+            for (const QJsonValue& w : v.toArray()) given << w.toString();
+        else if (v.isString()) given << v.toString();
+        req.vocabulary = Vocabulary::combine(Vocabulary::stored(), Vocabulary::parse(given.join('\n')));
+    }
     // A chosen language is checked against whisper's own detection afterwards (a wrong one gives made-up words)
     req.checkLanguage = req.language != QLatin1String("auto") && !req.music;
     ProjectFormat f;

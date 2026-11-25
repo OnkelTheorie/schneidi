@@ -18,6 +18,8 @@
 #include "core/ShortPick.h"
 #include "core/StreamPresets.h"
 #include "core/TranscriptCut.h"
+#include "core/Vocabulary.h"
+#include "engine/AudioAnalysis.h"
 #include "engine/Extensions.h"
 
 #include <QDir>
@@ -72,7 +74,7 @@ std::optional<double> soundPeakDb(const QString& project, const QString& timelin
 } // namespace
 
 QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, const QString& language, Context& ctx,
-                             QStringList* voices)
+                             QStringList* voices, const QString& game)
 {
     Session view(project);
     if (!timeline.isEmpty() && timeline != QLatin1String("@current")) view.selectTimeline(timeline);
@@ -102,7 +104,7 @@ QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, co
     for (const int i : tracks)
         for (const auto& [file, stream] : TranscriptCut::missingTranscripts(tl, media, i)) {
             failIfCanceled();
-            const std::optional<QJsonObject> one = streamTranscript(file, stream, language, false, ctx);
+            const std::optional<QJsonObject> one = streamTranscript(file, stream, language, false, ctx, Vocabulary::gameTerms(game));
             MediaInfo* m = info(file);
             if (!one || !m) continue;
             MediaTranscript t;
@@ -112,11 +114,18 @@ QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, co
                 t.words << TranscriptWord{qint64(w[0].toDouble()), qint64(w[1].toDouble()), w[2].toString()};
             m->transcripts << t;
         }
-    // Per track on the timeline (trims and speed followed), then one list in time order, a speaker's phrase whole
+    // Per track on the timeline (trims and speed followed), each phrase moved onto its stream's sound (whisper's
+    // times are loose; a voice stream is quiet between words), then one list in time order
     const double fps = view.project.frameRate();
+    const int pause = int(std::lround(0.7 * fps));
     QVector<QVector<TranscriptCut::Word>> perTrack;
     for (const int i : tracks) {
-        perTrack << TranscriptCut::timelineWords(tl, media, fps, i, true);
+        failIfCanceled();
+        QVector<TranscriptCut::Word> words = TranscriptCut::timelineWords(tl, media, fps, i, true);
+        if (!words.isEmpty())
+            if (const auto peaks = AudioAnalysis::tracksFramePeaks(view.project.timelineFormat(), tl, {i}))
+                Captions::snapToSound(words, *peaks, fps, pause);
+        perTrack << words;
         QString name = tl.audio[i].name;
         if (name.isEmpty())
             for (const Clip& c : tl.audio[i].clips)
@@ -124,7 +133,7 @@ QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, co
         *voices << (name.isEmpty() ? QString("A%1").arg(i + 1) : name);
     }
     QJsonArray out;
-    for (const TranscriptCut::Word& w : Captions::mergeSpeakers(perTrack, int(std::lround(0.7 * fps))))
+    for (const TranscriptCut::Word& w : Captions::mergeSpeakers(perTrack))
         out << QJsonObject{{"from", w.from}, {"to", std::max(w.from + 1, w.spokenTo)}, {"text", w.text}, {"speaker", w.track}};
     return out;
 }
@@ -151,11 +160,14 @@ QJsonArray shortFinishOps(const QString& project, const QString& timeline, const
             // Each voice track transcribed on its own (a quiet voice chat partner is lost in a mix with the
             // microphone), else the timeline's sound as `transcribe` hears it
             QStringList voices;
-            QJsonArray words = voiceCaptionWords(project, timeline, f.language, ctx, &voices);
+            const QString termsOf = captionTermsGame(f);
+            QJsonArray words = voiceCaptionWords(project, timeline, f.language, ctx, &voices, termsOf);
             int segments = 0;
             if (voices.isEmpty()) {
                 QJsonObject t{{"source", project}, {"timeline", timeline}, {"words", true}};
                 if (!f.language.isEmpty()) t["language"] = f.language;
+                if (const QStringList terms = Vocabulary::gameTerms(termsOf); !terms.isEmpty())
+                    t["vocabulary"] = QJsonArray::fromStringList(terms);
                 try {
                     const QJsonObject tr = run("transcribe", t);
                     segments = int(tr["segments"].toArray().size());
@@ -171,7 +183,9 @@ QJsonArray shortFinishOps(const QString& project, const QString& timeline, const
             if (words.isEmpty()) {
                 note("no_captions_speech");
             } else {
-                ops << QJsonObject{{"op", "captions"}, {"style", f.captions}, {"words", words}};
+                QJsonObject op{{"op", "captions"}, {"style", f.captions}, {"words", words}};
+                if (voices.size() > 1) op["speakers"] = QJsonArray::fromStringList(voices);
+                ops << op;
                 *done << (voices.isEmpty() ? QString("%1 captions (%2 segments)").arg(f.captions).arg(segments)
                                            : QString("%1 captions (%2 words) of %3, each voice transcribed on its own")
                                                  .arg(f.captions)
@@ -488,7 +502,8 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
     done << QString("timeline '%1' %2, reframe %3%4").arg(shortTimeline, aspect, reframe, feedText);
 
     // 6. Word captions (whisper) and effect sounds (sfx:'mild'), one edit
-    ShortFinish finish{captions, sfx, game ? game->id : QString(), a["language"].toString()};
+    ShortFinish finish{captions, sfx, game ? game->id : QString(), a["language"].toString(),
+                       Vocabulary::useGameTerms(a["game_terms"])};
     Context finishCtx = step(0.4, 0.6);
     const bool burn = shortFinish(project, shortTimeline, finish, finishCtx, &done, &notes);
 

@@ -40,6 +40,9 @@ struct TranscribeRequest {
     // Write the hesitation sounds too (äh, um, euh …): whisper leaves them out unless its starting text (the prompt)
     // has them (verbatimPrompt). For cutting filler words.
     bool verbatim = false;
+    // Names, slang, game terms (core/Vocabulary): after the starting text, so whisper spells them like this. Parakeet
+    // has no starting text and leaves them out (promptNote says so).
+    QStringList vocabulary;
 };
 
 class Transcriber : public QObject {
@@ -155,6 +158,7 @@ private:
     bool m_cpuOnly = false; // whisper failed on the graphics card: this request runs on the CPU (-ng)
     Transcript::Result m_result;
     QString m_promptNote;
+    QString m_vocabularyText; // the word list's part of m_prompt (an echo of it alone is dropped too)
     QString m_detected;
     double m_detectedP = 0;
     // Stage 1: whisper's own progress (0..1), what was shown, the time it runs and is expected to take

@@ -5,6 +5,7 @@
 #include "core/Captions.h"
 #include "core/Editor.h"
 #include "core/I18n.h"
+#include "core/Vocabulary.h"
 #include "core/Project.h"
 #include "core/Timecode.h"
 #include "engine/Extensions.h"
@@ -403,6 +404,7 @@ void TranscriptPanel::startNext()
     req.format = m_project->format();
     QSettings settings;
     req.language = settings.value("transcribe/language", "auto").toString();
+    req.vocabulary = Vocabulary::stored(); // the word list of the settings
     // The model chosen last in "Untertitel aus Audio erzeugen"; Parakeet ("Sehr schnell") hands a language it does not
     // know to the best whisper model
     const QString chosen = settings.value("transcribe/model").toString();

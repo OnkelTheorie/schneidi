@@ -132,6 +132,8 @@ bool isVertical(const ProjectFormat& f);
 QRectF overlayBlock(const Clip& c, double W, double H);
 // The same at clip frame t (the viewer's box around a selected text title)
 QRectF overlayBlockAt(const Clip& c, double t, double W, double H);
+// The block a subtitle cue's text covers on its track (as the safe area check measures it)
+QRectF subtitleCueBlock(const SubtitleTrack& st, const QString& text, double W, double H);
 // Titles and subtitles in [from, to) that TikTok, Reels and Shorts would cover (Options::safe*) or that stick out of
 // the picture, one issue per title clip / subtitle track. Nothing for other formats.
 QVector<Issue> layout(const Timeline& tl, int from, int to, const ProjectFormat& f, const Options& o = {});

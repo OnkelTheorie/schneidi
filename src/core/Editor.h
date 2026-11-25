@@ -676,6 +676,9 @@ public:
     // Word captions (core/Captions.h) as a new track that becomes the visible one: `captions` = how the words show,
     // the text style the format's default for word captions. Returns the track index, -1 = empty.
     int addCaptions(const QVector<SubtitleCue>& cues, const QString& name, const CaptionStyle& captions);
+    // Several speakers' word captions as new tracks in one undo step, all of them visible (the others hidden): each
+    // track as given (name, style, captions, cues). Returns the first new track's index, -1 = no cues at all.
+    int addCaptionTracks(const QVector<SubtitleTrack>& tracks);
     // The track's cues replaced by `cues` (e.g. Subtitles::readable of them) in one undo step named `text`; false =
     // no such track, locked or no cues
     bool setSubtitleCues(int index, const QVector<SubtitleCue>& cues, const QString& text);

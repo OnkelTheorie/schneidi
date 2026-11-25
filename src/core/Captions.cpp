@@ -221,45 +221,179 @@ QVector<TranscriptCut::Word> onBeats(const QVector<TranscriptCut::Word>& words, 
     return out;
 }
 
-QVector<TranscriptCut::Word> mergeSpeakers(const QVector<QVector<TranscriptCut::Word>>& speakers, int pauseFrames)
+QVector<QPair<int, int>> phrases(const QVector<TranscriptCut::Word>& words, int pauseFrames)
 {
-    struct Phrase {
-        int speaker;
-        QVector<TranscriptCut::Word> words;
-    };
-    QVector<Phrase> phrases;
-    for (int k = 0; k < speakers.size(); ++k) {
-        QVector<TranscriptCut::Word> words;
-        for (const TranscriptCut::Word& w : speakers[k])
-            if (!w.text.trimmed().isEmpty()) words << w;
-        std::stable_sort(words.begin(), words.end(), [](const auto& a, const auto& b) { return a.from < b.from; });
-        for (int i = 0; i < words.size(); ++i) {
-            const bool open = i > 0 && !phrases.isEmpty() && phrases.last().speaker == k;
-            const QString before = open ? words[i - 1].text.trimmed() : QString();
-            const bool ended = before.isEmpty() || before.endsWith('.') || before.endsWith('?') || before.endsWith('!')
-                               || words[i].from - words[i - 1].spokenTo > pauseFrames;
-            if (!open || ended) phrases << Phrase{k, {}};
-            phrases.last().words << words[i];
-        }
-    }
-    std::stable_sort(phrases.begin(), phrases.end(), [](const Phrase& a, const Phrase& b) {
-        return a.words.first().from != b.words.first().from ? a.words.first().from < b.words.first().from
-                                                            : a.speaker < b.speaker;
-    });
-    QVector<TranscriptCut::Word> out;
-    int spoken = INT_MIN; // where the phrase before ends being spoken
-    for (const Phrase& p : std::as_const(phrases)) {
-        const int shift = spoken == INT_MIN ? 0 : std::max(0, spoken - p.words.first().from);
-        for (TranscriptCut::Word w : p.words) {
-            w.from += shift;
-            w.to += shift;
-            w.spokenTo += shift;
-            w.track = p.speaker;
-            out << w;
-        }
-        spoken = std::max(spoken, out.last().spokenTo);
+    QVector<QPair<int, int>> out;
+    for (int i = 0; i < words.size(); ++i) {
+        const QString before = i > 0 ? words[i - 1].text.trimmed() : QString();
+        const bool ended = i == 0 || before.isEmpty() || before.endsWith('.') || before.endsWith('?') || before.endsWith('!')
+                           || words[i].from - words[i - 1].spokenTo > pauseFrames;
+        if (ended) out << qMakePair(i, i);
+        else out.last().second = i;
     }
     return out;
+}
+
+QVector<TranscriptCut::Word> mergeSpeakers(const QVector<QVector<TranscriptCut::Word>>& speakers)
+{
+    QVector<TranscriptCut::Word> out;
+    for (int k = 0; k < speakers.size(); ++k)
+        for (TranscriptCut::Word w : speakers[k]) {
+            if (w.text.trimmed().isEmpty()) continue;
+            w.track = k;
+            out << w;
+        }
+    std::stable_sort(out.begin(), out.end(), [](const auto& a, const auto& b) {
+        return a.from != b.from ? a.from < b.from : a.track < b.track;
+    });
+    return out;
+}
+
+int snapToSound(QVector<TranscriptCut::Word>& words, const std::vector<float>& framePeaks, double fps, int pauseFrames,
+                const SnapOptions& o)
+{
+    const int n = int(framePeaks.size());
+    if (words.isEmpty() || n == 0 || fps <= 0) return 0;
+    const int window = std::max(1, int(std::lround(o.windowS * fps)));
+    const int minLen = std::max(1, int(std::lround(o.minWordS * fps)));
+    const int fill = std::max(1, int(std::lround(0.1 * fps)));     // a pause inside a word (a plosive's stop)
+    const int minRun = std::max(1, int(std::lround(0.035 * fps))); // a click is no speech
+    // Levels (dBFS of the peak; nothing = -100) and the stream's quiet and speech around the words
+    std::vector<double> db(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i) db[size_t(i)] = framePeaks[size_t(i)] > 1e-5f ? 20 * std::log10(framePeaks[size_t(i)]) : -100.0;
+    const int a = std::clamp(words.first().from - window, 0, n), b = std::clamp(words.last().spokenTo + window, 0, n);
+    if (b - a < 2 * window) return 0;
+    std::vector<double> sorted(db.begin() + a, db.begin() + b);
+    std::sort(sorted.begin(), sorted.end());
+    const double quiet = sorted[size_t(0.2 * (sorted.size() - 1))], speech = sorted[size_t(0.95 * (sorted.size() - 1))];
+    if (speech - quiet < o.minContrastDb) return 0; // constant noise (or no speech): no edges to trust
+    const double threshold = std::max(quiet + 10, speech - 30);
+    std::vector<char> on(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i) on[size_t(i)] = db[size_t(i)] > threshold;
+    // Short pauses inside speech filled, short blips dropped
+    const auto runs = [&](char value, int maxLength, char set, bool inner) {
+        for (int i = 0; i < n;) {
+            if (on[size_t(i)] != value) {
+                ++i;
+                continue;
+            }
+            int j = i;
+            while (j < n && on[size_t(j)] == value) ++j;
+            if (j - i <= maxLength && (!inner || (i > 0 && j < n)))
+                for (int k = i; k < j; ++k) on[size_t(k)] = set;
+            i = j;
+        }
+    };
+    runs(0, fill, 1, true);
+    runs(1, minRun - 1, 0, false);
+    const auto isOn = [&](int f) { return f >= 0 && f < n && on[size_t(f)]; };
+
+    int moved = 0;
+    int before = INT_MIN; // where the speaker's phrase before ends being spoken
+    for (const auto& [p, q] : phrases(words, pauseFrames)) {
+        const int next = q + 1 < words.size() ? words[q + 1].from : INT_MAX;
+        const int oldStart = words[p].from, oldEnd = words[q].spokenTo;
+        // Onset: inside speech at whisper's start -> back to where it begins; in the quiet -> the first speech after it
+        int start = oldStart;
+        if (isOn(oldStart)) {
+            int s = oldStart;
+            while (s > oldStart - window && s > before && isOn(s - 1)) --s;
+            if (!isOn(s - 1)) start = s; // else no clear edge (speech on beyond the window or up to the phrase before)
+        } else {
+            for (int f = oldStart + 1; f <= oldStart + window && f < next && f < n; ++f)
+                if (isOn(f)) {
+                    start = f;
+                    break;
+                }
+        }
+        // Offset: inside speech at the end -> on to where it stops; in the quiet -> back to the last speech
+        // (from the onset on when that lies after whisper's end: a word placed before its sound)
+        int end = oldEnd;
+        const int ref = std::max(oldEnd, start + 1);
+        if (isOn(ref - 1)) {
+            int e = ref;
+            while (e < ref + window && e < next && isOn(e)) ++e;
+            if (!isOn(e)) end = e;
+        } else {
+            int e = ref - 1;
+            while (e >= ref - window && e >= start && !isOn(e)) --e;
+            if (e >= start && isOn(e)) end = e + 1;
+        }
+        if (end <= start || (start == oldStart && end == oldEnd)) {
+            before = words[q].spokenTo;
+            continue;
+        }
+        const auto fits = [&](const QVector<TranscriptCut::Word>& t) {
+            for (int i = 0; i < t.size(); ++i) {
+                const TranscriptCut::Word& old = words[p + i];
+                const int length = t[i].spokenTo - t[i].from;
+                if (length < std::min(minLen, old.spokenTo - old.from) || length < 1) return false;
+                if (i + 1 < t.size() && t[i].spokenTo > t[i + 1].from) return false;
+            }
+            return true;
+        };
+        // Inner words kept
+        QVector<TranscriptCut::Word> trial = words.mid(p, q - p + 1);
+        trial.first().from = start;
+        trial.last().spokenTo = end;
+        if (!fits(trial)) {
+            // ... or spread in proportion
+            trial = words.mid(p, q - p + 1);
+            const double k = double(end - start) / std::max(1, oldEnd - oldStart);
+            const auto map = [&](int t) { return start + int(std::lround((t - oldStart) * k)); };
+            for (TranscriptCut::Word& w : trial) {
+                w.from = map(w.from);
+                w.spokenTo = map(w.spokenTo);
+                w.to = map(w.to);
+            }
+            trial.first().from = start;
+            trial.last().spokenTo = end;
+            if (!fits(trial)) {
+                before = words[q].spokenTo;
+                continue;
+            }
+        }
+        for (int i = 0; i < trial.size(); ++i) {
+            TranscriptCut::Word& w = trial[i];
+            const int limit = i + 1 < trial.size() ? trial[i + 1].from : next;
+            w.to = std::max(w.spokenTo, std::min(w.to, limit));
+            if (i + 1 == trial.size()) w.to = std::max(w.to, end);
+            words[p + i] = w;
+        }
+        // The phrase before ends where this one begins now at the latest
+        if (p > 0) words[p - 1].to = std::max(words[p - 1].spokenTo, std::min(words[p - 1].to, start));
+        before = end;
+        ++moved;
+    }
+    return moved;
+}
+
+QColor speakerColor(int k, const QColor& first)
+{
+    if (k <= 0) return first;
+    // Bright and clearly apart from the default yellow and from each other: cyan, pink, lime
+    static const QColor palette[] = {QColor(64, 216, 255), QColor(255, 106, 213), QColor(140, 255, 90)};
+    return palette[(k - 1) % 3];
+}
+
+void stackLanes(QVector<SubtitleTrack>& lanes, const std::function<double(const SubtitleTrack&, const SubtitleCue&)>& height)
+{
+    if (lanes.size() < 2) return;
+    const double base = lanes.first().style.posY;
+    for (int k = 1; k < lanes.size(); ++k) {
+        double y = base;
+        for (int j = 0; j < k; ++j) {
+            double tallest = 0;
+            for (const SubtitleCue& low : lanes[j].cues)
+                for (const SubtitleCue& high : lanes[k].cues)
+                    if (low.start < high.end && high.start < low.end && !low.text.trimmed().isEmpty()) {
+                        tallest = std::max(tallest, height(lanes[j], low));
+                        break;
+                    }
+            if (tallest > 0) y = std::max(y, lanes[j].style.posY + tallest + 0.2 * lanes[j].style.size);
+        }
+        lanes[k].style.posY = std::round(y);
+    }
 }
 
 QVector<SubtitleCue> fromWords(const QVector<TranscriptCut::Word>& input, const Options& o)
@@ -269,8 +403,10 @@ QVector<SubtitleCue> fromWords(const QVector<TranscriptCut::Word>& input, const 
         if (!w.text.trimmed().isEmpty()) spoken << w;
     const QVector<TranscriptCut::Word> list = onBeats(spoken, o.beats);
     QVector<SubtitleCue> cues;
+    QVector<int> speaker; // of each cue
     const auto add = [&](int a, int b) { // words [a, b]
         if (a > b) return;
+        speaker << list[a].track;
         SubtitleCue c;
         c.start = list[a].from;
         if (!cues.isEmpty()) c.start = std::max(c.start, cues.last().end);
@@ -318,6 +454,37 @@ QVector<SubtitleCue> fromWords(const QVector<TranscriptCut::Word>& input, const 
                 w.from = std::clamp(w.from, 0, w.to - 1);
             }
         }
+    }
+    // A cue the cut leaves too short to read: joins the one before when its words are heard, else it goes
+    if (o.minAtCutFrames > 0) {
+        QVector<SubtitleCue> kept;
+        QVector<int> keptSpeaker;
+        for (int i = 0; i < cues.size(); ++i) {
+            SubtitleCue c = cues[i];
+            const int cut = cutAfter(c.start);
+            if (cut != c.end || c.length() >= o.minAtCutFrames) {
+                kept << c;
+                keptSpeaker << speaker[i];
+                continue;
+            }
+            const int first = c.start + (c.words.isEmpty() ? 0 : c.words.first().from);
+            if (cut - first < o.heardFrames) continue; // its word is cut off before it is heard
+            if (!kept.isEmpty()) {
+                SubtitleCue& prev = kept.last();
+                const bool joinable = keptSpeaker.last() == speaker[i] && c.start - prev.end <= o.maxGapFrames
+                                      && cutAfter(prev.start) >= c.end && timed(prev) && timed(c);
+                if (joinable) {
+                    for (const CueWord& w : c.words)
+                        prev.words << CueWord{w.from + c.start - prev.start, w.to + c.start - prev.start};
+                    prev.text += ' ' + c.text;
+                    prev.end = c.end;
+                    continue;
+                }
+            }
+            kept << c;
+            keptSpeaker << speaker[i];
+        }
+        cues = kept;
     }
     return cues;
 }

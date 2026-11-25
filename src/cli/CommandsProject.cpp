@@ -1280,14 +1280,13 @@ QJsonObject cmdRender(const QJsonObject& a, Context& ctx)
         QDir().mkpath(QFileInfo(out).absolutePath());
         QJsonArray more;
         for (const Subtitles::SrtFile& srt : files) {
-            const SubtitleTrack& track = tl.subtitles[srt.track];
             QFile f(srt.path);
             if (!f.open(QIODevice::WriteOnly)
-                || f.write(Subtitles::toFile(srt.path, track.cues, s.project.frameRate(), job.inOut ? job.from : 0, job.inOut ? job.to + 1 : -1)) < 0)
+                || f.write(Subtitles::toFile(srt.path, Subtitles::cuesOf(tl, srt), s.project.frameRate(), job.inOut ? job.from : 0, job.inOut ? job.to + 1 : -1)) < 0)
                 fail("WRITE_FAILED", "cannot write " + srt.path);
             if (srt.path != out) more << srt.path;
         }
-        QJsonObject o{{"out", out}, {"format", formatId}, {"cues", int(tl.subtitles[files[0].track].cues.size())}};
+        QJsonObject o{{"out", out}, {"format", formatId}, {"cues", int(Subtitles::cuesOf(tl, files[0]).size())}};
         if (!more.isEmpty()) o["srt_more"] = more; // the other subtitle tracks, next to out
         return o;
     }

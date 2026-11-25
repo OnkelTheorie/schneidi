@@ -2,6 +2,7 @@
 #include "app/TranscribeDialog.h"
 
 #include "core/I18n.h"
+#include "core/Vocabulary.h"
 #include "ui/timeline/TimelineOptions.h"
 #include "engine/Extensions.h"
 
@@ -478,6 +479,7 @@ void TranscribeDialog::startJob()
     req.to = m_to;
     req.audioTracks = m_jobs[m_job].tracks;
     req.language = m_lang->currentData().toString();
+    req.vocabulary = Vocabulary::stored(); // the word list of the settings
     // A chosen language is checked against whisper's own detection (a wrong one gives made-up words): told afterwards
     req.checkLanguage = req.language != QLatin1String("auto");
     // Parakeet ("Sehr schnell"): a language it does not know goes to the best whisper model there is

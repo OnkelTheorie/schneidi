@@ -22,6 +22,7 @@
 #include "core/Editor.h"
 #include "core/Project.h"
 #include "core/Timecode.h"
+#include "core/Vocabulary.h"
 #include "ui/Inspector.h"
 #include "ui/MediaPool.h"
 #include "ui/timeline/PlayheadMove.h"
@@ -30,6 +31,7 @@
 
 #include <QApplication>
 #include <QListWidget>
+#include <QPlainTextEdit>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDir>
@@ -189,6 +191,80 @@ void testDialog()
 }
 
 // General › Performance: threads for background work (whisper, analyses, proxies, import); 0 = automatic
+// The word list for speech recognition (core/Vocabulary, File > Settings > Transcription): parsed from lines or
+// commas, stored and read back, the dialog's field, game terms, the starting text cut at whisper's limit, the cache id
+void testVocabulary()
+{
+    CHECK_EQ(Vocabulary::parse("Onkel Theo\n  LuciSon , headshot\n\nHeadshot;AWP"),
+             (QStringList{"Onkel Theo", "LuciSon", "headshot", "AWP"}));
+    CHECK_EQ(Vocabulary::combine({"AWP", "Pump"}, {"awp", "Deagle"}), (QStringList{"AWP", "Pump", "Deagle"}));
+    Vocabulary::setStored({});
+    CHECK(Vocabulary::stored().isEmpty());
+    CHECK(!QSettings().contains("transcribe/vocabulary")); // nothing stored for an empty list
+    Vocabulary::setStored({"Onkel Theo", "BIGDADDYARSCH", "Onkel Theo"});
+    CHECK_EQ(Vocabulary::stored(), (QStringList{"Onkel Theo", "BIGDADDYARSCH"}));
+    {
+        SettingsDialog dlg(AiSettings{});
+        auto* field = dlg.findChild<QPlainTextEdit*>("transcribe_vocabulary");
+        if (CHECK(field)) {
+            CHECK_EQ(field->toPlainText(), QString("Onkel Theo\nBIGDADDYARSCH"));
+            field->setPlainText("Onkel Theo\nLuciSon, Gegge\n");
+            CHECK_EQ(dlg.vocabulary(), (QStringList{"Onkel Theo", "LuciSon", "Gegge"}));
+        }
+    }
+    // The switch for game terms: off by default, stored, the dialog's checkbox
+    Vocabulary::setGameTermsOn(false);
+    CHECK(!Vocabulary::gameTermsOn());
+    CHECK(!QSettings().contains("transcribe/gameTerms"));
+    CHECK(!Vocabulary::useGameTerms({}) && Vocabulary::useGameTerms(true));
+    {
+        SettingsDialog dlg(AiSettings{});
+        auto* box = dlg.findChild<QCheckBox*>("transcribe_game_terms");
+        if (CHECK(box)) {
+            CHECK(!box->isChecked() && !dlg.gameTerms());
+            box->setChecked(true);
+            CHECK(dlg.gameTerms());
+        }
+    }
+    Vocabulary::setGameTermsOn(true);
+    CHECK(Vocabulary::gameTermsOn() && !Vocabulary::useGameTerms(false));
+    {
+        SettingsDialog again(AiSettings{});
+        auto* box = again.findChild<QCheckBox*>("transcribe_game_terms");
+        CHECK(box && box->isChecked());
+    }
+    Vocabulary::setGameTermsOn(false);
+    // Game terms: CS2 and Valorant have a few, other games none
+    CHECK(Vocabulary::gameTerms("cs2").contains("Headshot") && Vocabulary::gameTerms("CS2").contains("AWP"));
+    CHECK(Vocabulary::gameTerms("valorant").contains("Spike"));
+    CHECK(Vocabulary::gameTerms("minecraft").isEmpty());
+    CHECK(Vocabulary::gameTerms("cs2").size() <= 25); // short: each term takes room and pulls the spelling
+    // The starting text: the punctuation prompt, then the words
+    const QString base = "Hallo, wie geht's? Gut, und dir? Ja, passt.";
+    const QStringList list = Vocabulary::combine({"Onkel Theo"}, Vocabulary::gameTerms("cs2"));
+    QStringList dropped;
+    const QString prompt = Vocabulary::prompt(base, list, Vocabulary::kMaxPromptTokens, &dropped);
+    CHECK(prompt.startsWith(base + " Onkel Theo, Headshot, AWP,"));
+    CHECK(prompt.endsWith("T-Spawn."));
+    CHECK(dropped.isEmpty());
+    CHECK(Vocabulary::estimateTokens(prompt) <= Vocabulary::kMaxPromptTokens);
+    CHECK_EQ(Vocabulary::prompt({}, {}), QString());
+    CHECK_EQ(Vocabulary::prompt(base, {}), base);
+    // Too long: cut in order with the rest named, never over the limit
+    QStringList many;
+    for (int i = 0; i < 200; ++i) many << QString("Spielername%1").arg(i);
+    const QString cut = Vocabulary::prompt(base, many, Vocabulary::kMaxPromptTokens, &dropped);
+    CHECK(Vocabulary::estimateTokens(cut) <= Vocabulary::kMaxPromptTokens);
+    CHECK(cut.contains("Spielername0,") && cut.endsWith('.'));
+    CHECK(!dropped.isEmpty() && dropped.first() != "Spielername0" && dropped.last() == "Spielername199");
+    CHECK_EQ(cut.count(',') - base.count(',') + 1 + dropped.size(), 200);
+    // Cache id: none for no words (old keys stay valid), another list another id
+    CHECK(Vocabulary::cacheId({}).isEmpty());
+    CHECK(Vocabulary::cacheId({"AWP"}) != Vocabulary::cacheId({"AWP", "Pump"}));
+    CHECK_EQ(Vocabulary::cacheId({"AWP"}), Vocabulary::cacheId({"AWP"}));
+    Vocabulary::setStored({});
+}
+
 void testBackgroundThreads()
 {
     QSettings().remove("performance");
@@ -656,6 +732,7 @@ int main(int argc, char** argv)
     testSettings();
     testDialog();
     testBackgroundThreads();
+    testVocabulary();
     testProjectFolder();
     testTimelineTab();
     testMainWindow();

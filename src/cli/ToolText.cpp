@@ -126,7 +126,7 @@ const QHash<QString, Tool>& tools()
               {"captions", "", {"karaoke", "word", "off"}}, {"accents", "", {"punch", "off"}},
               {"game", "", {"cs2", "valorant", "none"}}},
              {"timeline", "aspect", "reframe", "hook", "sfx", "audio_stream", "sheet", "language", "encoder",
-              "threads", "overwrite"}},
+              "threads", "overwrite", "game_terms"}},
             {"direct",
              "Suggests what to cut with reasons, then applies the chosen as one edit. Suggest: recipe + files (or "
              "project + timeline); apply: session + apply.",
@@ -179,7 +179,7 @@ const QHash<QString, Tool>& tools()
              {{"source"}, {"language", "default: detect"}, {"words", "every word's time"}, {"srt", "SRT file to write"},
               {"apply"}, {"captions", "", {"karaoke", "word", "beat"}}},
              {"project", "quality", "length", "model", "music", "max_chars", "audio_stream", "from", "to", "timeline",
-              "tracks", "name", "readable", "max_words", "beats", "bpm", "first_beat", "threads", "verbatim"}},
+              "tracks", "name", "readable", "max_words", "beats", "bpm", "first_beat", "threads", "verbatim", "vocabulary"}},
             {"loudness",
              "Loudness (LUFS, true peak) of a file, a project's mix or clips. Web -14 LUFS, broadcast -23.",
              {{"source"}, {"clips", "measure each"}},

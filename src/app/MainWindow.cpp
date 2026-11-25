@@ -1533,7 +1533,7 @@ void MainWindow::exportSubtitlesDialog()
         return;
     for (const Subtitles::SrtFile& srt : files) {
         QSaveFile f(srt.path);
-        if (!f.open(QIODevice::WriteOnly) || f.write(Subtitles::toFile(srt.path, tl.subtitles[srt.track].cues, m_project->frameRate())) < 0
+        if (!f.open(QIODevice::WriteOnly) || f.write(Subtitles::toFile(srt.path, Subtitles::cuesOf(tl, srt), m_project->frameRate())) < 0
             || !f.commit()) {
             QMessageBox::warning(this, T("Untertitel exportieren"), T("Untertiteldatei kann nicht geschrieben werden: %1").arg(srt.path));
             return;
