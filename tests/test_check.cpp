@@ -19,8 +19,10 @@
 
 #include "check.h"
 
+#include <QDateTime>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QImage>
 #include <QGuiApplication>
 #include <QJsonArray>
@@ -815,6 +817,28 @@ int main(int argc, char** argv)
     }
     CHECK(FrameGaps::scan(media)->jumps.isEmpty()); // constant frame rate
     CHECK(!FrameGaps::scan(dir.filePath("black.mp4") + ".missing").has_value());
+    // A file that could not be read once is not cached as "no video": readable again (same size and time), it is read
+    {
+        const QString flaky = dir.filePath("flaky.mp4");
+        QFile real(gapMp4);
+        QFile f(flaky);
+        if (CHECK(real.open(QIODevice::ReadOnly) && f.open(QIODevice::WriteOnly))) {
+            const QByteArray bytes = real.readAll();
+            f.write(QByteArray(bytes.size(), 'x'));
+            f.close();
+            const QDateTime when = QFileInfo(gapMp4).lastModified();
+            CHECK(f.open(QIODevice::ReadWrite) && f.setFileTime(when, QFileDevice::FileModificationTime));
+            f.close();
+            CHECK(!FrameGaps::scan(flaky).has_value());
+            FrameGaps::clearMemoryCache();
+            CHECK(f.open(QIODevice::WriteOnly) && f.write(bytes) == bytes.size());
+            f.close();
+            CHECK(f.open(QIODevice::ReadWrite) && f.setFileTime(when, QFileDevice::FileModificationTime));
+            f.close();
+            const auto s = FrameGaps::scan(flaky);
+            CHECK(s.has_value() && s->frames == 135);
+        }
+    }
 
     // probe gaps: the dropped frames as a range of the file's frames, and as one stretch
     r = run("probe", {{"file", gapMp4}, {"gaps", true}});

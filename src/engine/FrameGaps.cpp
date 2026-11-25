@@ -89,11 +89,13 @@ void saveDisk(const QString& key, const std::optional<Stutter::Scan>& s)
 // The presentation times of the first video stream's packets, counted like the own decoder (engine/video/Reader.cpp):
 // frame 0 = the first key frame (0 when its DTS is negative, MP4 with B-frames)
 struct Canceled {};
+// The file could not be read (a share gone, too many open files, locked for a moment): not cached, unlike "no video"
+struct Unreadable {};
 
 std::optional<Stutter::Scan> read(const QString& path, const std::atomic<bool>* cancel)
 {
     AVFormatContext* raw = nullptr;
-    if (OpenMedia::input(&raw, path.toUtf8().constData()) < 0) return std::nullopt;
+    if (OpenMedia::input(&raw, path.toUtf8().constData()) < 0) throw Unreadable{};
     const std::unique_ptr<AVFormatContext, void (*)(AVFormatContext*)> fmt(raw, [](AVFormatContext* f) {
         avformat_close_input(&f);
     });
@@ -107,7 +109,7 @@ std::optional<Stutter::Scan> read(const QString& path, const std::atomic<bool>* 
     };
     int index = videoStream();
     if (index < 0) { // streams that only show up while reading (MPEG-TS)
-        if (avformat_find_stream_info(fmt.get(), nullptr) < 0) return std::nullopt;
+        if (avformat_find_stream_info(fmt.get(), nullptr) < 0) throw Unreadable{};
         index = videoStream();
     }
     if (index < 0) return std::nullopt;
@@ -166,6 +168,8 @@ std::optional<Stutter::Scan> scan(const QString& path, const std::atomic<bool>* 
             s = read(fi.absoluteFilePath(), cancel);
         } catch (const Canceled&) {
             return std::nullopt; // not cached: the next call reads the file
+        } catch (const Unreadable&) {
+            return std::nullopt; // the same
         }
         saveDisk(key, s);
     }
