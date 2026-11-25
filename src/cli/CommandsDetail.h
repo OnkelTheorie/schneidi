@@ -43,6 +43,10 @@ QString unreadableMessage(const QString& path);
 int parseTime(const QJsonValue& v, const ProjectFormat& fmt, const QString& what);
 // A signed time (trim/move `by`): -12, "-2s", "1.5s"; missing = 0. 2.5 or true were 0 silently: refused as parseTime does
 int parseSignedTime(const QJsonValue& v, const ProjectFormat& fmt, const QString& what);
+// The last frame a project file keeps (ProjectFile's intOf): a clip or cue beyond it came back elsewhere on loading,
+// and sums of two times near int's end overflowed. Fails with BAD_ARGUMENT when `end` (summed in qint64) lies beyond
+inline constexpr qint64 kMaxFrame = qint64(1) << 30;
+void checkFrameLimit(qint64 end, const QString& what);
 QString tc(int frames, const ProjectFormat& fmt);
 double seconds(int frames, const ProjectFormat& fmt);
 // [from, to) as frames, seconds and timecode

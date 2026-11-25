@@ -328,6 +328,7 @@ void opTitle(Session& s, const QJsonObject& op)
         const Clip& c = clipOf(s, op);
         if (!c.isTitle()) fail("BAD_ARGUMENT", QString("clip %1 is not a title").arg(c.id));
         id = c.id;
+        checkFrameLimit(qint64(c.start) + length, "title");
         if (length > c.length()) {
             TrackRef ref;
             TimelineOps::findClip(s.project.timeline(), id, &ref);
@@ -343,6 +344,7 @@ void opTitle(Session& s, const QJsonObject& op)
         const bool wholeTimeline = op.value("kind").toString() == "progress" && !op.contains("at") && length <= 0;
         const int at = wholeTimeline ? 0 : timeOf(s, op, "at", 0);
         const int track = op.contains("track") ? parseTrack(op.value("track")) : -1;
+        checkFrameLimit(qint64(std::max(0, at)) + (length > 0 ? length : 5 * s.project.fps()), "title");
         const QHash<int, Clip> before =
             clipsIn(s, track, std::max(0, at), std::max(0, at) + (length > 0 ? length : 5 * s.project.fps()));
         s.selection.clear();
@@ -995,10 +997,18 @@ void opRemoveMedia(Session& s, const QJsonObject& op)
 void opCopy(Session& s, const QJsonObject& op)
 {
     const QVector<int> ids = clipIds(s, op);
+    const int at = timeOf(s, op, "at");
+    qint64 first = kMaxFrame, last = 0;
+    for (int id : ids)
+        if (const Clip* c = TimelineOps::findClip(s.project.timeline(), id)) {
+            first = std::min<qint64>(first, c->start);
+            last = std::max<qint64>(last, c->end());
+        }
+    checkFrameLimit(at + std::max<qint64>(0, last - first), "copy: the last clip");
     s.selection.set(QSet<int>(ids.begin(), ids.end()));
     s.editor.copySelection();
     s.selection.clear();
-    s.editor.paste(timeOf(s, op, "at"));
+    s.editor.paste(at);
 }
 
 // Source edits like F9–F12 in the app; `at` (and for fit_to_fill `to`) instead of playhead and timeline In/Out

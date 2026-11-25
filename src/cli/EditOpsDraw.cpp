@@ -93,6 +93,11 @@ void opDraw(Session& s, const QJsonObject& op)
         if (length <= 0) fail("BAD_ARGUMENT", "until must lie after from/at");
     }
     if ((op.contains("duration") || op.contains("until")) && length <= 0) fail("BAD_ARGUMENT", "duration must be at least one frame");
+    {
+        const Clip* c = created ? nullptr : &clipOf(s, op);
+        checkFrameLimit(qint64(at >= 0 ? at : c ? c->start : 0) + (length > 0 ? length : c ? c->length() : 5 * s.project.fps()),
+                        "drawing");
+    }
     double reveal = -1; // seconds; -1 = unchanged
     if (op.contains("reveal")) {
         const QJsonValue v = op.value("reveal");

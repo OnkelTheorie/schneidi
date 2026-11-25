@@ -2442,6 +2442,22 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         }
         run("edit", {{"project", proj}, {"ops", QString(R"([{"op":"place","media":"%1","at":0,"duration":536870912,"track":"V3"}])").arg(still)}});
         CHECK_EQ(run("info", {{"project", proj}})["timeline"]["tracks"][2]["clips"][0]["end"].toInt(), 536870912);
+        // The other ops that place or move by a time keep the same limit (a title at 1.5 billion came back at 2^30)
+        {
+            const int last = run("info", {{"project", proj}})["timeline"]["tracks"][1]["clips"][0]["id"].toInt();
+            const QByteArray kept = [&] { QFile f(proj); return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray(); }();
+            for (const char* op : {R"({"op":"title","text":"x","at":1500000000,"duration":10})",
+                                   R"({"op":"title","text":"x","at":0,"duration":1500000000})",
+                                   R"({"op":"subtitle","text":"x","at":2000000000})",
+                                   R"({"op":"shape","kind":"star","at":1073741820,"duration":10})",
+                                   R"({"op":"move","clips":[%1],"by":1})", R"({"op":"move","clips":[%1],"to":2000000000})",
+                                   R"({"op":"copy","clips":[%1],"at":1073741810})"}) {
+                const QString msg = messageOf("edit", {{"project", proj}, {"ops", QString("[%1]").arg(QString(op).arg(last))}});
+                Check::report(msg.startsWith("BAD_ARGUMENT") && msg.contains("beyond the limit"), qPrintable(msg), __FILE__, __LINE__);
+                QFile f(proj);
+                CHECK(f.open(QIODevice::ReadOnly) && f.readAll() == kept);
+            }
+        }
     }
     // Subtitles only (format srt/vtt): the same checks as a video render - the extension must fit, and no subtitle
     // file may replace a source file of the project (it wrote SRT text over the clip with overwrite)

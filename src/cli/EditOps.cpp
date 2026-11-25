@@ -214,10 +214,6 @@ QColor colorOf(const QJsonValue& v, const QString& what)
 
 namespace {
 
-// The last frame a project file keeps (ProjectFile's intOf): a clip beyond it came back cut on loading, and the sum of
-// two times near int's end (a still at 2 billion frames with 2 billion frames of length) overflowed
-constexpr qint64 kMaxFrame = qint64(1) << 30;
-
 // Source range [in, out) of a media file: defaults to the whole file
 void sourceRange(Session& s, const QJsonObject& op, const MediaInfo& m, int* in, int* out)
 {
@@ -719,6 +715,10 @@ void opMove(Session& s, const QJsonObject& op)
     int delta = parseSignedTime(by, s.format(), "by");
     const QVector<int> ids = clipIds(s, op);
     if (op.contains("to")) delta = timeOf(s, op, "to") - clipOf(s, {{"clip", ids.first()}}).start;
+    qint64 lastEnd = 0;
+    for (int id : ids)
+        if (const Clip* c = TimelineOps::findClip(s.project.timeline(), id)) lastEnd = std::max<qint64>(lastEnd, c->end());
+    checkFrameLimit(lastEnd + delta, "move: the last clip");
     const int trackDelta = op.value("track_delta").toInt();
     TrackRef from;
     const Clip* first = TimelineOps::findClip(s.project.timeline(), ids.first(), &from);
@@ -776,11 +776,12 @@ void opSubtitle(Session& s, const QJsonObject& op)
     }
     const SubtitleCue c = *Subtitles::find(s.project.timeline(), id);
     const int start = op.contains("at") ? timeOf(s, op, "at") : c.start;
-    int stop = op.contains("to") ? timeOf(s, op, "to") : start + c.length();
-    if (op.contains("duration")) stop = start + timeOf(s, op, "duration");
+    qint64 stop = op.contains("to") ? timeOf(s, op, "to") : qint64(start) + c.length();
+    if (op.contains("duration")) stop = qint64(start) + timeOf(s, op, "duration");
     if (stop <= start) fail("BAD_ARGUMENT", "'to' must be after 'at'");
+    checkFrameLimit(stop, "subtitle");
     if (start == c.start && stop == c.end) return;
-    ed.setSubtitleTiming(id, start, stop); // stops at the neighbours
+    ed.setSubtitleTiming(id, start, int(stop)); // stops at the neighbours
     // Cues never overlap: say where it stopped (a merge has to delete the next cue before it extends this one)
     const SubtitleCue* now = Subtitles::find(s.project.timeline(), id);
     if (now && (now->start != start || now->end != stop))

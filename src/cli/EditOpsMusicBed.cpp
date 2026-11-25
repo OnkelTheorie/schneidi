@@ -73,6 +73,7 @@ MusicBed::Options bedOptions(Session& s, const QJsonObject& op, int* at, int* fr
     } else {
         *frames = timeOf(s, op, "length");
     }
+    checkFrameLimit(qint64(*at) + std::max(0, *frames), "music_bed");
     const double seconds = *frames / fps;
     const double halfFrame = 0.5 / fps; // the limits in whole frames (600 s at 23.976 fps: 14386 frames)
     if (seconds < MusicBed::kMinLength - halfFrame || seconds > MusicBed::kMaxLength + halfFrame)

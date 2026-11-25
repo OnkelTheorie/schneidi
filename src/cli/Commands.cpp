@@ -199,6 +199,12 @@ int parseSignedTime(const QJsonValue& v, const ProjectFormat& fmt, const QString
     return parseTime(v, fmt, what);
 }
 
+void checkFrameLimit(qint64 end, const QString& what)
+{
+    if (end > kMaxFrame)
+        fail("BAD_ARGUMENT", QString("%1 would end at frame %2, beyond the limit of %3 a project keeps").arg(what).arg(end).arg(kMaxFrame));
+}
+
 QString tc(int frames, const ProjectFormat& fmt) { return Timecode::format(frames, fmt.rate.timebase()); }
 double seconds(int frames, const ProjectFormat& fmt) { return std::round(frames / fmt.rate.fps() * 1000) / 1000; }
 
