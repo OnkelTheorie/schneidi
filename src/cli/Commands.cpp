@@ -1416,8 +1416,10 @@ const QVector<Command>& commands()
                                "crop_bars use it"}},
          cmdProbe},
         {"silence", "Find pauses in the audio of a media file or a project's timeline. Returns 'silence' and "
-                    "'sound' ranges [from, to); for a project they are timeline frames and 'sound' fits the 'keep' "
-                    "edit operation directly (jump cut).",
+                    "'sound' ranges [from, to). For a media file (with project set: in its frame rate) 'sound' fits the "
+                    "'keep' edit operation with that file as media (jump cut). For a project they are timeline "
+                    "frames: 'silence' fits 'delete_range' with ranges (all cut together, ripple) - not 'keep', "
+                    "which places source ranges of a file; or use 'cut_pauses'.",
          {{"file", T::Path, "media file, or a project (.schneidi or \"@app\"): its timeline sound as exported", true, true},
           {"project", T::Path, "for a media file: count frames in this project's frame rate"},
           {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},

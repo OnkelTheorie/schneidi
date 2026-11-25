@@ -2661,6 +2661,13 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(s.project.timeline().markers.count(100050), qsizetype(1));
         CHECK(s.project.undoStack()->count() <= 1);
     }
+    // Review 25.11. (x-toolhelp): what the help tells an agent is what the tools do
+    {
+        // silence on a project: timeline frames - delete_range, not keep (keep places source ranges of a file)
+        const QString text = QJsonDocument(run("help", {{"command", "silence"}})).toJson();
+        CHECK(text.contains("'silence' fits 'delete_range'"));
+        CHECK(!text.contains("for a project they are timeline frames and 'sound' fits the 'keep'"));
+    }
     return Check::result();
 }
 
