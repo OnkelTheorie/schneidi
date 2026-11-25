@@ -316,6 +316,35 @@ int main(int argc, char** argv)
         CHECK(page->inspector()->findChild<QLineEdit*>("comp_param_rotate") != nullptr);
         CHECK(page->inspector()->findChild<QLineEdit*>("comp_param_p0x") != nullptr);
         dump(&w, "comp-inspector-polygon");
+        // A turned polygon: its handles sit where the picture has the points (turned around the middle of their
+        // bounding box, core/Masks.cpp), a drag puts the turned point under the mouse (review ui-04)
+        {
+            const int before = undo->index();
+            CHECK(editor->setCompNodeValues(clipId, mask, {{"points", 3}, {"p0x", 0.2}, {"p0y", 0.2}, {"p1x", 0.6},
+                                                           {"p1y", 0.2}, {"p2x", 0.6}, {"p2y", 0.4}, {"rotate", 0.0}}, &e));
+            settle();
+            const QVector<CompOverlay::Handle> flat = page->overlay()->handles();
+            CHECK(editor->setCompNodeValues(clipId, mask, {{"rotate", 90.0}}, &e));
+            settle();
+            const QVector<CompOverlay::Handle> turned = page->overlay()->handles();
+            if (CHECK(flat.size() == 3 && turned.size() == 3)) {
+                const QPointF m((flat[0].at.x() + flat[1].at.x()) / 2, (flat[0].at.y() + flat[2].at.y()) / 2);
+                for (int i = 0; i < 3; ++i) { // 90 degrees clockwise (y down): (dx, dy) -> (-dy, dx)
+                    const QPointF d = flat[i].at - m, want = m + QPointF(-d.y(), d.x());
+                    Check::report(QLineF(turned[i].at, want).length() < 0.5, "turned polygon handle", __FILE__, __LINE__,
+                                  QString("%1: %2,%3 want %4,%5").arg(i).arg(turned[i].at.x()).arg(turned[i].at.y())
+                                      .arg(want.x()).arg(want.y()));
+                }
+                const QRectF frame(0, 0, 640, 360);
+                CompOverlay* ov = page->overlay();
+                const QPointF from = ov->handlePos(0, frame), to = from + QPointF(12, 8);
+                overlayDrag(ov, frame, from, to, 4);
+                Check::report(QLineF(ov->handlePos(0, frame), to).length() < 1.5, "turned point follows the mouse",
+                              __FILE__, __LINE__);
+            }
+            while (undo->index() > before) undo->undo();
+            settle();
+        }
         undo->undo();
         settle();
         CHECK(page->inspector()->findChild<QLineEdit*>("comp_param_x") != nullptr); // a rectangle again

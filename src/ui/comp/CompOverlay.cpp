@@ -30,6 +30,26 @@ namespace {
 constexpr double kHandle = 4.5; // half size (widget pixels)
 constexpr double kHit = 9;
 
+// A polygon, curve or gradient mask turns its points around the middle of their bounding box (core/Masks.cpp)
+QPointF boxMiddle(const QVector<QPointF>& pts)
+{
+    double x0 = pts[0].x(), x1 = x0, y0 = pts[0].y(), y1 = y0;
+    for (const QPointF& p : pts) {
+        x0 = std::min(x0, p.x());
+        x1 = std::max(x1, p.x());
+        y0 = std::min(y0, p.y());
+        y1 = std::max(y1, p.y());
+    }
+    return {(x0 + x1) / 2, (y0 + y1) / 2};
+}
+
+QPointF turned(QPointF p, QPointF middle, double degrees)
+{
+    QTransform r;
+    r.rotate(degrees); // clockwise on screen like core/Masks.cpp's rotated()
+    return middle + r.map(p - middle);
+}
+
 } // namespace
 
 CompOverlay::CompOverlay(Editor* editor, QObject* parent)
@@ -136,9 +156,15 @@ QVector<CompOverlay::Handle> CompOverlay::handles() const
         } else {
             const bool gradient = shape == QLatin1String("linear") || shape == QLatin1String("radial");
             const int count = gradient ? 2 : std::clamp(int(num("points")), 0, 32);
+            // where the picture has them: turned by rotate around their middle (the stored points are unturned)
+            QVector<QPointF> pts;
+            for (int i = 0; i < count; ++i) pts << at(QStringLiteral("p%1x").arg(i), QStringLiteral("p%1y").arg(i));
+            const double degrees = num("rotate");
+            const QPointF middle = pts.isEmpty() ? QPointF() : boxMiddle(pts);
             for (int i = 0; i < count; ++i) {
                 const QString p = QStringLiteral("p%1").arg(i);
-                out << Handle{Handle::Point, p + 'x', p + 'y', at(p + 'x', p + 'y'), QString::number(i + 1)};
+                out << Handle{Handle::Point, p + 'x', p + 'y', degrees != 0 ? turned(pts[i], middle, degrees) : pts[i],
+                              QString::number(i + 1)};
             }
         }
     } else if (k->id == QLatin1String("transform")) {
@@ -344,8 +370,30 @@ bool CompOverlay::mouseMove(QMouseEvent* e, const QRectF& frame)
         values.insert(h.ky, std::abs(l.y()) * 2 / pic.width());
     } else { // 0..1 of the clip's own picture
         const QRectF r = ownRect();
-        values.insert(h.kx, (pos.x() - r.left()) / std::max(1.0, r.width()));
-        values.insert(h.ky, (pos.y() - r.top()) / std::max(1.0, r.height()));
+        QPointF at = pos;
+        // A turned polygon, curve or gradient: the stored (unturned) point that the turn puts under the mouse. The
+        // middle it turns around moves with the point, so a few rounds settle it (a contraction for any angle < 180)
+        const Clip* c = clip();
+        CompGraph g;
+        const CompNode* n = c && CompUi::graphOf(*c, &g) ? g.node(m_node) : nullptr;
+        const PC::NodeType* k = n ? PC::find(n->type) : nullptr;
+        if (k && k->id == QLatin1String("mask") && h.kx == QStringLiteral("p%1x").arg(m_drag)) {
+            const int t = CompUi::clipFrame(*c, m_playhead);
+            const double degrees = CompUi::number(*c, m_node, *k, "rotate", t);
+            if (degrees != 0) {
+                QVector<QPointF> raw;
+                for (int i = 0; i < hs.size(); ++i)
+                    raw << r.topLeft()
+                               + QPointF(CompUi::number(*c, m_node, *k, QStringLiteral("p%1x").arg(i), t) * r.width(),
+                                         CompUi::number(*c, m_node, *k, QStringLiteral("p%1y").arg(i), t) * r.height());
+                for (int round = 0; round < 24; ++round) {
+                    raw[m_drag] = at;
+                    at = turned(pos, boxMiddle(raw), -degrees);
+                }
+            }
+        }
+        values.insert(h.kx, (at.x() - r.left()) / std::max(1.0, r.width()));
+        values.insert(h.ky, (at.y() - r.top()) / std::max(1.0, r.height()));
     }
     m_editor->setCompNodeValuesAt(m_clipId, m_node, values, m_playhead,
                                   QStringLiteral("comp:overlay:%1:%2").arg(m_clipId).arg(m_node));
