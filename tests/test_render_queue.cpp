@@ -115,6 +115,17 @@ int main(int argc, char** argv)
         CHECK(RenderSettings::fromJson(a.toJson()) == a);
         a.size = QSize(1080, 1920);
         CHECK(RenderSettings::fromJson(a.toJson()) == a);
+        // Hand-written values stay within the project format's limits (100000 wide allocated 40 GB per layer)
+        const RenderSettings huge = RenderSettings::fromJson(QJsonObject{
+            {"width", 100000}, {"height", 1}, {"shortSide", 2000000000}, {"rate", "100000/1"}, {"maxFps", 99999}});
+        CHECK_EQ(huge.size, QSize(kMaxFrameSize, kMinFrameSize));
+        CHECK_EQ(huge.shortSide, kMaxFrameSize);
+        CHECK(huge.rateNum == RenderSettings().rateNum && huge.rateDen == RenderSettings().rateDen);
+        CHECK_EQ(huge.maxFps, 1000);
+        CHECK_EQ(RenderSettings::fromJson(QJsonObject{{"rate", "60000/1001"}}).rateNum, 60000); // real rates stay
+        const QVector<RenderJob> jobs = RenderQueueJson::fromJson(QJsonArray{QJsonObject{
+            {"id", 1}, {"path", "/tmp/a.mp4"}, {"width", 100000}, {"height", 100000}, {"settings", QJsonObject{}}}});
+        CHECK(jobs.size() == 1 && jobs[0].size == QSize(kMaxFrameSize, kMaxFrameSize));
     }
 
     // --- Smart render at "High" and "Web" (the writer copies below the cap only): copied pictures keep the file's bit
