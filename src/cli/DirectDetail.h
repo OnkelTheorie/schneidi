@@ -87,6 +87,14 @@ QJsonObject applyTemplate(const Direction::Session& s, const QVector<const Direc
 // The timeline as it is now, as a fingerprint (its clips): ranges and words measured on it fit only that state
 QString timelineStamp(const QString& project, const QString& timeline);
 
+// The words of one audio stream of a file, transcribed alone (whisper through `transcribe`), cached per file, stream,
+// language and verbatim (AnalysisCache "speech-words"): {stream, language, words:[[from_ms, to_ms, text]…]}; no speech
+// = no words. nullopt = the file or stream cannot be read (not cached)
+std::optional<QJsonObject> streamTranscript(const QString& file, int stream, const QString& language, bool verbatim,
+                                            Context& ctx);
+// A stream of the player's microphone or of a voice chat (not the mix, not music), by its title
+bool voiceStream(const QString& title);
+
 // What `short` does after its cut, on its vertical timeline: word captions (style karaoke|word|off; whisper when
 // installed - never installed from here) and effect sounds (sfx 'mild': whooshes on the cuts, hits on the kills of
 // `game`). shortFinishOps measures everything (speech, the sound's peak, the kill feed) and answers the ops, so the app
@@ -97,6 +105,12 @@ struct ShortFinish {
     QString game;     // empty = none
     QString language; // empty = detect
 };
+// Word captions of a timeline's voice tracks (audible tracks of microphone or voice chat streams), each (file, stream)
+// transcribed on its own (streamTranscript) and mapped onto the timeline, merged in time order a phrase at a time
+// (Captions::mergeSpeakers): [{from, to, text, speaker}] in timeline frames for op 'captions'. *voices: the tracks'
+// names; empty (and no words) when the timeline has no voice track - then the timeline's sound is the source
+QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, const QString& language, Context& ctx,
+                             QStringList* voices);
 // noteKeys (optional): the notes' fixed keys (Direction::noteText), in the order of notes, for a page to translate
 QJsonArray shortFinishOps(const QString& project, const QString& timeline, const ShortFinish& f, Context& ctx,
                           QJsonArray* done, QJsonArray* notes, QJsonArray* noteKeys = nullptr);

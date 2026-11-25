@@ -6,6 +6,7 @@
 // and warm (DIRECT_MEASURE=1 makes them 30 s long as in the plan's target).
 #include "cli/Commands.h"
 #include "cli/DirectDetail.h"
+#include "engine/AnalysisCache.h"
 #include "core/AppPaths.h"
 #include "core/Direction.h"
 #include "engine/Extensions.h"
@@ -29,6 +30,7 @@
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QPainter>
+#include <QSet>
 #include <QJsonDocument>
 #include <QProcess>
 #include <QTemporaryDir>
@@ -848,6 +850,30 @@ int main(int argc, char** argv)
             std::printf("       voices: microphone %+.1f dB, Discord %+.1f dB\n", micDb, chatDb);
             CHECK(std::abs(micDb) < 0.01);
             CHECK(chatDb > 6 && chatDb < 12.01);
+            // The captions of the short: each voice transcribed on its own (here the transcripts are in the cache
+            // already, as whisper would have left them), both in one list in time order, a speaker per word
+            const auto put = [&](int stream, const QJsonArray& words) {
+                AnalysisCache::put(AnalysisCache::key("speech-words", two,
+                                                      QJsonObject{{"language", ""}, {"stream", stream}, {"verbatim", false}}, 1),
+                                   QJsonObject{{"stream", stream}, {"language", "de"}, {"words", words}});
+            };
+            put(1, QJsonArray{QJsonArray{4100, 4400, "Einer"}, QJsonArray{4450, 4800, "soll?"}});
+            put(2, QJsonArray{QJsonArray{5600, 6000, "Heilige"}, QJsonArray{6050, 6500, "Scheiße."},
+                              QJsonArray{7000, 7300, "Crazy."}});
+            Cli::Context cctx;
+            QStringList voices;
+            const QJsonArray words = Cli::detail::voiceCaptionWords(made["project"].toString(), made["timeline"].toString(),
+                                                                    "", cctx, &voices);
+            QStringList said;
+            QSet<int> speakers;
+            for (const QJsonValue& w : words) {
+                said << w["text"].toString();
+                speakers << w["speaker"].toInt();
+            }
+            if (!CHECK_EQ(said.join(' '), QString("Einer soll? Heilige Scheiße. Crazy.")))
+                std::printf("       voices %s\n", qPrintable(voices.join(", ")));
+            CHECK(voices.contains("Mikrofon") && voices.contains("Discord") && speakers.size() == 2);
+            for (int i = 1; i < words.size(); ++i) CHECK(words[i]["from"].toInt() >= words[i - 1]["from"].toInt());
         }
     }
 

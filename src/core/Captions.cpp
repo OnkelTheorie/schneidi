@@ -221,6 +221,47 @@ QVector<TranscriptCut::Word> onBeats(const QVector<TranscriptCut::Word>& words, 
     return out;
 }
 
+QVector<TranscriptCut::Word> mergeSpeakers(const QVector<QVector<TranscriptCut::Word>>& speakers, int pauseFrames)
+{
+    struct Phrase {
+        int speaker;
+        QVector<TranscriptCut::Word> words;
+    };
+    QVector<Phrase> phrases;
+    for (int k = 0; k < speakers.size(); ++k) {
+        QVector<TranscriptCut::Word> words;
+        for (const TranscriptCut::Word& w : speakers[k])
+            if (!w.text.trimmed().isEmpty()) words << w;
+        std::stable_sort(words.begin(), words.end(), [](const auto& a, const auto& b) { return a.from < b.from; });
+        for (int i = 0; i < words.size(); ++i) {
+            const bool open = i > 0 && !phrases.isEmpty() && phrases.last().speaker == k;
+            const QString before = open ? words[i - 1].text.trimmed() : QString();
+            const bool ended = before.isEmpty() || before.endsWith('.') || before.endsWith('?') || before.endsWith('!')
+                               || words[i].from - words[i - 1].spokenTo > pauseFrames;
+            if (!open || ended) phrases << Phrase{k, {}};
+            phrases.last().words << words[i];
+        }
+    }
+    std::stable_sort(phrases.begin(), phrases.end(), [](const Phrase& a, const Phrase& b) {
+        return a.words.first().from != b.words.first().from ? a.words.first().from < b.words.first().from
+                                                            : a.speaker < b.speaker;
+    });
+    QVector<TranscriptCut::Word> out;
+    int spoken = INT_MIN; // where the phrase before ends being spoken
+    for (const Phrase& p : std::as_const(phrases)) {
+        const int shift = spoken == INT_MIN ? 0 : std::max(0, spoken - p.words.first().from);
+        for (TranscriptCut::Word w : p.words) {
+            w.from += shift;
+            w.to += shift;
+            w.spokenTo += shift;
+            w.track = p.speaker;
+            out << w;
+        }
+        spoken = std::max(spoken, out.last().spokenTo);
+    }
+    return out;
+}
+
 QVector<SubtitleCue> fromWords(const QVector<TranscriptCut::Word>& input, const Options& o)
 {
     QVector<TranscriptCut::Word> spoken;
@@ -252,6 +293,8 @@ QVector<SubtitleCue> fromWords(const QVector<TranscriptCut::Word>& input, const 
     };
     for (int i = 0; i < list.size(); ++i) {
         if (i > first && list[i].from - list[i - 1].spokenTo > o.maxGapFrames) add(first, i - 1), first = i;
+        // Another speaker (another track's words): a cue of their own
+        if (i > first && list[i].track != list[i - 1].track) add(first, i - 1), first = i;
         // A cut between two clips: never one caption over it
         if (i > first && cutAfter(list[i - 1].from) <= list[i].from) add(first, i - 1), first = i;
         const QString t = list[i].text.trimmed();

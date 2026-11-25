@@ -303,13 +303,6 @@ QJsonArray deathScreens(const MediaSource& m, QString* status)
 
 // ---------- Voices ----------
 
-// A stream of the player's microphone or of a voice chat (not the mix, not music)
-bool voiceStream(const QString& title)
-{
-    static const QRegularExpression chat("discord|teamspeak|\\bts3?\\b|mumble|chat", QRegularExpression::CaseInsensitiveOption);
-    return !StreamPresets::isMixTitle(title) && (Transcript::isVoiceName(title) || chat.match(title).hasMatch());
-}
-
 // The voice streams of a recording with several streams: where something is said or laughed (Material::voice) and
 // their laughter and shouts as moments - from the sentence that leads into them (a joke, a call) to a little after
 QJsonArray voiceMoments(const MediaSource& m, double length, QJsonArray* voice, QString* status)
@@ -607,6 +600,12 @@ double gameEnd(const MediaSource& m, double length)
     return gameEndOf(pictures, first, kTailRate);
 }
 } // namespace
+
+bool voiceStream(const QString& title)
+{
+    static const QRegularExpression chat("discord|teamspeak|\\bts3?\\b|mumble|chat", QRegularExpression::CaseInsensitiveOption);
+    return !StreamPresets::isMixTitle(title) && (Transcript::isVoiceName(title) || chat.match(title).hasMatch());
+}
 
 QString gameInPicture(const QStringList& files, Context& ctx, int upTo)
 {

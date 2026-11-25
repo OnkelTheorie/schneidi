@@ -96,38 +96,44 @@ QJsonObject verbatimTranscripts(const QString& project, int timeline, const QStr
     Session view(project);
     view.selectTimeline(timeline);
     for (const auto& [file, stream] : TranscriptCut::missingTranscripts(view.project.timeline(), view.project.media())) {
-        if (!QFileInfo::exists(file)) continue;
-        const QJsonObject keyOptions{{"language", language}, {"verbatim", true}, {"stream", stream}};
-        const AnalysisCache::Key key = AnalysisCache::key("speech-words", file, keyOptions, 1);
-        QJsonObject one;
-        if (const auto hit = AnalysisCache::get(key)) {
-            one = *hit;
-        } else {
-            QJsonObject t{{"source", file}, {"words", true}, {"verbatim", true}, {"audio_stream", QString::number(stream)}};
-            if (!language.isEmpty()) t["language"] = language;
-            QJsonObject r;
-            try {
-                r = runSub("transcribe", t, ctx);
-            } catch (const Error& e) {
-                if (e.code == QLatin1String("CANCELED")) throw;
-                continue; // no speech, an unreadable stream: no fillers from it
-            }
-            const double fps = r["fps"].toDouble(25);
-            QJsonArray words;
-            for (const QJsonValue& w : r["words"].toArray())
-                words << QJsonArray{std::round(w["from"].toDouble() / fps * 1000), std::round(w["to"].toDouble() / fps * 1000),
-                                    w["text"].toString()};
-            one = {{"stream", stream}, {"language", r["language"].toString()}, {"words", words}};
-            AnalysisCache::put(key, one);
-        }
+        const std::optional<QJsonObject> one = streamTranscript(file, stream, language, true, ctx);
+        if (!one) continue; // no speech, an unreadable stream: no fillers from it
         QJsonArray list = out[file].toArray();
-        list << one;
+        list << *one;
         out[file] = list;
     }
     return out;
 }
 
 } // namespace
+
+std::optional<QJsonObject> streamTranscript(const QString& file, int stream, const QString& language, bool verbatim,
+                                            Context& ctx)
+{
+    if (!QFileInfo::exists(file)) return std::nullopt;
+    QJsonObject keyOptions{{"language", language}, {"stream", stream}};
+    keyOptions["verbatim"] = verbatim; // (the key of the verbatim ones as before)
+    const AnalysisCache::Key key = AnalysisCache::key("speech-words", file, keyOptions, 1);
+    if (const auto hit = AnalysisCache::get(key)) return *hit;
+    QJsonObject t{{"source", file}, {"words", true}, {"audio_stream", QString::number(stream)}};
+    if (verbatim) t["verbatim"] = true;
+    if (!language.isEmpty()) t["language"] = language;
+    QJsonObject r;
+    try {
+        r = runSub("transcribe", t, ctx);
+    } catch (const Error& e) {
+        if (e.code == QLatin1String("CANCELED")) throw;
+        if (e.code != QLatin1String("NO_SPEECH")) return std::nullopt; // an unreadable stream: asked again next time
+    }
+    const double fps = r["fps"].toDouble(25);
+    QJsonArray words;
+    for (const QJsonValue& w : r["words"].toArray())
+        words << QJsonArray{std::round(w["from"].toDouble() / fps * 1000), std::round(w["to"].toDouble() / fps * 1000),
+                            w["text"].toString()};
+    const QJsonObject one{{"stream", stream}, {"language", r["language"].toString()}, {"words", words}};
+    AnalysisCache::put(key, one);
+    return one;
+}
 
 QString timelineStamp(const QString& project, const QString& timeline)
 {

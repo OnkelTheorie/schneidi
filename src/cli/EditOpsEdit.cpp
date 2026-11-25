@@ -653,6 +653,7 @@ void opCaptions(Session& s, const QJsonObject& op)
             w.from = timeOf(s, o, "from");
             w.to = w.spokenTo = std::max(w.from + 1, timeOf(s, o, "to", w.from + 1));
             w.text = o.value("text").toString().trimmed();
+            w.track = o.value("speaker").toInt(0); // (a caption never mixes two speakers' words)
             if (!w.text.isEmpty()) words << w;
         }
         std::stable_sort(words.begin(), words.end(), [](const auto& a, const auto& b) { return a.from < b.from; });
@@ -1129,7 +1130,7 @@ void addEditOps(QVector<OpDef>& ops)
                  opTrack, QStringList{"enabled", "captions"} + kStyleKeys + kCaptionKeys}
         << OpDef{"add_subtitle_track", "{op:'add_subtitle_track', name?}", {}, {}, opAddSubtitleTrack}
         << OpDef{"captions",
-                 "{op:'captions', style?:'karaoke'|'word'|'beat'|'lines', words?:[{from, to, text}], track?:'A1', "
+                 "{op:'captions', style?:'karaoke'|'word'|'beat'|'lines', words?:[{from, to, text, speaker?}], track?:'A1', "
                  "from?, to?, max_words?, beats?:[times], bpm?, first_beat?, name?}",
                  "word-by-word captions (shorts/reels style) from the transcript as a new, visible subtitle track",
                  "style: karaoke = the phrase stays, the spoken word lights up (highlight colour, slightly bigger); "
@@ -1137,7 +1138,8 @@ void addEditOps(QVector<OpDef>& ops)
                  "the times from `beats` with beats:true, or bpm + first_beat for a regular grid); lines = plain "
                  "subtitles with word times. Words: the media transcripts (Transcript panel; they follow trims and "
                  "speed changes, track = only that audio track's clips) or words = the 'words' list of `transcribe` "
-                 "on the project with words:true (timeline frames) - `transcribe` with apply:true and captions:'<style>' "
+                 "on the project with words:true (timeline frames; speaker: a number per voice, a caption never mixes "
+                 "two) - `transcribe` with apply:true and captions:'<style>' "
                  "does both in one call. max_words = words per caption (default 4, word/beat 3). Text style keys as for "
                  "'track' (" + kStyleFields + "; y = bottom of the text above the picture's bottom) and " + kCaptionFields
                      + ". The default style is big bold text with an outline, on 9:16 above the part phone apps cover. "
