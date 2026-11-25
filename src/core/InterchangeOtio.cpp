@@ -256,8 +256,8 @@ Sequence readOtio(const QByteArray& data)
             for (const QJsonValue& e : cv["effects"].toArray()) {
                 if (e["OTIO_SCHEMA"].toString().startsWith("LinearTimeWarp")) {
                     const double s = e["time_scalar"].toDouble(1.0);
-                    if (s != 0) {
-                        it.speed = std::abs(s);
+                    if (s != 0 && std::isfinite(s)) { // within the speeds a project file keeps (as ProjectFile)
+                        it.speed = std::clamp(std::abs(s), Retime::kMinSpeed, Retime::kMaxSpeed);
                         it.reverse = s < 0;
                     }
                 } else {

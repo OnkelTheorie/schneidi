@@ -56,6 +56,7 @@
 #include <QJsonDocument>
 #include <QPainter>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QTimer>
 #include <QUndoStack>
 
@@ -452,6 +453,8 @@ QByteArray planBase(const Session& s, const QString& path)
 {
     ProjectData d = Live::host() ? Live::host()->liveProject()->data() : s.project.data();
     d.playhead = 0;
+    d.views.clear();     // UI state carried from the file (Project::data), as the playhead
+    d.missingAt.clear(); // where missing files were expected when read: no part of the edit
     d.renderQueue.clear();
     d.currentSequence = -1; // every timeline in "sequences"
     d.timeline = emptyTimeline();
@@ -772,10 +775,9 @@ QJsonObject cmdEdit(const QJsonObject& a, Context&)
     const QJsonObject stored{{"id", id},         {"created", now.toString(Qt::ISODate)}, {"project", s.path},
                              {"timeline", sequence}, {"base", QString::fromLatin1(base)},  {"ops", ops},
                              {"adds", adds}};
-    QFile f(QDir(dir).filePath(id + ".json"));
-    if (!f.open(QIODevice::WriteOnly) || f.write(QJsonDocument(stored).toJson(QJsonDocument::Compact)) < 0)
+    QSaveFile f(QDir(dir).filePath(id + ".json")); // complete or not at all (a cut-off plan was read as broken later)
+    if (!f.open(QIODevice::WriteOnly) || f.write(QJsonDocument(stored).toJson(QJsonDocument::Compact)) < 0 || !f.commit())
         fail("SAVE_FAILED", "cannot write the plan " + f.fileName());
-    f.close();
     int added = 0, changed = 0, removed = 0;
     const QJsonObject total = o["changes"].toObject();
     added = total["added"].toArray().size();

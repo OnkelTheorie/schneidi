@@ -155,7 +155,10 @@ Bed ensureBed(const QString& projectPath, const MusicBed::Options& o)
     } catch (const std::system_error& e) {
         fail("FAILED", QString("cannot make the music bed: %1").arg(QString::fromLocal8Bit(e.what())));
     }
-    if (!MusicBed::writeWav(b.path, b.info)) fail("FAILED", "cannot write " + QDir::toNativeSeparators(b.path));
+    // The file is there, only its grid left the cache: made again for the grid only (the same options make the same
+    // sound). Written again, Windows refused to replace it while the app plays it (FAILED "cannot write")
+    if (!QFileInfo::exists(b.path) && !MusicBed::writeWav(b.path, b.info))
+        fail("FAILED", "cannot write " + QDir::toNativeSeparators(b.path));
     b.info.samples = {};
     storeSongBeats(b.path, 0, b.info.beats);
     b.made = true;

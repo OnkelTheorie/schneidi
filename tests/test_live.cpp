@@ -9,6 +9,7 @@
 #include "core/AppPaths.h"
 #include "core/EffectRegistry.h"
 #include "core/LiveHost.h"
+#include "core/NestedLoop.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/Selection.h"
@@ -31,6 +32,7 @@
 #include <QUndoStack>
 #include <QWindow>
 
+#include <optional>
 #include <stdexcept>
 
 namespace {
@@ -559,6 +561,21 @@ int main(int argc, char* argv[])
         QCoreApplication::processEvents();
         CHECK(server.waitingNow().isEmpty());
         CHECK_EQ(code(cli({"info", "@app"})), QString("ok"));
+    }
+
+    // A measuring loop of the app (normalize, ducking, deliver check: processEvents under a NestedLoop::Guard before its
+    // progress dialog shows): an edit meanwhile would get the measurement of the old state applied -> waits; reads go on
+    {
+        std::optional<NestedLoop::Guard> loop(std::in_place);
+        CHECK(!server.waitingNow().isEmpty());
+        CHECK_EQ(code(cli({"info", "@app"})), QString("ok"));
+        const int clipsBefore = videoClips(fake.project);
+        CHECK_EQ(code(cli({"edit", "@app", "--ops", R"([{"op":"split","at":60}])"})), QString("APP_WAITING"));
+        CHECK_EQ(videoClips(fake.project), clipsBefore);
+        CHECK_EQ(server.runForChat("app", {{"action", "save"}})["error"].toObject()["code"].toString(),
+                 QString("APP_WAITING"));
+        loop.reset();
+        CHECK(server.waitingNow().isEmpty());
     }
 
     // One AI session at a time: an MCP server keeps its connection

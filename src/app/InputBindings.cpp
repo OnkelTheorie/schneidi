@@ -15,6 +15,7 @@
 #include <QJsonObject>
 #include <QKeyEvent>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QSet>
 #include <QStandardPaths>
 #include <QWidget>
@@ -858,15 +859,17 @@ void InputBindings::save()
 {
     for (const Entry& e : m_entries) m_inputs[e.id] = inputs(e.id);
     QDir().mkpath(QFileInfo(filePath()).absolutePath());
-    QFile f(filePath());
-    if (f.open(QIODevice::WriteOnly)) f.write(QJsonDocument(toJson()).toJson());
-    m_fileExisted = true;
+    // QSaveFile: written in place, a full disk or a crash left an empty file, read as version 0 = every binding back
+    // to the defaults (then saved so)
+    QSaveFile f(filePath());
+    if (f.open(QIODevice::WriteOnly) && f.write(QJsonDocument(toJson()).toJson()) > 0 && f.commit())
+        m_fileExisted = true;
 }
 
 bool InputBindings::exportSet(const QString& path) const
 {
-    QFile f(path);
-    return f.open(QIODevice::WriteOnly) && f.write(QJsonDocument(toJson()).toJson()) > 0;
+    QSaveFile f(path);
+    return f.open(QIODevice::WriteOnly) && f.write(QJsonDocument(toJson()).toJson()) > 0 && f.commit();
 }
 
 bool InputBindings::importSet(const QString& path, QString* error)

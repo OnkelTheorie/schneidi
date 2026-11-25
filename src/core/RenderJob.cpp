@@ -310,18 +310,22 @@ RenderSettings RenderSettings::fromJson(const QJsonObject& o)
     s.format = renderFormat(o.value("format").toString()).id;
     s.quality = o.value("qualitySource").toBool() ? kQualitySource : std::clamp(o.value("quality").toInt(0), 0, kQualityWeb);
     s.audioBitrateK = std::clamp(o.value("audioBitrate").toInt(320), 32, 512);
-    s.shortSide = std::max(0, o.value("shortSide").toInt());
+    // Sizes and rates from a file (a project's render queue, the user's presets; written by hand or by an AI) stay
+    // within the project format's limits: 100000 x 100000 allocated 40 GB per picture layer at the first frame
+    s.shortSide = std::clamp(o.value("shortSide").toInt(), 0, kMaxFrameSize);
     s.audioBits = o.value("audioBits").toInt(24);
     if (const int ch = o.value("audioChannels").toInt(); ch == 2 || ch == 6 || ch == 8) s.audioChannels = ch;
     if (o.value("audioFormat").toString() == QLatin1String("ac3")) s.audioFormat = QStringLiteral("ac3");
     const QStringList rate = o.value("rate").toString().split('/');
-    if (rate.size() == 2 && rate[0].toInt() > 0 && rate[1].toInt() > 0) {
+    if (const FrameRate r{rate.value(0).toInt(), rate.value(1).toInt()};
+        rate.size() == 2 && r.num > 0 && r.den > 0 && r.fps() >= 1 && r.fps() <= 1000) {
         s.rateNum = rate[0].toInt();
         s.rateDen = rate[1].toInt();
     }
-    s.maxFps = std::max(0, o.value("maxFps").toInt());
+    s.maxFps = std::clamp(o.value("maxFps").toInt(), 0, 1000);
     const int w = o.value("width").toInt(), h = o.value("height").toInt();
-    if (w > 0 && h > 0) s.size = QSize(w, h);
+    if (w > 0 && h > 0)
+        s.size = QSize(std::clamp(w, kMinFrameSize, kMaxFrameSize), std::clamp(h, kMinFrameSize, kMaxFrameSize));
     const QString sub = o.value("subtitles").toString();
     s.subtitles = sub == "burn" ? BurnSubtitles : sub == "srt" ? SrtFile : sub == "vtt" ? VttFile : NoSubtitles;
     s.embedSubtitles = o.value("embedSubtitles").toBool();
@@ -542,7 +546,8 @@ QVector<RenderJob> fromJson(const QJsonArray& arr)
         j.preset = o.value("preset").toString();
         j.settings = RenderSettings::fromJson(o.value("settings").toObject());
         const int w = o.value("width").toInt(), h = o.value("height").toInt();
-        if (w > 0 && h > 0 && !j.settings.audioOnly()) j.size = QSize(w, h);
+        if (w > 0 && h > 0 && !j.settings.audioOnly()) // within the limits, as the settings' size
+            j.size = QSize(std::clamp(w, kMinFrameSize, kMaxFrameSize), std::clamp(h, kMinFrameSize, kMaxFrameSize));
         j.sequence = std::max(0, o.value("sequence").toInt());
         j.review = o.value("review").toBool();
         j.inOut = o.value("inOut").toBool();

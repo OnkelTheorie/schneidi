@@ -23,6 +23,9 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTemporaryDir>
 
 namespace {
@@ -307,6 +310,87 @@ void testBackups(const QString& dir)
     QDir(ProjectFile::backupDir({})).removeRecursively();
 }
 
+// A project moved before its media (copied to another machine, the media folder still on its way): a save while the
+// files are missing keeps the relative paths as read, so the media found next to the project later are linked again.
+// Computed from the stale absolute path they pointed back to the old folder ("../a/media/x.mp4"; across OSes
+// "../home/a/..." or "C:/x/...") and the project lost its media for good.
+void testMovedBeforeMedia(const QString& root)
+{
+    const QString a = root + "/moved-a", b = root + "/moved-b", hold = root + "/moved-hold";
+    QDir().mkpath(a + "/media");
+    QDir().mkpath(a + "/rec");
+    QDir().mkpath(b);
+    QFile x(a + "/media/x.mp4");
+    CHECK(x.open(QIODevice::WriteOnly) && x.write("x") == 1);
+    x.close();
+    ProjectData d;
+    d.media << MediaInfo{a + "/media/x.mp4", "x.mp4", 50, true, true};
+    d.timeline.video.resize(1);
+    d.timeline.audio.resize(1);
+    d.timeline.video[0].clips << mk(1, a + "/media/x.mp4", 0, 0, 49);
+    WatchFolder w;
+    w.path = a + "/rec";
+    d.watchFolders << w;
+    QString err;
+    CHECK(ProjectFile::save(d, a + "/p.schneidi", &err));
+    CHECK(QFile::copy(a + "/p.schneidi", b + "/p.schneidi"));
+    CHECK(QDir().rename(a, hold)); // the old place is gone; the media are not next to the copy yet
+
+    ProjectData loaded;
+    CHECK(ProjectFile::load(b + "/p.schneidi", &loaded, &err));
+    CHECK_EQ(ProjectFile::missingMedia(loaded).size(), 1);
+    Project p;
+    p.load(loaded);
+    CHECK(ProjectFile::save(p.data(), b + "/p.schneidi", &err)); // any save while missing (a CLI edit saves at once)
+    const QJsonObject o = QJsonDocument::fromJson([&] {
+        QFile f(b + "/p.schneidi");
+        return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+    }()).object();
+    CHECK_EQ(o["media"].toArray()[0].toObject()["relPath"].toString(), QString("media/x.mp4"));
+    CHECK_EQ(o["watchFolders"].toArray()[0].toObject()["relPath"].toString(), QString("rec"));
+
+    CHECK(QDir().rename(hold + "/media", b + "/media")); // the media arrive next to the project
+    CHECK(QDir().rename(hold + "/rec", b + "/rec"));
+    ProjectData again;
+    CHECK(ProjectFile::load(b + "/p.schneidi", &again, &err));
+    CHECK(ProjectFile::missingMedia(again).isEmpty());
+    CHECK_EQ(again.media.value(0).path, b + "/media/x.mp4");
+    CHECK_EQ(again.timeline.video.value(0).clips.value(0).mediaPath, b + "/media/x.mp4");
+    CHECK_EQ(again.watchFolders.value(0).path, b + "/rec");
+    // Found again, the path is computed from the file as always
+    CHECK(ProjectFile::save(again, root + "/p-elsewhere.schneidi", &err));
+    QFile f(root + "/p-elsewhere.schneidi");
+    CHECK(f.open(QIODevice::ReadOnly));
+    CHECK(f.readAll().contains("\"relPath\": \"moved-b/media/x.mp4\""));
+}
+
+// A CLI/MCP edit of a closed project loads it into a Project and saves Project::data(): the saved views (zoom, scroll,
+// playhead per timeline) and the playhead stay as they were (they were dropped: the app opened zoomed to fit at 0)
+void testViewsKept(const QString& dir)
+{
+    ProjectData d;
+    d.timeline.video.resize(1);
+    d.timeline.audio.resize(1);
+    Sequence seq;
+    seq.id = 1;
+    seq.name = "Timeline 1";
+    seq.timeline = d.timeline;
+    d.sequences << seq;
+    d.currentSequence = 1;
+    d.playhead = 123;
+    d.views << SavedView{1, 2.5, 40, 12, 123} << SavedView{7, 1.5, 0, 0, 5}; // 7: a timeline that is gone
+    const QString path = dir + "/views.schneidi";
+    QString err;
+    CHECK(ProjectFile::save(d, path, &err));
+    ProjectData loaded;
+    CHECK(ProjectFile::load(path, &loaded, &err));
+    Project p;
+    p.load(loaded);
+    const ProjectData back = p.data();
+    CHECK_EQ(back.playhead, 123);
+    if (CHECK_EQ(back.views.size(), 1)) CHECK(back.views[0] == (SavedView{1, 2.5, 40, 12, 123}));
+}
+
 // The write lock: an old lock of a running holder stays taken (a long CLI session), the lock of a process
 // that is gone is taken over
 void testLock(const QString& dir)
@@ -399,6 +483,8 @@ int main(int argc, char** argv)
 
     testBackups(dir);
     testLock(dir);
+    testMovedBeforeMedia(tmp.path());
+    testViewsKept(dir);
 
     // --- Save -> load -> save identical, all values equal
     const ProjectData orig = fullProject(dir);

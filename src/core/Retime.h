@@ -37,7 +37,11 @@ public:
     // skip f and show the next one)
     int materialForPicture(double f) const;
     // The same for a constant forward speed (no file length needed)
-    static int materialForPicture(double f, double speed) { return std::max(0, int(std::ceil(f / speed - 1e-6))); }
+    // (clamped in double: a tiny speed from an imported file made the int conversion undefined)
+    static int materialForPicture(double f, double speed)
+    {
+        return int(std::clamp(std::ceil(f / speed - 1e-6), 0.0, double(1 << 30)));
+    }
     // Material length up to the end of the file (0 = unlimited/unknown)
     int length() const;
     // Hard change points of the speed points in material frames (index like Clip::ramp)

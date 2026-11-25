@@ -55,6 +55,28 @@ void repaired(const QString& what)
     if (t_repairs && !t_repairs->contains(what)) *t_repairs << what;
 }
 
+// ProjectData::missingAt: fromJson collects into t_missingOut, toJson reads t_missingIn (nullptr = none)
+thread_local QHash<QString, QString>* t_missingOut = nullptr;
+thread_local const QHash<QString, QString>* t_missingIn = nullptr;
+
+// Reading: `abs` stays missing, its relative path pointed at `candidate` (remembered for the next save)
+void stillMissing(const QString& abs, const QString& candidate)
+{
+    if (t_missingOut && !abs.isEmpty() && !candidate.isEmpty() && !t_missingOut->contains(abs))
+        t_missingOut->insert(abs, candidate);
+}
+
+// Writing: a file's path relative to the project. A file still missing keeps the place its relative path pointed at
+// when it was read (computed from the stale absolute path, a project moved before its media lost them for good:
+// "../home/a/..." on Windows, "C:/x/..." on Linux)
+QString relativePath(const QDir& projectDir, const QString& path)
+{
+    if (t_missingIn && !path.isEmpty())
+        if (const auto it = t_missingIn->constFind(path); it != t_missingIn->cend() && !QFileInfo::exists(path))
+            return projectDir.relativeFilePath(*it);
+    return projectDir.relativeFilePath(path);
+}
+
 // Frame numbers and ids from the file (edited by hand or by an AI: may say anything) stay inside +-2^30, so that the
 // sum of two (start + length, the next id) cannot overflow. A whole number written as text ("119") is that number
 // (it was 0: a clip with "out":"119" became 1 frame long)
@@ -559,7 +581,7 @@ QJsonObject transitionStyleToJson(const TransitionStyle& s, const QDir& projectD
     if (s.audio != d.audio) o["audioCurve"] = audioCurveInfo(s.audio).id;
     if (!s.luma.isEmpty()) {
         o["luma"] = s.luma;
-        if (!EffectFolders::isBuiltin(s.luma)) o["lumaRel"] = projectDir.relativeFilePath(s.luma);
+        if (!EffectFolders::isBuiltin(s.luma)) o["lumaRel"] = relativePath(projectDir, s.luma);
     }
     if (s.invert) o["invert"] = true;
     if (s.ease != d.ease) o["ease"] = motionEaseInfo(s.ease).id;
@@ -605,6 +627,7 @@ TransitionStyle transitionStyleFromJson(const QJsonObject& o, const QDir& projec
                      EffectFolders::findUserTransition(QString(s.luma).replace('\\', '/').section('/', -1));
                  !found.isEmpty())
             s.luma = found;
+        else stillMissing(s.luma, candidate);
     }
     return s;
 }
@@ -664,7 +687,7 @@ QJsonObject pathParamsRelative(const EffectInstance& e, const QDir& projectDir)
     if (e.effectId == QLatin1String(Comp::kEffectId)) {
         EffectInstance copy = e; // forEachFile may change values; this only reads them
         Comp::forEachFile(copy, [&](const QString& key, QString& path) {
-            if (!EffectFolders::isBuiltin(path)) rel[key] = projectDir.relativeFilePath(path);
+            if (!EffectFolders::isBuiltin(path)) rel[key] = relativePath(projectDir, path);
         });
         return rel;
     }
@@ -672,7 +695,7 @@ QJsonObject pathParamsRelative(const EffectInstance& e, const QDir& projectDir)
         for (const EffectParam& p : d->params) {
             const QString path = e.params.value(p.key).toString();
             if (p.type == EffectParam::Path && !path.isEmpty() && !EffectFolders::isBuiltin(path))
-                rel[p.key] = projectDir.relativeFilePath(path);
+                rel[p.key] = relativePath(projectDir, path);
         }
     return rel;
 }
@@ -690,6 +713,7 @@ void resolvePathParams(EffectInstance& e, const QJsonObject& rel, const QDir& pr
                     path = candidate;
                     return;
                 }
+                stillMissing(path, candidate);
             }
             if (EffectFolders::isLutFile(path)) // a grade node's LUT, as with the grade effect
                 if (const QString found = EffectFolders::findUserLut(QString(path).replace('\\', '/').section('/', -1));
@@ -709,6 +733,7 @@ void resolvePathParams(EffectInstance& e, const QJsonObject& rel, const QDir& pr
                 e.params[p.key] = candidate;
                 continue;
             }
+            stillMissing(abs, candidate);
         }
         if (EffectFolders::isLutFile(abs)) // file name also from Windows paths ("C:\...\look.cube")
             if (const QString found = EffectFolders::findUserLut(QString(abs).replace('\\', '/').section('/', -1));
@@ -796,7 +821,7 @@ QJsonObject clipToJson(const Clip& c, int mediaIndex, const QDir& projectDir)
         QJsonObject title = titleToJson(c.title);
         if (!c.title.look.texture.isEmpty()) {
             QJsonObject tex = title.value("texture").toObject();
-            tex["rel"] = projectDir.relativeFilePath(c.title.look.texture);
+            tex["rel"] = relativePath(projectDir, c.title.look.texture);
             title["texture"] = tex;
         }
         o["title"] = title;
@@ -876,6 +901,7 @@ Clip clipFromJson(const QJsonObject& o, const QVector<MediaInfo>& media, const Q
             const QString rel = o.value("title").toObject().value("texture").toObject().value("rel").toString();
             const QString candidate = rel.isEmpty() ? QString() : QDir::cleanPath(projectDir.absoluteFilePath(rel));
             if (!candidate.isEmpty() && QFileInfo::exists(candidate)) tex = candidate;
+            else stillMissing(tex, candidate);
         }
     } else if (o.contains("sequence")) {
         c.kind = ClipKind::Compound;
@@ -974,6 +1000,7 @@ QString resolvePath(const QJsonObject& m, const QDir& projectDir)
     if (!rel.isEmpty()) {
         const QString candidate = QDir::cleanPath(projectDir.absoluteFilePath(rel));
         if (QFileInfo::exists(candidate)) return candidate;
+        stillMissing(abs, candidate);
     }
     return abs; // stays offline until relinked
 }
@@ -995,11 +1022,16 @@ QJsonObject clipJson(const Clip& c)
 QByteArray toJson(const ProjectData& data, const QString& projectPath)
 {
     const QDir projectDir = QFileInfo(projectPath).absoluteDir();
+    struct Missing { // relativePath() keeps the places of files still missing
+        const QHash<QString, QString>* before = t_missingIn;
+        explicit Missing(const QHash<QString, QString>* in) { t_missingIn = in; }
+        ~Missing() { t_missingIn = before; }
+    } missing(&data.missingAt);
     QHash<QString, int> index;
     QJsonArray media;
     for (const MediaInfo& m : data.media) {
         index[m.path] = media.size();
-        QJsonObject o{{"path", m.path}, {"relPath", projectDir.relativeFilePath(m.path)},
+        QJsonObject o{{"path", m.path}, {"relPath", relativePath(projectDir, m.path)},
                       {"name", m.name}, {"length", m.length}, {"hasVideo", m.hasVideo},
                       {"hasAudio", m.hasAudio}, {"isImage", m.isImage}};
         if (m.markIn >= 0) o["markIn"] = m.markIn; // source in/out (optional, absent in old files)
@@ -1050,7 +1082,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
                 }
                 if (!index.contains(c.mediaPath)) { // should not happen, but lose nothing
                     index[c.mediaPath] = media.size();
-                    media << QJsonObject{{"path", c.mediaPath}, {"relPath", projectDir.relativeFilePath(c.mediaPath)},
+                    media << QJsonObject{{"path", c.mediaPath}, {"relPath", relativePath(projectDir, c.mediaPath)},
                                          {"name", QFileInfo(c.mediaPath).fileName()}, {"notInPool", true}};
                 }
                 clips << clipToJson(c, index.value(c.mediaPath), projectDir);
@@ -1187,7 +1219,7 @@ QByteArray toJson(const ProjectData& data, const QString& projectPath)
     if (!data.watchFolders.isEmpty()) {
         QJsonArray watches;
         for (const WatchFolder& w : data.watchFolders) {
-            QJsonObject o{{"path", w.path}, {"relPath", projectDir.relativeFilePath(w.path)},
+            QJsonObject o{{"path", w.path}, {"relPath", relativePath(projectDir, w.path)},
                           {"types", QJsonArray::fromStringList(WatchFolders::typeNames(w))}};
             if (w.subfolders) o["subfolders"] = true;
             if (w.bin != 0) o["bin"] = w.bin;
@@ -1235,6 +1267,12 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
             t_textNumbers = textBefore;
         }
     } collect(&repairs);
+    QHash<QString, QString> missingAt; // ProjectData::missingAt
+    struct Missing {
+        QHash<QString, QString>* before = t_missingOut;
+        explicit Missing(QHash<QString, QString>* out) { t_missingOut = out; }
+        ~Missing() { t_missingOut = before; }
+    } missing(&missingAt);
     QJsonParseError pe;
     QJsonDocument doc = QJsonDocument::fromJson(json, &pe);
     // A file saved by an editor that wrote umlauts as Latin-1 (or with one damaged byte) did not open at all: the
@@ -1613,6 +1651,7 @@ bool fromJson(const QByteArray& json, const QString& projectPath, ProjectData* d
         d.templateInfo = t;
     }
 
+    d.missingAt = missingAt;
     *data = d;
     // Told, not silent: media paths with such characters point nowhere, and the next save keeps the replacement
     if (replaced && warning)
