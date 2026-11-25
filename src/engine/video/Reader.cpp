@@ -1852,6 +1852,8 @@ std::unique_ptr<Reader> Reader::open(const QString& path, const Options& options
     in.duration = d.fmt->duration == AV_NOPTS_VALUE ? -1 : d.fmt->duration;
     in.codec = QString::fromLatin1(d.codec->name);
     in.fieldOrder = int(par->field_order);
+    // Stated interlaced: the first request already fetches the picture before it first (Reader::picture)
+    d.interlacedSeen = par->field_order != AV_FIELD_UNKNOWN && par->field_order != AV_FIELD_PROGRESSIVE;
     const AVCodecDescriptor* desc = avcodec_descriptor_get(par->codec_id);
     d.mustDecode = !desc || !(desc->props & AV_CODEC_PROP_INTRA_ONLY);
     d.planarFormat = in.format;

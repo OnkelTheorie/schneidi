@@ -17,6 +17,7 @@
 #include "engine/ClipFormat.h"
 #include "engine/MediaProbe.h"
 #include "engine/video/Convert.h"
+#include "engine/video/Deinterlace.h"
 #include "engine/video/Reader.h"
 #include "engine/video/Scan.h"
 
@@ -469,7 +470,9 @@ void testFieldOrder(const QString& dir)
                          Case{"fields-bff.mp4", "bff"}, Case{"fields-bff.mkv", "bff"}, Case{"fields-bff.mov", "bff"}}) {
         const QString path = make(c.name, c.field);
         if (!Check::report(!path.isEmpty(), c.name, __FILE__, __LINE__, "ffmpeg could not make the file")) continue;
-        const auto r = Video::Reader::open(path);
+        Video::Reader::Options raw; // the woven fields as decoded (deinterlacing: test_deinterlace)
+        raw.deinterlace = false;
+        const auto r = Video::Reader::open(path, raw);
         if (!CHECK(r)) continue;
         const bool interlaced = *c.field != 0, top = QByteArray(c.field) == "tff";
         const int order = r->info().fieldOrder;
@@ -709,9 +712,17 @@ int main(int argc, char** argv)
     CHECK_EQ(info("alpha.webm").format, AV_PIX_FMT_YUVA420P);
     CHECK_EQ(info("alpha-untagged.webm").codec, QString("libvpx-vp9"));
     CHECK_EQ(info("alpha-untagged.webm").format, AV_PIX_FMT_YUVA420P);
-    if (auto r = Video::Reader::open(file("interlaced.mp4"))) {
+    {
+        Video::Reader::Options raw;
+        raw.deinterlace = false;
+        if (auto r = Video::Reader::open(file("interlaced.mp4"), raw)) {
+            const auto p = r->picture(3);
+            CHECK(p && !p->progressive && p->topFieldFirst && !p->deinterlaced);
+        }
+    }
+    if (auto r = Video::Reader::open(file("interlaced.mp4"))) { // by default deinterlaced (Options::deinterlace)
         const auto p = r->picture(3);
-        CHECK(p && !p->progressive && p->topFieldFirst);
+        CHECK(p && p->progressive && p->topFieldFirst && p->deinterlaced == Video::canDeinterlace());
     }
     if (auto r = Video::Reader::open(file("h264.mp4"))) {
         const auto p = r->picture(3);
