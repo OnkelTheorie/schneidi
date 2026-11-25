@@ -1769,21 +1769,25 @@ int ColorPanel::selectedStill() const
 void ColorPanel::refreshStills()
 {
     const QVector<GradeStill>& stills = m_editor->project()->stills();
-    // Rebuilt only when the list changed (ids and labels), so the selection and scroll stay
+    // Rebuilt only when the list changed (ids, labels and pictures), so the selection and scroll stay
     QStringList want, have;
-    for (const GradeStill& s : stills) want << QString::number(s.id) + s.label;
+    for (const GradeStill& s : stills) want << QString::number(s.id) + s.label + '#' + QString::number(qHash(s.image));
     for (int i = 0; i < m_stillList->count(); ++i)
-        have << m_stillList->item(i)->data(Qt::UserRole).toString() + m_stillList->item(i)->text();
+        have << m_stillList->item(i)->data(Qt::UserRole).toString() + m_stillList->item(i)->text() + '#'
+                    + m_stillList->item(i)->data(Qt::UserRole + 1).toString();
     // The pictures are decoded only for the stills palette (a project with many stills opens without that work)
     if (want != have && m_palette == StillsPalette) {
         const int keep = selectedStill();
         QSignalBlocker block(m_stillList);
         m_stillList->clear();
         for (const GradeStill& s : stills) {
+            const size_t hash = qHash(s.image);
             auto icon = m_stillIcons.find(s.id);
-            if (icon == m_stillIcons.end()) icon = m_stillIcons.insert(s.id, QIcon(QPixmap::fromImage(GradeStills::picture(s))));
-            auto* item = new QListWidgetItem(*icon, s.label);
+            if (icon == m_stillIcons.end() || icon->first != hash)
+                icon = m_stillIcons.insert(s.id, {hash, QIcon(QPixmap::fromImage(GradeStills::picture(s)))});
+            auto* item = new QListWidgetItem(icon->second, s.label);
             item->setData(Qt::UserRole, s.id);
+            item->setData(Qt::UserRole + 1, QString::number(hash));
             item->setToolTip(s.label);
             m_stillList->addItem(item);
             if (s.id == keep) item->setSelected(true);
