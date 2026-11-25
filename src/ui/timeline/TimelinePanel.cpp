@@ -9,6 +9,7 @@
 #include "ui/timeline/TimelineView.h"
 
 #include <QAction>
+#include <QActionEvent>
 #include <QButtonGroup>
 #include <QComboBox>
 #include <QGridLayout>
@@ -470,15 +471,33 @@ bool TimelinePanel::canGoBack() const
     return !m_history.isEmpty();
 }
 
+namespace {
+// A tool button of an action that keeps its own drawn icon: every change of the action (also one under a
+// QSignalBlocker, which sends the button its ActionChanged but no changed() signal) took the action's empty icon
+// over, and the button showed the action's long text instead ("Lücken …Spur 1)" in the phone's tool row)
+class ActionToolButton : public QToolButton {
+public:
+    explicit ActionToolButton(const QIcon& icon) : m_icon(icon) {}
+
+protected:
+    void actionEvent(QActionEvent* event) override
+    {
+        QToolButton::actionEvent(event);
+        if (event->type() == QEvent::ActionChanged) setIcon(m_icon);
+    }
+
+private:
+    QIcon m_icon;
+};
+} // namespace
+
 void TimelinePanel::addToolAction(QAction* action, Icon icon)
 {
-    auto* b = new QToolButton;
+    auto* b = new ActionToolButton(toolIcon(icon));
     b->setDefaultAction(action);
     b->setIcon(toolIcon(icon)); // setDefaultAction would otherwise take over menu text/icon
     b->setIconSize(QSize(20, 20));
     b->setToolButtonStyle(Qt::ToolButtonIconOnly);
     b->setToolTip(action->toolTip());
-    const QIcon ic = b->icon();
-    connect(action, &QAction::changed, b, [b, ic] { b->setIcon(ic); });
     m_bar->insertWidget(m_toolInsert++, b);
 }
