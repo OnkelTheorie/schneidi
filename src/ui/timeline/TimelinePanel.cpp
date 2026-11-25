@@ -416,6 +416,7 @@ void TimelinePanel::syncOverview()
 
 void TimelinePanel::syncOverviewRange()
 {
+    m_overview->setLeftInset(TimelineView::kHeaderW); // the phone's compact headers switch it at run time
     if (!overviewShown()) return;
     const ViewState& v = m_view->view();
     m_overview->setVisibleRange(v.leftFrame,
