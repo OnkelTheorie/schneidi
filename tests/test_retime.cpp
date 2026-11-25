@@ -21,6 +21,7 @@
 #include <clocale>
 #include <cmath>
 #include <cstring>
+#include <utility>
 
 namespace {
 
@@ -517,6 +518,60 @@ void testSpeedChangeKeepsFirstPicture()
     }
 }
 
+// Review 2026-11-25 (F5): a speed change that keeps "freeze" on keeps the frozen picture - after a head trim or a blade
+// `in` is no longer the frozen frame (stillFrame keeps it), the change must not re-pin it to `in`
+void testFreezeKeepsPicture()
+{
+    for (const auto& [speed, reverse] : {std::pair{1.0, false}, std::pair{0.5, false}, std::pair{0.25, false}, std::pair{1.0, true}}) {
+        Project p;
+        TimelineGuard guard_p{p};
+        Selection sel;
+        Editor ed(&p, &sel);
+        p.addMedia(media("/x/a.mp4", 300));
+        ed.addMediaAt({"/x/a.mp4"}, 0);
+        const int v = clipOn(p.timeline(), TrackKind::Video, 0, 0)->id;
+        ed.trimClip(v, TimelineOps::Edge::Start, 37);
+        ed.setClipSpeed({v}, Editor::Retime{1.0, false, true, true}, true); // freeze at file frame 37
+        const auto still = [&] {
+            const Clip* c = TimelineOps::findClip(p.timeline(), v);
+            return c ? RetimeMap(*c, 300).pictureFrame(c->stillFrame()) : -1;
+        };
+        CHECK_EQ(still(), 37);
+        ed.trimClip(v, TimelineOps::Edge::Start, 20); // in 57, the picture stays
+        CHECK_EQ(TimelineOps::findClip(p.timeline(), v)->in, 57);
+        CHECK_EQ(still(), 37);
+        const int len = TimelineOps::findClip(p.timeline(), v)->length();
+        ed.setClipSpeed({v}, Editor::Retime{speed, reverse, true, true}, true);
+        CHECK_EQ(still(), 37);
+        CHECK_EQ(TimelineOps::findClip(p.timeline(), v)->length(), len);
+    }
+}
+
+// Review 2026-11-25 (F6): the speed dialog closed with OK (the same speed, only "keep pitch" changed) changes nothing
+// else: a slow-motion clip whose in is not the first of the material frames showing its first picture kept growing
+// at the head and rippled the timeline
+void testSameSpeedIsNoChange()
+{
+    for (double speed : {0.5, 0.1, 0.3}) {
+        Project p;
+        TimelineGuard guard_p{p};
+        Selection sel;
+        Editor ed(&p, &sel);
+        p.addMedia(media("/x/a.mp4", 100));
+        p.addMedia(media("/x/b.mp4", 100));
+        ed.addMediaAt({"/x/a.mp4"}, 0);
+        const int v = clipOn(p.timeline(), TrackKind::Video, 0, 0)->id;
+        ed.setClipSpeed({v}, Editor::Retime{speed, false, false, true}, true);
+        ed.trimClip(v, TimelineOps::Edge::Start, 21); // in 21: not the first frame of its picture
+        ed.addMediaAt({"/x/b.mp4"}, TimelineOps::findClip(p.timeline(), v)->end());
+        const QString before = Check::dump(p.timeline());
+        ed.setClipSpeed({v}, Editor::Retime{speed, false, false, false}, true);
+        CHECK_EQ(Check::dump(p.timeline()), before);
+        const Clip* c = TimelineOps::findClip(p.timeline(), v);
+        if (CHECK(c)) CHECK(!c->keepPitch);
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -528,6 +583,8 @@ int main(int argc, char** argv)
     testPictureFrame();
     testSpeedChangeKeepsFirstPicture();
     testEditor();
+    testFreezeKeepsPicture();
+    testSameSpeedIsNoChange();
     testProjectFile();
     if (!Check::haveFfmpeg()) {
         Check::result();
