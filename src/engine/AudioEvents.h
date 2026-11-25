@@ -12,8 +12,8 @@
 //   runtime are installed: the classes are mapped to the same kinds; silence and the exact time of a shot still come
 //   from the heuristics (YAMNet's grid is 0.48 s).
 //
-// Results are cached per file (CacheLocation/audio-events, keyed by path, size, modification time, stream, the way
-// and the model), in memory and on disk. Thread-safe; blocks (run it off the GUI thread).
+// Results are cached per file (AnalysisCache: CacheLocation/analysis, keyed by path, size, modification time, stream,
+// the way and the model), in memory and on disk. Thread-safe; blocks (run it off the GUI thread).
 
 #include <QJsonArray>
 #include <QString>

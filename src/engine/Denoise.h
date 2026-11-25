@@ -9,6 +9,7 @@
 
 #include "core/Types.h"
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -45,7 +46,8 @@ private:
     std::vector<double> m_noise;      // noise estimate per bin (< 0 = not known yet)
     std::vector<double> m_gain;       // last gain per bin
     int m_pending = 0;                // input samples since the last hop
-    long m_seen = 0;                  // input samples since reset (noise tracking waits for a full window)
+    int64_t m_seen = 0;               // input samples since reset (noise tracking waits for a full window); 64 bit: a
+                                      // 32-bit long (Windows) overflowed after ~12 h at 48 kHz
 };
 
 } // namespace Denoise
