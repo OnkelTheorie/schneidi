@@ -163,6 +163,44 @@ void dropStep(QUndoStack* undo, int index)
     else if (undo->index() == index + 1) undo->undo();
 }
 
+// The steps a command of the app pushes become one afterwards: no macro up front, QUndoStack::beginMacro deletes the
+// redo steps and the saved (clean) state at once, also for a command that then changes nothing or fails (an AI
+// edit refused with BAD_ARGUMENT, a watch pass that finds nothing, a canceled apply)
+class StepGuard {
+public:
+    explicit StepGuard(QUndoStack* undo)
+        : m_undo(undo), m_index(undo->index()), m_count(undo->count()),
+          m_above(m_index < m_count ? undo->command(m_index) : nullptr) {}
+    int index() const { return m_index; }
+    // Anything pushed since (also a step undone again: the redo steps it deleted are gone)
+    bool pushed() const
+    {
+        return m_undo->index() != m_index || m_undo->count() != m_count
+            || (m_index < m_count && m_undo->command(m_index) != m_above);
+    }
+    // Success: what was pushed is one step called `text` (nothing pushed: no step, the stack as it was)
+    void keep(Project& p, const QString& text) const
+    {
+        if (m_undo->index() > m_index) p.combineSteps(m_index, text);
+    }
+    // Failure: what was pushed is taken back and off the stack (no redo step that brings the half state back)
+    void drop() const
+    {
+        if (!pushed()) return;
+        if (m_undo->index() > m_index) m_undo->setIndex(m_index);
+        while (m_undo->index() == m_index && m_undo->count() > m_index) {
+            const int count = m_undo->count();
+            dropStep(m_undo, m_index);
+            if (m_undo->count() == count) break;
+        }
+    }
+
+private:
+    QUndoStack* m_undo;
+    int m_index, m_count;
+    const QUndoCommand* m_above; // the first redo step before (a push deletes it)
+};
+
 // The ops of an edit: "split, delete"
 QString opNames(const QJsonObject& args)
 {
@@ -713,19 +751,19 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat, bool byUser
     const QVector<WatchFolder> watchBefore = p->watchFolders();
     // One undo step per changing command, all or nothing like on the file; it never merges with the user's slider
     // series before or after it (`restore` is one step of its own and changes nothing before it can fail)
-    QUndoStack* undo = p->undoStack();
     const bool step = (name == "edit" && !planning) || name == "import" || name == "watch" || name == "brand"
                       || name == "templates";
-    const int index = undo->index();
+    const StepGuard guard(p->undoStack());
     // The magnetic main track: the AI's ops keep their own meaning (a place at a time stays there, nothing is packed
     // between them); V1 is packed once at the end of the step, in its undo step
     std::optional<Project::MagnetHold> magnetHold;
     const Timeline mainBefore = step ? p->timeline() : Timeline();
     const int sequenceBefore = p->currentSequence();
+    const QString stepName = planRun ? T("KI: Plan %1").arg(args.value("plan_id").toString().trimmed().toLower())
+                           : name == "edit" ? undoText(args)
+                                            : T("KI: %1").arg(name);
     if (step) {
         p->closeMerge();
-        const QString planText = T("KI: Plan %1").arg(args.value("plan_id").toString().trimmed().toLower());
-        undo->beginMacro(planRun ? planText : name == "edit" ? undoText(args) : T("KI: %1").arg(name));
         magnetHold.emplace(p);
     }
     QJsonObject result;
@@ -735,12 +773,12 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat, bool byUser
     LiveChange change;
     change.command = name;
     change.ownChat = ownChat;
-    // A failed command: its open undo macro closed and taken back, the reply and the AI log say why
+    // A failed command: its steps taken back (all or nothing, like on the file) and dropped, the reply and the AI
+    // log say why
     const auto failed = [&](const QString& code, const QString& message) {
         if (step) {
-            undo->endMacro();
-            if (undo->index() > index) undo->undo(); // all or nothing, like on the file
-            dropStep(undo, index);                   // and no redo step that brings it back
+            magnetHold.reset();
+            guard.drop();
             restoreMedia(*p, mediaBefore);
             if (p->watchFolders() != watchBefore) p->setWatchFolders(watchBefore);
         }
@@ -765,10 +803,7 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat, bool byUser
         if (p->magnetActive() && p->currentSequence() == sequenceBefore && !(name == "edit" && syncsMain(args))
             && MainTrack::touched(mainBefore, p->timeline(), MainTrack::kMain))
             p->edit(T("Hauptspur schließen"), [](Timeline& tl) { MainTrack::pack(tl, MainTrack::kMain); });
-        undo->endMacro();
-        // An import of media only changes nothing in the undo history: no empty step
-        if (name != "edit" && undo->index() == index + 1 && undo->command(index)->childCount() == 0)
-            dropStep(undo, index);
+        guard.keep(*p, stepName); // nothing pushed (an import of media only, a no-op): no step
         p->closeMerge();
     }
     // `app open` of a project: another project now, its clips are no AI changes
@@ -795,37 +830,27 @@ QJsonObject runForUser(LiveHost* host, const QString& command, const QJsonObject
     std::optional<detail::CancelScope> cancelScope; // the analyses inside the op stop with the caller's flag
     if (cancel) cancelScope.emplace(cancel);
     Project* p = host->liveProject();
-    QUndoStack* undo = p->undoStack();
-    const int index = undo->index();
+    const StepGuard guard(p->undoStack()); // one step afterwards, none when nothing changed or it failed
     const QVector<MediaInfo> mediaBefore = p->media();
     p->closeMerge();
-    undo->beginMacro(undoText);
+    const auto failed = [&](const QString& code, const QString& message) {
+        guard.drop(); // all or nothing
+        restoreMedia(*p, mediaBefore);
+        return errorReply(code, message);
+    };
     try {
         Context ctx;
         ctx.cancel = cancel;
         const QJsonObject result = cmd->run(normalize(*cmd, args), ctx);
-        undo->endMacro();
-        if (undo->index() == index + 1 && undo->command(index)->childCount() == 0) dropStep(undo, index); // no-op
+        guard.keep(*p, undoText);
         p->closeMerge();
         return {{"ok", true}, {"result", result}};
     } catch (const Error& e) {
-        undo->endMacro();
-        if (undo->index() > index) undo->undo(); // all or nothing
-        dropStep(undo, index);
-        restoreMedia(*p, mediaBefore);
-        return errorReply(e.code, e.message);
-    } catch (const std::exception& e) { // not an Error (std::bad_alloc …): the macro must not stay open either
-        undo->endMacro();
-        if (undo->index() > index) undo->undo();
-        dropStep(undo, index);
-        restoreMedia(*p, mediaBefore);
-        return errorReply("INTERNAL", QString("the command failed: %1").arg(e.what()));
+        return failed(e.code, e.message);
+    } catch (const std::exception& e) { // not an Error (std::bad_alloc …)
+        return failed("INTERNAL", QString("the command failed: %1").arg(e.what()));
     } catch (...) {
-        undo->endMacro();
-        if (undo->index() > index) undo->undo();
-        dropStep(undo, index);
-        restoreMedia(*p, mediaBefore);
-        return errorReply("INTERNAL", "the command failed");
+        return failed("INTERNAL", "the command failed");
     }
 }
 

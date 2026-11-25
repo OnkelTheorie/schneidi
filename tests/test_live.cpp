@@ -848,6 +848,38 @@ int main(int argc, char* argv[])
         CHECK_EQ(videoClips(fake.project), clipsBefore + 1);
     }
 
+    // Commands that change nothing keep the user's redo steps and the saved state (the undo macro opened before the
+    // command deleted both at once): a failing edit, an edit that changes nothing. A successful edit with several ops
+    // is still one step; one that fails after a change is taken back completely and leaves no step.
+    {
+        QUndoStack* undo = fake.project.undoStack();
+        const auto run = [&](const char* ops) {
+            return server.runForChat("edit", {{"project", fake.path}, {"ops", QJsonDocument::fromJson(ops).array()}});
+        };
+        const int index = undo->index();
+        CHECK(run(R"([{"op":"split","at":20},{"op":"split","at":25},{"op":"marker","at":5}])")["ok"].toBool());
+        CHECK_EQ(undo->index(), index + 1);
+        CHECK(undo->undoText().startsWith("KI: split, marker"));
+        fake.project.markSaved();
+        const int clipsSaved = videoClips(fake.project);
+        undo->undo(); // the user steps back to compare
+        const int count = undo->count();
+        const QString redoText = undo->redoText();
+        CHECK(!run(R"([{"op":"split","at":"nonsense"}])")["ok"].toBool());
+        CHECK(undo->canRedo() && undo->redoText() == redoText && undo->count() == count);
+        CHECK(run(QString(R"([{"op":"timeline","timeline":%1}])").arg(fake.project.currentSequence()).toUtf8())["ok"].toBool());
+        CHECK(undo->canRedo() && undo->redoText() == redoText && undo->count() == count);
+        CHECK_EQ(undo->index(), index);
+        undo->redo(); // back at the saved state: not modified
+        CHECK(undo->isClean());
+        CHECK_EQ(videoClips(fake.project), clipsSaved);
+        // A change, then a failing op: all of it taken back, no step and no redo step that brings it back
+        CHECK(!run(R"([{"op":"split","at":30},{"op":"split","at":"nonsense"}])")["ok"].toBool());
+        CHECK_EQ(videoClips(fake.project), clipsSaved);
+        CHECK_EQ(undo->index(), index + 1);
+        CHECK(!undo->canRedo());
+    }
+
     // A new frame rate in the app: the Media Pool is counted anew once. The app does it on formatChanged
     // (MainWindow::onFormatChanged, mirrored here) for every path; the op counted again (In/Out, markers and the
     // lengths of stills and missing files x4 for 25 -> 50), and undo only halved it
