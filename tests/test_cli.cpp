@@ -1741,6 +1741,28 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             CHECK(std::abs(pauses[0]["to"].toInt() - 10 * fps) <= fps / 5 + 1);
             CHECK_EQ(run("silence", {{"file", gp}, {"tracks", "A1"}})["silence"].toArray().size(), 2);
             CHECK_EQ(errorOf("silence", {{"file", gp}, {"tracks", "Discord"}}), QString("BAD_ARGUMENT"));
+            // The answer's ranges go straight back (review 25.11.): delete_range takes silence's {from, to, ...}
+            // objects, cut_pauses the entries of a list ({n, from, to}); [from, to] pairs as before
+            const QString gp2 = dir.filePath("gap2.schneidi");
+            QFile::copy(gp, gp2);
+            const auto lengthOf = [&](const QString& p) {
+                return run("info", {{"project", p}, {"summary", true}})["timeline"]["length_s"].toDouble();
+            };
+            const double before = lengthOf(gp);
+            const QJsonArray all = run("silence", {{"file", gp}, {"tracks", "A1"}})["silence"].toArray();
+            run("edit", {{"project", gp}, {"ops", QJsonArray{QJsonObject{{"op", "delete_range"}, {"ranges", all}}}}});
+            double removed = 0; // the two pauses of 2 s less the pads silence leaves
+            for (const QJsonValue& v : all) removed += v["to_s"].toDouble() - v["from_s"].toDouble();
+            CHECK(all.size() == 2 && removed > 3);
+            if (!CHECK(std::abs(lengthOf(gp) - (before - removed)) < 0.1))
+                std::printf("       %.3f -> %.3f, ranges %s\n", before, lengthOf(gp), QJsonDocument(all).toJson(QJsonDocument::Compact).constData());
+            QJsonArray entries;
+            for (const QJsonValue& v : all)
+                entries << QJsonObject{{"n", entries.size() + 1}, {"from", v["from"]}, {"to", v["to"]}, {"kind", "pause"}};
+            run("edit", {{"project", gp2}, {"ops", QJsonArray{QJsonObject{{"op", "cut_pauses"}, {"ranges", entries}}}}});
+            if (!CHECK(std::abs(lengthOf(gp2) - (before - removed)) < 0.1)) std::printf("       cut_pauses: %.3f\n", lengthOf(gp2));
+            CHECK(messageOf("edit", {{"project", gp2}, {"ops", R"([{"op":"delete_range","ranges":[{"from":1}]}])"}})
+                      .contains("{from, to}"));
         }
         // Render with a preset (audio only) and a range
         run("edit", {{"project", proj}, {"ops", R"([{"op":"mixer","track":"A1","mute":false}])"}});

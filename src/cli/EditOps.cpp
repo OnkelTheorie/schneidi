@@ -154,6 +154,25 @@ int timeRef(Session& s, const QJsonObject& r, const char* key)
 
 } // namespace
 
+bool rangeEnds(const QJsonValue& r, QJsonValue* from, QJsonValue* to)
+{
+    if (r.isArray()) {
+        if (r.toArray().size() != 2) return false;
+        *from = r.toArray().at(0), *to = r.toArray().at(1);
+        return true;
+    }
+    const QJsonObject o = r.toObject();
+    if (o.contains("from") && o.contains("to")) {
+        *from = o.value("from"), *to = o.value("to");
+        return true;
+    }
+    if (o.contains("start") && o.contains("end")) { // as answers name ranges
+        *from = o.value("start"), *to = o.value("end");
+        return true;
+    }
+    return false;
+}
+
 int timeOf(Session& s, const QJsonObject& op, const char* key, int fallback)
 {
     if (!op.contains(key)) {
@@ -525,16 +544,13 @@ void opKeep(Session& s, const QJsonObject& op)
         fail("BAD_ARGUMENT", "missing 'ranges': the parts of the source to keep in order, e.g. "
                              "{\"op\":\"keep\",\"media\":\"/path/to/clip.mkv\",\"ranges\":[[\"2s\",\"5.5s\"],[\"10s\",\"12s\"]]}");
     for (const QJsonValue& r : ranges) {
-        QJsonObject sub;
         const QJsonObject o = r.toObject();
         // "2s-5s", ["5s"] or {from} without to had no in/out: the whole file was placed, silently
-        if (!(r.isArray() && r.toArray().size() == 2) && !(o.contains("start") && o.contains("end"))
-            && !(o.contains("from") && o.contains("to")))
+        QJsonValue rf, rt;
+        if (!rangeEnds(r, &rf, &rt))
             fail("BAD_ARGUMENT", QString("keep: %1 is no range - ranges are [from, to] pairs (or {from, to})")
                                      .arg(jsonSnippet(r)));
-        if (r.isArray()) sub = {{"in", r.toArray().at(0)}, {"out", r.toArray().at(1)}};
-        else if (o.contains("start") && o.contains("end")) sub = {{"in", o.value("start")}, {"out", o.value("end")}}; // as answers name ranges
-        else sub = {{"in", o.value("from")}, {"out", o.value("to")}};
+        QJsonObject sub{{"in", rf}, {"out", rt}};
         int in = 0, out = 0;
         sourceRange(s, sub, m, &in, &out);
         // speed: of this range, else of the whole op
@@ -1153,16 +1169,20 @@ QVector<OpDef> makeOps()
          "track that cannot follow, e.g. a clip lies across the cut) fails with OUT_OF_SYNC (also speed, trim with "
          "ripple, insert); a partner on a locked track stays on purpose (a note says how far apart).",
          opDelete, kClipKeys},
-        {"delete_range", "{op:'delete_range', from, to, ripple?:true} or {op:'delete_range', ranges:[[from,to],...]}",
-         "remove time ranges on all tracks; `ranges` are all timeline times before the cut (e.g. words of "
+        {"delete_range", "{op:'delete_range', from, to, ripple?:true} or {op:'delete_range', ranges:[[from,to] | {from,to},...]}",
+         "remove time ranges on all tracks; `ranges` are all timeline times before the cut, [from, to] pairs or "
+         "{from, to, ...} objects as answers list them (the 'silence' ranges of `silence` on the project, words of "
          "`transcribe` with words:true), applied together", {},
          [](Session& s, const QJsonObject& op) {
              QVector<QPair<int, int>> ranges;
              if (op.contains("ranges")) {
                  for (const QJsonValue& v : op.value("ranges").toArray()) {
-                     const QJsonArray r = v.toArray();
-                     if (r.size() != 2) fail("BAD_ARGUMENT", "ranges are [from, to] pairs");
-                     QJsonObject pair{{"from", r[0]}, {"to", r[1]}};
+                     QJsonValue rf, rt;
+                     if (!rangeEnds(v, &rf, &rt))
+                         fail("BAD_ARGUMENT", QString("delete_range: %1 is no range - ranges are [from, to] pairs or "
+                                                      "{from, to} objects (as silence and transcribe list them)")
+                                                  .arg(jsonSnippet(v)));
+                     QJsonObject pair{{"from", rf}, {"to", rt}};
                      ranges << qMakePair(timeOf(s, pair, "from"), timeOf(s, pair, "to"));
                  }
                  if (ranges.isEmpty()) fail("BAD_ARGUMENT", "'ranges' is empty");
