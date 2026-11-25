@@ -251,8 +251,9 @@ QJsonObject cmdSilence(const QJsonObject& a, Context& ctx)
     const MediaSource m = openMedia(a);
     if (!m.info.hasAudio) fail("NO_AUDIO", "file has no audio: " + m.info.path);
     const ProjectFormat& f = m.format;
-    const auto peaks = filePeaks(m, 0, report);
-    if (!peaks) fail("NO_AUDIO", "could not decode the audio of " + m.info.path);
+    // The first stream that plays, as peaks/beats/overview take it (stream 0 may be empty or of a codec this build lacks)
+    const auto peaks = filePeaks(m, audioStreamArg(m.info, a), report);
+    if (!peaks || peaks->empty()) fail("NO_AUDIO", "could not decode the audio of " + m.info.path);
     const auto [thresholdDb, minLen, pad] = settings(f);
     QJsonObject o{{"file", m.info.path}};
     const QJsonObject r = silenceJson(*peaks, 0, thresholdDb, minLen, pad, f);
