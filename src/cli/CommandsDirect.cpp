@@ -785,6 +785,7 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
     bool created = args["_created"].toBool();
     const bool missing = !project.isEmpty() && !Live::isAppProject(project) && !QFileInfo::exists(project);
     if (project.isEmpty() || missing) {
+        QString freeDir, freeBase; // set when the name is our own free choice (it may be taken before `new` runs)
         if (project.isEmpty()) {
             const QFileInfo first(files.first());
             // In project_dir when given, else the folder for projects (Settings > Project; never the recordings'
@@ -796,7 +797,9 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
                   : Sandbox::active() ? Sandbox::root()
                                      : AppPaths::projectFolder();
             if (!dry && !QDir().mkpath(dir)) fail("SAVE_FAILED", "cannot make the folder " + dir);
-            project = freeFile(dir, first.completeBaseName() + "-" + s.recipe, "." + QString(ProjectFile::Extension));
+            freeDir = dir;
+            freeBase = first.completeBaseName() + "-" + s.recipe;
+            project = freeFile(freeDir, freeBase, "." + QString(ProjectFile::Extension));
         } else if (QFileInfo(project).suffix().isEmpty()) {
             project += "." + QString(ProjectFile::Extension);
         }
@@ -811,8 +814,19 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
                       {"template", game != QLatin1String("none") || streams ? "game" : "neutral"}};
         if (s.material.first().fps > 0) n["fps"] = s.material.first().fps;
         failIfCanceled();
-        *hadBackups = QFileInfo::exists(ProjectFile::backupDir(project));
-        run("new", n);
+        // Another apply can take the free name between choosing and creating: `new` answers EXISTS, the next free
+        // name is tried (a few times) instead of failing the whole apply
+        for (int attempt = 0;; ++attempt) {
+            n["project"] = project;
+            *hadBackups = QFileInfo::exists(ProjectFile::backupDir(project));
+            try {
+                run("new", n);
+                break;
+            } catch (const Error& e) {
+                if (freeDir.isEmpty() || e.code != QLatin1String("EXISTS") || attempt >= 8) throw;
+                project = freeFile(freeDir, freeBase, "." + QString(ProjectFile::Extension));
+            }
+        }
         *madeProject = project;
         created = true;
         done << QString("new project %1 (template %2)").arg(project, n["template"].toString());
