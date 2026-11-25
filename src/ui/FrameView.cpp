@@ -19,6 +19,7 @@
 #include <QGuiApplication>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QUndoStack>
 #include <QPainter>
 #include <chrono>
 #include <QPixmap>
@@ -160,6 +161,7 @@ FrameView::FrameView(QWidget* parent) : QWidget(parent), m_background(Theme::vie
         setZoom(kFit);
         return true;
     };
+    touch->onCancel = [this] { cancelOverlayDrag(); };
     std::function<Probe()> probe;
 #ifdef SCHNEIDI_HAVE_RHI
     probe = [] { return FrameViewRhiSurface::probe(); };
@@ -679,8 +681,13 @@ void FrameView::tabletEvent(QTabletEvent* e)
 void FrameView::mousePressEvent(QMouseEvent* e)
 {
     const QRectF r = frameRect();
+    QUndoStack* undo = m_overlay ? m_overlay->undoStack() : nullptr; // (before the press: it may already edit)
+    const int undoIndex = undo ? undo->index() : -1;
     if (m_overlay && !r.isEmpty() && m_overlay->mousePress(e, r)) {
         m_overlayDrag = true;
+        m_overlayUndo = undo;
+        m_overlayUndoIndex = undoIndex;
+        m_overlayLast = e->position();
         return;
     }
     const bool zoomedIn = m_zoom != kFit && clampedPan({1e9, 1e9}) != QPointF();
@@ -703,6 +710,7 @@ void FrameView::setIdleCursor(Qt::CursorShape shape)
 void FrameView::mouseMoveEvent(QMouseEvent* e)
 {
     if (m_overlayDrag) {
+        m_overlayLast = e->position();
         if (m_overlay) m_overlay->mouseMove(e, frameRect());
         return;
     }
@@ -733,6 +741,22 @@ void FrameView::mouseMoveEvent(QMouseEvent* e)
         drag->setPixmap(QPixmap::fromImage(m_image.scaled(160, 90, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
     const NestedLoop::Guard nested; // (a platform's own drag loop: no rebuild of the window meanwhile)
     drag->exec(Qt::CopyAction);
+}
+
+void FrameView::cancelOverlayDrag()
+{
+    if (!m_overlayDrag) return;
+    m_overlayDrag = false; // (the release the touch layer sends next finds no drag)
+    if (m_overlay) {
+        QMouseEvent release(QEvent::MouseButtonRelease, m_overlayLast, mapToGlobal(m_overlayLast), Qt::LeftButton,
+                            Qt::NoButton, Qt::NoModifier);
+        m_overlay->mouseRelease(&release, frameRect()); // its state ends (a stroke drawn so far becomes a step: below)
+    }
+    if (QUndoStack* undo = m_overlayUndo.data())
+        while (undo->index() > m_overlayUndoIndex && undo->canUndo()) undo->undo();
+    m_overlayUndo = nullptr;
+    m_overlayUndoIndex = -1;
+    repaintOverlay();
 }
 
 void FrameView::mouseReleaseEvent(QMouseEvent* e)

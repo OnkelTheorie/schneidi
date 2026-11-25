@@ -149,6 +149,7 @@ private:
     // The drag ends (a release; also a move without the button or the lanes hidden mid-drag): the pen's stroke
     // becomes one undo step (addPoint: the release point too), a dragged point's merge closes
     void endDrag(const QPoint& pos, bool addPoint);
+    void cancelDrag(); // a cancelled touch: nothing of the drag is applied
     void paintPart(class QPainter& p); // what lies in m_dirty
     void drawRuler(class QPainter& p);
     void drawLane(class QPainter& p, int track);
@@ -198,6 +199,7 @@ private:
 
     enum class Drag { None, Scrub, Pen, Key };
     Drag m_drag = Drag::None;
+    int m_pressUndo = 0; // the undo index at the press (cancelDrag)
     KeyHit m_key;          // the keyframe being dragged
     QString m_keyMerge;    // its drag's undo merge key
     KeyHit m_added;        // the point the last press set (a double click on it joins that undo step)

@@ -400,6 +400,8 @@ bool CompOverlay::mouseMove(QMouseEvent* e, const QRectF& frame)
     return true;
 }
 
+QUndoStack* CompOverlay::undoStack() const { return m_editor->project()->undoStack(); }
+
 bool CompOverlay::mouseRelease(QMouseEvent* e, const QRectF&)
 {
     if (m_drag < 0 || e->button() != Qt::LeftButton) return false;

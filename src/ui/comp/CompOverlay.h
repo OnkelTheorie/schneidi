@@ -45,6 +45,7 @@ public:
     bool mousePress(QMouseEvent* e, const QRectF& frame) override;
     bool mouseMove(QMouseEvent* e, const QRectF& frame) override;
     bool mouseRelease(QMouseEvent* e, const QRectF& frame) override;
+    QUndoStack* undoStack() const override;
     Qt::CursorShape cursorAt(const QPointF& pos, const QRectF& frame) const override;
 
     struct Handle {
