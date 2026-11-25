@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 // Hardware decoding for the own video reader (plan 0.11 point 7): one device per process, shared by all decoders.
-// Linux: CUDA (NVIDIA, NVDEC), else VAAPI (AMD/Intel); Windows: D3D11VA (all vendors); macOS: VideoToolbox.
-// SCHNEIDI_HWDEC=off|cuda|vaapi|d3d11va|videotoolbox picks one by hand (off = software only).
+// Linux: CUDA (NVIDIA, NVDEC), else VAAPI (AMD/Intel); Windows: D3D11VA (all vendors); macOS: VideoToolbox; Android:
+// MediaCodec (a decoder of its own, see mediaCodecDecoder).
+// SCHNEIDI_HWDEC=off|cuda|vaapi|d3d11va|videotoolbox|mediacodec picks one by hand (off = software only).
 
 extern "C" {
 #include <libavutil/hwcontext.h>
@@ -23,6 +24,12 @@ struct Device {
 // A device for this codec (opened on first use, shared); empty if none works or decoding is off.
 // Thread-safe.
 Device deviceFor(const AVCodec* codec);
+
+// Android: FFmpeg's MediaCodec decoder for this codec id (h264_mediacodec, hevc_mediacodec, ...) when hardware decoding
+// is on, else nullptr (and always nullptr elsewhere). MediaCodec is not a hwaccel of FFmpeg's own decoder but a decoder
+// of its own; without an output surface it hands over software pictures (NV12 on most devices, P010 for 10 bits).
+// The first call gives FFmpeg the Java VM (MediaCodec is reached through JNI). Thread-safe.
+const AVCodec* mediaCodecDecoder(int codecId);
 
 // Is a device for this codec open and working already (deviceFor succeeded before)? Never opens one (opening CUDA
 // takes 100+ ms: not for estimates on the GUI thread). Thread-safe.
