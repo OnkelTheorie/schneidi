@@ -305,7 +305,7 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
                     .arg(files.size())
                     .arg(files.size() == 1 ? "" : "s");
         if (voiceCount > 0)
-            done << QString("voices: %1 moment%2 of laughter or shouting in a voice stream")
+            done << QString("voices: %1 moment%2 of laughter or loud voices in a voice stream")
                         .arg(voiceCount)
                         .arg(voiceCount == 1 ? "" : "s");
         if (endCount > 0)

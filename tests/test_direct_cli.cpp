@@ -741,6 +741,36 @@ int main(int argc, char** argv)
         }
     }
 
+    // ---- A voice getting loud in the voice chat (high and loud, not laughter): named as voices getting loud, not as
+    // a scream - on a gated microphone (silence around every word) a loud exclamation and a scream look the same
+    {
+        const int rate = 48000;
+        Synth::Builder mic(rate, 12.0, 11);
+        mic.floor();
+        Synth::scream(mic, 5.0, 1.2);
+        const QString micWav = dir.filePath("clips/loud-mic.wav");
+        Synth::writeWav(micWav, mic.s, rate);
+        const QString loud = Check::makeMedia(
+            dir.filePath("clips/cs2/cs2_clip_loud.mkv"),
+            {"-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=12", "-f", "lavfi", "-i",
+             "aevalsrc='0.02*sin(2*PI*220*t)':d=12:s=48000", "-i", micWav, "-map", "0:v", "-map", "1:a", "-map", "2:a",
+             "-metadata:s:a:0", "title=System Output", "-metadata:s:a:1", "title=Mikrofon", "-c:v", "libx264",
+             "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
+        if (CHECK(!loud.isEmpty())) {
+            const QJsonObject r = run("direct", {{"recipe", "short"}, {"files", QJsonArray{loud}}});
+            QJsonObject voice;
+            for (const QJsonValue& x : r["session"]["suggestions"].toArray())
+                if (x.toObject()["reason"].toObject()["key"].toString() == QLatin1String("voice_shout")) voice = x.toObject();
+            if (CHECK(!voice.isEmpty())) {
+                CHECK(voice["labels"].toArray().contains("loud") && !voice["labels"].toArray().contains("scream"));
+                const QString text = voice["reason"].toObject()["text"].toString();
+                if (!CHECK(text.contains("voices get loud"))) std::printf("       %s\n", qPrintable(text));
+            } else {
+                std::printf("       %s\n", QJsonDocument(r["session"]["suggestions"].toArray()).toJson().constData());
+            }
+        }
+    }
+
     // ---- The short's hook starts on the action: a hard cut in its lead-in (CS2: the round restarts after the
     // round-end screen) moves its start there (videotest 21.11.: the hook began on "RUNDE VERLOREN")
     {

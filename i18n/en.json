@@ -3934,6 +3934,6 @@
  "Tod des Spielers am Ende des Clips": "the player's death at the end of the clip",
  "Lauteste Stelle am Ende des Clips": "the loudest moment at the end of the clip",
  "Lachen im Sprachkanal ({stream})": "laughter in the voice chat ({stream})",
- "Jemand ruft laut ({stream})": "someone shouts ({stream})",
+ "Stimmen werden laut ({stream})": "voices get loud ({stream})",
  "Nur {s} s Action (Minimum {min} s): Der Short bleibt kürzer, statt die Zeit vor den Momenten oder nach dem Tod des Spielers zu zeigen.": "Only {s} s of action (minimum {min} s): the short stays shorter rather than showing the time before the moments or after the player's death."
 }

@@ -30,7 +30,7 @@ namespace Cli::detail {
 
 namespace {
 
-constexpr int kMomentsVersion = 6; // raise when the moments of a file change for the same sources
+constexpr int kMomentsVersion = 7; // raise when the moments of a file change for the same sources
 
 constexpr double kHighlightsPreS = 2.0;  // highlights' default lead-in before the first kill or loud moment
 constexpr double kHighlightsPostS = 1.0; // ... and lead-out after the last one
@@ -366,7 +366,7 @@ QJsonArray voiceMoments(const MediaSource& m, double length, QJsonArray* voice, 
                                             {laugh ? "voice_laughter" : "voice_shout",
                                              {{"stream", name.isEmpty() ? QString("stream %1").arg(k) : name},
                                               {"s", round2(b.to - b.from)}}},
-                                            {laugh ? "laughter" : "scream", "voice"});
+                                            {laugh ? "laughter" : "loud", "voice"});
             moment["first_s"] = std::round(b.from * 1000) / 1000;
             moment["last_s"] = std::round(b.to * 1000) / 1000;
             moment["lo_s"] = moment["from_s"];

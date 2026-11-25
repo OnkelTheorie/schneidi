@@ -44,7 +44,8 @@ const Text kReasons[] = {
     {"clip_end_loud", "the loudest moment at the end of the clip", nullptr,
      N_("Lauteste Stelle am Ende des Clips"), nullptr},
     {"voice_laughter", "laughter in the voice chat ({stream})", nullptr, N_("Lachen im Sprachkanal ({stream})"), nullptr},
-    {"voice_shout", "someone shouts ({stream})", nullptr, N_("Jemand ruft laut ({stream})"), nullptr},
+    // (not "a scream": on a gated voice stream, silence around every word, a loud exclamation is one to the rules)
+    {"voice_shout", "voices get loud ({stream})", nullptr, N_("Stimmen werden laut ({stream})"), nullptr},
 };
 
 const Text kNotes[] = {
