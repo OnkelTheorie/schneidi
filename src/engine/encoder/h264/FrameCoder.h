@@ -261,6 +261,16 @@ public:
     void commitQp(int mbx, int mby, bool codedDelta);
     void planMacroblockQp();
     int qpPredOf(int mby) const { return qpPredByTop_[size_t(rowKey_[size_t(mby)])]; }
+    // mb_qp_delta must lie in -26..+25 (7.4.5); the decoder computes (pred + delta + 52) % 52, so a difference
+    // outside (QPs 10..51 with the VBV rise inside the picture) is sent 52 further on the other side: same QP.
+    static int wrapQpDelta(int d) { return d > 25 ? d - 52 : d < -26 ? d + 52 : d; }
+    int qpDeltaTo(int qp, int mby)
+    {
+        const int d = qp - qpPredOf(mby);
+        if (!cfg_.cabac && (d > 25 || d < -26)) // CABAC: counted where the raster order's delta is made (waveWrite)
+            qpWraps_.fetch_add(1, std::memory_order_relaxed);
+        return wrapQpDelta(d);
+    }
     // interPred: motion-compensated prediction (inter macroblock); nullptr = intra.
     void analyseChroma(int mbx, int mby, ChromaMb& ch, const uint8_t (*interPred)[64] = nullptr);
     void writeChroma(MbOut& o, int mbx, int mby, const ChromaMb& ch);
@@ -457,6 +467,7 @@ public:
     // picture's, bit 1 background, bit 2 the samples equal the list 1 reference picture's.
     std::vector<uint8_t> hint_;
     std::atomic<int> hintStill_{0}, hintBackground_{0}; // macroblocks coded by a hint in this picture
+    std::atomic<int> qpWraps_{0};                       // mb_qp_delta values wrapped in this picture
     float qpFrac_ = 0;              // the picture's QP is cfg_.qp + qpFrac_ (constant quality), spread by planMacroblockQp
 };
 

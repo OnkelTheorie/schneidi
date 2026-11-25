@@ -198,6 +198,12 @@ S264_DEV(double, gBSharpEnv, devEnv("H264_BSHARP") ? std::atof(devEnv("H264_BSHA
 S264_DEV(double, gBSharpEst, devEnv("H264_BSHARPEST") ? std::atof(devEnv("H264_BSHARPEST")) : 1.0);
 S264_DEV(double, gBSharpKeep, devEnv("H264_BSHARPKEEP") ? std::atof(devEnv("H264_BSHARPKEEP")) : 0.85);
 S264_DEV(bool, gBSharpLong, devEnv("H264_BSHARPLONG") && std::atoi(devEnv("H264_BSHARPLONG")) != 0);
+// B_8x8: the sub-pel level of the four 8x8 searches per list (motionSearch: 1 half-pel, 2 quarter-pel as the other
+// searches; H264_B8SUBPEL). Half-pel on purpose: measured 25.11.2026 with 2, BD-rate against x264 medium (PSNR-Y / SSIM-Y /
+// VMAF, CRF 19-28) highlights -3.84 / +1.52 / -3.59 -> -3.87 / +1.51 / -3.59 %, game clips with stills -3.29 / -1.28 / +3.44 ->
+// -3.32 / -1.28 / +3.44 %, a vertical short -6.99 / -12.40 / -26.01 -> -7.03 / -12.43 / -26.01 % - 0.03 points, for 1 to
+// 1.7 % more CPU time (crf 22, 3 threads, two alternating runs each: highlights 136.0 -> 137.4 s, the short 88.8 -> 90.3 s).
+S264_DEV(int, gB8Subpel, devEnv("H264_B8SUBPEL") ? std::atoi(devEnv("H264_B8SUBPEL")) : 1);
 // Texture keepers (psy-RD, bSharp) by the source macroblock's texture (the AQ's energy, log2 of 256 x variance + 1):
 // none below gFlatLo, in full from gFlatHi. A flat or smoothly shaded macroblock has no texture to keep - there
 // both only cost: psy codes quantisation noise as "detail", bSharp refuses the average of two pictures, which on
@@ -658,6 +664,7 @@ struct V3Encoder final : EncoderAlt {
         s.hintRepeats = h.repeats;
         s.hintStillMbs = h.stillMbs;
         s.hintBackgroundMbs = h.backgroundMbs;
+        s.qpDeltaWraps = e.qpDeltaWraps();
         return s;
     }
     const std::vector<uint8_t>& recon(int plane) const override { return plane == 0 ? e.reconY() : plane == 1 ? e.reconU() : e.reconV(); }
@@ -776,6 +783,7 @@ void Encoder::takeAltState()
     hintStats_.repeats = s.hintRepeats;
     hintStats_.stillMbs = s.hintStillMbs;
     hintStats_.backgroundMbs = s.hintBackgroundMbs;
+    qpDeltaWraps_ = s.qpDeltaWraps;
 }
 
 Encoder::Encoder(const EncoderConfig& config)
@@ -1782,6 +1790,16 @@ S264_DEV(bool, gTpBinB, !devEnv("H264_TPBINB") || std::atoi(devEnv("H264_TPBINB"
 // as it stands; past that the clip ends over or under its size instead of starving (or flooding)
 // its last seconds (H264_TPDEV, <= 0 = no limit).
 S264_DEV(double, gTpDev, devEnv("H264_TPDEV") ? std::atof(devEnv("H264_TPDEV")) : 2.0);
+// ... and this much further times the share of the clip's bits (the model's, at the plan QP) that is still to be
+// coded (H264_TPDEVWIDE; 0 = the same limit everywhere, the default): a debt found while most of the clip is still to
+// come is spread over much, so paying it starves nothing. Measured 25.11.2026 with 12 and H264_TPLAG=1 (miss of the
+// target, without -> with): 14 s of game clips and stills, where the second clip costs more per need than the first
+// taught the model, at 6 / 12 Mbit/s +3.1 -> +0.5 %, +9.2 -> +4.9 %; 2 s cuts +13.8 -> +10.9 %, +11.9 -> +10.6 %, +4.6 -> +3.8 %,
+// +1.6 -> +0.2 %; highlights at 1.5 to 12 Mbit/s +0.6 .. +1.0 -> +0.1 .. +0.6 %; but the clip with stills at 3 / 4 Mbit/s
+// -2.4 -> -2.7 %, -1.0 -> -1.4 %, and its two-pass BD-rate (1.5 to 12 Mbit/s) +0.6 % PSNR-Y / +1.3 % SSIM-Y: a debt paid
+// late is paid by the pictures that are left. Not the default for that; the model knowing such a clip before it is
+// coded would be the fix. (A plain H264_TPDEV=4 is worse: 12 Mbit/s +5.1 % for 0.44 dB less, the wide limit 0.07 dB.)
+S264_DEV(double, gTpDevWide, devEnv("H264_TPDEVWIDE") ? std::atof(devEnv("H264_TPDEVWIDE")) : 0.0);
 // How much of the way from that plan QP to the QP that spends exactly what is left the picture's QP
 // goes (H264_TPFOLLOW; 1 = all the way, as before 15.11.2026; default a quarter). The plan QP moves only as the model
 // learns; the other also swings with every stretch the model misjudged, and near the clip's end with
@@ -2174,6 +2192,13 @@ double Encoder::twoPassQp(double kI, double kP, double kB, double planQp) const
     const double left = double(st.size()) - frameIndex_;
     const double least = planQp >= 0 && gTpRestFloor > 0 ? gTpRestFloor * tpBits(tpRemTab_, planQp, kI, kP, kB)
                                                          : 0.5 * left * perFrame;
+    // rcBits_ lags: the two or three pictures in flight are out of tpRemTab_ (dropped at their start) and not yet in
+    // rcBits_ (applyRc), so their bits count as still to spend. Left so on purpose - subtracting their predicted bits
+    // (measured 25.11.2026, miss of the target without -> with) brings the clips that end over their size down
+    // (2 s cuts of game footage +1.4 -> +1.0, +1.6 -> 0.0, +13.8 -> +11.8, +11.9 -> +10.3, +4.6 -> +3.0 %; 14 s with stills at
+    // 12 Mbit/s +9.2 -> +8.8 %) and pushes those that end under it further under (2 s cuts -1.9 -> -2.6, +0.5 -> -0.6 %; 14 s
+    // with stills -3.3 -> -3.4, -2.4 -> -2.6 %; the synthetic clip with a standing start 592 -> 586 of 600 kbit/s): a
+    // shift of 0.3 to 2 points downwards, not a better aim.
     const double budget = std::max(double(st.size()) * perFrame - rcBits_, least);
     const double qp = tpSolve(tpRemTab_, budget, kI, kP, kB);
     static const bool trace = devEnv("H264_RC_TRACE") != nullptr;
@@ -3150,6 +3175,7 @@ std::vector<uint8_t> Encoder::finishFrame(FrameCoder& fc)
     fc.refs1_.clear();
     hintStats_.stillMbs += fc.hintStill_.load(std::memory_order_relaxed);
     hintStats_.backgroundMbs += fc.hintBackground_.load(std::memory_order_relaxed);
+    qpDeltaWraps_ += fc.qpWraps_.load(std::memory_order_relaxed);
     std::vector<uint8_t> out = std::move(fc.done_);
     fc.done_.clear();
     last_ = &fc;
@@ -3866,7 +3892,10 @@ void FrameCoder::waveWrite()
             using K = MbSyntax::Kind;
             const bool sends = syn.kind == K::I16 || (syn.kind != K::Skip && (syn.cbpLuma || syn.cbpChroma));
             if (sends) {
-                syn.qpDelta = mbQp_[m] - pred;
+                const int d = mbQp_[m] - pred;
+                if (d > 25 || d < -26)
+                    qpWraps_.fetch_add(1, std::memory_order_relaxed);
+                syn.qpDelta = wrapQpDelta(d);
                 pred = mbQp_[m];
             }
             mbQpFinal_[m] = int8_t(pred);
@@ -4789,8 +4818,13 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             const double plan = twoPassPlanQp(kOf(true), kOf(false), kB());
             qp = twoPassQp(kOf(true), kOf(false), kB(), plan);
             const double rest = qp;
+            double dev = gTpDev;
+            if (gTpDev > 0 && gTpDevWide > 0) {
+                const double all = tpBits(tpAllTab_, plan, kOf(true), kOf(false), kB());
+                dev += gTpDevWide * std::clamp(tpBits(tpRemTab_, plan, kOf(true), kOf(false), kB()) / std::max(1.0, all), 0.0, 1.0);
+            }
             if (rcFramesSeen_ >= 12) {
-                const double gap = gTpDev > 0 ? std::clamp(rest - plan, -gTpDev, gTpDev) : rest - plan;
+                const double gap = gTpDev > 0 ? std::clamp(rest - plan, -dev, dev) : rest - plan;
                 if (gTpLag > 0) {
                     const double lag = gTpLagShare > 0 ? std::min(gTpLag * cfg_.fps, gTpLagShare * double(cfg_.firstPass->size())) : gTpLag * cfg_.fps;
                     tpGap_ += (gap - tpGap_) / std::max(1.0, lag);
@@ -4798,9 +4832,9 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 qp = plan + gTpFollow * (qp - plan) + (1.0 - gTpFollow) * tpGap_;
             }
             if (gTpDev > 0 && rcFramesSeen_ >= 12)
-                qp = std::clamp(qp, plan - gTpDev, plan + gTpDev);
+                qp = std::clamp(qp, plan - dev, plan + dev);
             if (devEnv("H264_RC_TRACE"))
-                std::fprintf(stderr, "rc3: frame %d rest %.2f plan %.2f\n", frameIndex_, rest, plan);
+                std::fprintf(stderr, "rc3: frame %d rest %.2f plan %.2f dev %.2f\n", frameIndex_, rest, plan, dev);
             const double step = rcFramesSeen_ < 12 ? 2.0 : 0.5;
             if (rcQp_ > 0)
                 qp = std::clamp(qp, rcQp_ - step, rcQp_ + step);
@@ -4971,6 +5005,7 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     // reaches back to this one), bit 1 = background (planMacroblockQp drops it where there is texture).
     fc.hint_.clear();
     fc.hintStill_ = fc.hintBackground_ = 0;
+    fc.qpWraps_ = 0;
     if (!frame.hint.empty() || !frame.stillFrom.empty() || (type == 2 && !fc.refs1_.empty() && !fc.refs1_[0]->stillFrom.empty())) {
         const size_t n = size_t(mbW_) * mbH_;
         fc.hint_.assign(n, 0);
@@ -5832,10 +5867,10 @@ bool FrameCoder::encodeLuma16(MbOut& o, int mbx, int mby, const ChromaMb& ch)
     o.syn.chromaMode = ch.mode;
     o.syn.cbpLuma = cbpLuma;
     o.syn.hasQpDelta = true;
-    o.syn.qpDelta = qp - qpPredOf(mby);
+    o.syn.qpDelta = qpDeltaTo(qp, mby);
     bw.ue(uint32_t(mbTypeOffset_ + 1 + bestMode + 4 * ch.cbp + (cbpLuma ? 12 : 0))); // mb_type I_16x16_*
     bw.ue(uint32_t(ch.mode)); // intra_chroma_pred_mode
-    bw.se(qp - qpPredOf(mby)); // mb_qp_delta (always present for Intra 16x16)
+    bw.se(qpDeltaTo(qp, mby)); // mb_qp_delta (always present for Intra 16x16)
 
     const int mbBx = mbx * 4, mbBy = mby * 4, lw = mbW_ * 4;
     {
@@ -6043,9 +6078,9 @@ bool FrameCoder::encodeLuma4(MbOut& o, int mbx, int mby, const ChromaMb& ch, int
     const int cbp = cbpLuma | (ch.cbp << 4);
     bw.ue(uint32_t(intraCbpCode(cbp)));
     o.syn.hasQpDelta = cbp != 0;
-    o.syn.qpDelta = qp - qpPredOf(mby);
+    o.syn.qpDelta = qpDeltaTo(qp, mby);
     if (cbp)
-        bw.se(qp - qpPredOf(mby)); // mb_qp_delta
+        bw.se(qpDeltaTo(qp, mby)); // mb_qp_delta
     for (int blkIdx = 0; blkIdx < 16; ++blkIdx) {
         const int bx = mbx * 4 + kBlkX[blkIdx], by = mby * 4 + kBlkY[blkIdx];
         int total = 0;
@@ -6592,7 +6627,7 @@ bool FrameCoder::encodeLuma8(MbOut& o, int mbx, int mby, const ChromaMb& ch, int
     o.syn.cbpLuma = cbpLuma;
     const int cbp = cbpLuma | (ch.cbp << 4);
     o.syn.hasQpDelta = cbp != 0;
-    o.syn.qpDelta = qp - qpPredOf(mby);
+    o.syn.qpDelta = qpDeltaTo(qp, mby);
     writeChroma(o, mbx, mby, ch);
     return cbp != 0;
 }
@@ -7639,9 +7674,9 @@ bool FrameCoder::writeInterResidual(int mbx, int mby, int qp, bool t8, const Int
     io.syn.cbpLuma = cbpLuma;
     io.syn.t8 = t8 && cbpLuma != 0;
     io.syn.hasQpDelta = cbp != 0;
-    io.syn.qpDelta = qp - qpPredOf(mby);
+    io.syn.qpDelta = qpDeltaTo(qp, mby);
     if (cbp)
-        interBits.se(qp - qpPredOf(mby)); // mb_qp_delta
+        interBits.se(qpDeltaTo(qp, mby)); // mb_qp_delta
     if (t8) {
         // 8x8 transform (CABAC only): the four 4x4 blocks carry the 8x8 block's count (bS, nC). The
         // 4x4 syntax levels are not read with the 8x8 transform, so they are not copied.
@@ -8984,7 +9019,7 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
                 st[n++] = {whole.mv[0][list][0], whole.mv[0][list][1]};
                 st[n++] = {pX, pY};
                 cost[list] = motionSearch(list ? *refs1_[0] : *refs_[0], mbx, mby, P.x4, P.y4, P.w4, P.h4, pX, pY, lambdaSad, st, n,
-                                          true, c.mv[p][list][0], c.mv[p][list][1]);
+                                          gB8Subpel, c.mv[p][list][0], c.mv[p][list][1]);
             }
             uint8_t a[256], b[256];
             const int px = mbx * 16 + P.x4 * 4, py = mby * 16 + P.y4 * 4;
@@ -9418,10 +9453,16 @@ bool FrameCoder::encodeMbB(MbOut& result, int mbx, int mby)
 
 // After a macroblock is chosen: its QP is the planned one if it sent mb_qp_delta, else the predictor.
 // VBV inside the picture (vbvRowCap_): the QP rise for macroblock (mbx, r), applied to its mbQp_. Seen so far: this
-// row up to mbx and every row r - j above up to column mbx + 2j - what the wavefront has finished for certain
-// before this macroblock starts, on any number of threads. Projection: their bits, plus the planned share of the
-// rest scaled by what the seen part took against its plan (at the QPs it got) and by 2^(-rise/6).
+// row up to mbx and every row r - j above up to column mbx + j + 1 - what the wavefront has finished for certain
+// before this macroblock starts, on any number of threads: each row waits for mbx + 2 finished macroblocks of the
+// row above it (waveRowBody), so row r - 1 is at mbx + 2 or further, and to get there it needed mbx + 3 of row
+// r - 2, and so on. (Reading further right, as mbx + 2j did, met sums another thread was still writing or zeros,
+// and the stream depended on the thread count.) Projection: their bits, plus the planned share of the rest scaled
+// by what the seen part took against its plan (at the QPs it got) and by 2^(-rise/6).
 S264_DEV(double, gVbvRowStart, devEnv("H264_VBV_ROWSTART") ? std::atof(devEnv("H264_VBV_ROWSTART")) : 0.05);
+
+// H264_VBV_ROWAHEAD=2: the read before 25.11.2026 (column mbx + 2j; measuring and checking the test only).
+S264_DEV(int, gVbvRowAhead, devEnv("H264_VBV_ROWAHEAD") ? std::atoi(devEnv("H264_VBV_ROWAHEAD")) : 1);
 
 int FrameCoder::vbvRowAdjust(int mbx, int r)
 {
@@ -9429,7 +9470,7 @@ int FrameCoder::vbvRowAdjust(int mbx, int r)
     double bits = vbvPrefB_[size_t(r) * stride + size_t(mbx)], eff = vbvPrefE_[size_t(r) * stride + size_t(mbx)],
            plan = vbvPrefW_[size_t(r) * stride + size_t(mbx)];
     for (int j = 1; j <= r; ++j) {
-        const size_t k = size_t(r - j) * stride + size_t(std::min(mbW_, mbx + 2 * j));
+        const size_t k = size_t(r - j) * stride + size_t(std::min(mbW_, mbx + (gVbvRowAhead == 2 ? 2 * j : j + 1)));
         bits += vbvPrefB_[k];
         eff += vbvPrefE_[k];
         plan += vbvPrefW_[k];
@@ -10223,6 +10264,12 @@ void FrameCoder::planMacroblockQp()
     const int n = mbW_ * mbH_;
     const bool tree = treeOffset_.size() == size_t(n);
     const bool hinted = hint_.size() == size_t(n);
+    auto testChecker = [&] { // EncoderConfig::testQpChecker
+        if (cfg_.testQpChecker)
+            for (int m = 0; m < n; ++m)
+                if ((m % mbW_ + m / mbW_) & 1)
+                    mbQp_[size_t(m)] = int8_t(std::clamp(mbQp_[size_t(m)] + cfg_.testQpChecker, 0, 51));
+    };
     int background = 0;
     if (cfg_.aqStrength <= 0 || cfg_.mode == IntraMode::Pcm) {
         if (hinted) // the texture is not measured: no background treatment
@@ -10231,10 +10278,12 @@ void FrameCoder::planMacroblockQp()
         std::fill(mbEnergy_.begin(), mbEnergy_.end(), 99.0f); // not measured: every macroblock counts as textured
         if (!tree) {
             std::fill(mbQp_.begin(), mbQp_.end(), int8_t(cfg_.qp));
+            testChecker();
             return;
         }
         for (int m = 0; m < n; ++m)
             mbQp_[size_t(m)] = int8_t(std::clamp(int(std::lround(cfg_.qp + qpFrac_ + treeOffset_[size_t(m)])), 0, 51));
+        testChecker();
         return;
     }
     double mean = 0;
@@ -10354,6 +10403,7 @@ void FrameCoder::planMacroblockQp()
             offset += treeOffset_[size_t(m)];
         mbQp_[size_t(m)] = int8_t(std::clamp(int(std::lround(cfg_.qp + qpFrac_ + offset)), 0, 51));
     }
+    testChecker();
 }
 
 
