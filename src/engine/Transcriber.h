@@ -104,6 +104,9 @@ public:
     // A short starting text with punctuation in the language (de, en; empty otherwise): without it whisper wrote whole
     // pieces of fast chat in lower case without a comma (measured 20.11.)
     static QString punctuationPrompt(const QString& language);
+    // Loudness of a 16-bit PCM WAV (ffmpeg or the Exporter wrote it), channels mixed; empty if unreadable. Reads the
+    // file in blocks (a 3 h sound is never held at once)
+    static Transcript::Levels wavLevels(const QString& path);
 
 signals:
     void progress(double fraction); // 0..1

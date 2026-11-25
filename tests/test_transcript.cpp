@@ -380,6 +380,36 @@ int main(int argc, char** argv)
         CHECK_EQ(l.db.size(), 100);
         CHECK(std::abs(l.db[10] + 9.03f) < 0.2f);
         CHECK(l.db[80] < -100.f);
+        // The same from a WAV file (read in blocks, stereo mixed to mono, a LIST chunk before the data; 2.5 s so the
+        // last block is a short one): the same levels as all at once
+        QTemporaryDir dir;
+        const QString wav = dir.filePath("levels.wav");
+        QFile f(wav);
+        if (CHECK(dir.isValid() && f.open(QIODevice::WriteOnly))) {
+            constexpr int kFrames = 40000;
+            QVector<qint16> mono(kFrames);
+            for (int i = 0; i < kFrames; ++i) mono[i] = qint16(i % 16000 < 8000 ? 16384 * std::sin(2 * M_PI * 1000 * i / 16000.0) : 0);
+            QByteArray d("RIFF");
+            const auto u32 = [&d](quint32 v) { for (int k = 0; k < 4; ++k) d += char((v >> (8 * k)) & 0xff); };
+            const auto u16 = [&d](quint16 v) { d += char(v & 0xff); d += char(v >> 8); };
+            u32(4 + 8 + 16 + 8 + 4 + 8 + kFrames * 4);
+            d += "WAVEfmt ";
+            u32(16);
+            u16(1), u16(2), u32(16000), u32(16000 * 4), u16(4), u16(16);
+            d += "LIST";
+            u32(3);
+            d += QByteArray("abc\0", 4); // odd size: padded
+            d += "data";
+            u32(kFrames * 4);
+            for (int i = 0; i < kFrames; ++i) u16(quint16(mono[i])), u16(quint16(mono[i]));
+            f.write(d);
+            f.close();
+            const Transcript::Levels w = Transcriber::wavLevels(wav);
+            const Transcript::Levels all = Transcript::levelsOf(mono.constData(), kFrames, 16000);
+            CHECK_EQ(w.db.size(), 250);
+            CHECK(w.db == all.db);
+        }
+        CHECK(Transcriber::wavLevels(dir.filePath("missing.wav")).db.isEmpty());
     }
     using W = Transcript::Word;
     // Laughter case (real recording): laughter 6.5–13.4 s, "Diese Scheiß-Pferd, Alter" from 13.9 s; whisper starts

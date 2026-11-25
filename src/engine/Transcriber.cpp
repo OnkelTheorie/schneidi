@@ -49,40 +49,60 @@ QString narrowSafePath(const QString& path)
 #endif
 }
 
-// Loudness of a 16-bit PCM WAV (ffmpeg or the Exporter wrote it), channels mixed; empty if unreadable
-Transcript::Levels wavLevels(const QString& path)
+}
+
+// Read block by block, never the whole file (3 h of 16 kHz = 345 MB, plus a mono copy: bad_alloc on a Pi right after
+// whisper finished, review 25.11.): the chunk headers, then the data chunk in blocks of whole level windows
+Transcript::Levels Transcriber::wavLevels(const QString& path)
 {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) return {};
-    const QByteArray d = f.readAll();
-    const auto u16 = [&](qsizetype at) { return quint16(uchar(d[at]) | uchar(d[at + 1]) << 8); };
-    const auto u32 = [&](qsizetype at) { return quint32(u16(at)) | quint32(u16(at + 2)) << 16; };
-    if (d.size() < 12 || !d.startsWith("RIFF") || d.mid(8, 4) != "WAVE") return {};
+    const qint64 fileSize = f.size();
+    const QByteArray riff = f.read(12);
+    if (riff.size() < 12 || !riff.startsWith("RIFF") || riff.mid(8, 4) != "WAVE") return {};
+    const auto u16 = [](const QByteArray& d, int at) { return quint16(uchar(d[at]) | uchar(d[at + 1]) << 8); };
+    const auto u32 = [&](const QByteArray& d, int at) { return quint32(u16(d, at)) | quint32(u16(d, at + 2)) << 16; };
     int channels = 0, rate = 0, bits = 0;
-    for (qsizetype at = 12; at + 8 <= d.size();) {
-        const QByteArray id = d.mid(at, 4);
-        const qsizetype size = u32(at + 4), body = at + 8;
-        if (id == "fmt " && body + 16 <= d.size()) {
-            channels = u16(body + 2);
-            rate = int(u32(body + 4));
-            bits = u16(body + 14);
-        } else if (id == "data") {
+    for (qint64 at = 12; at + 8 <= fileSize;) {
+        if (!f.seek(at)) return {};
+        const QByteArray h = f.read(8);
+        if (h.size() < 8) return {};
+        const qint64 size = u32(h, 4), body = at + 8;
+        if (h.left(4) == "fmt " && body + 16 <= fileSize) {
+            const QByteArray fmt = f.read(16);
+            if (fmt.size() < 16) return {};
+            channels = u16(fmt, 2);
+            rate = int(u32(fmt, 4));
+            bits = u16(fmt, 14);
+        } else if (h.left(4) == "data") {
             if (channels <= 0 || rate <= 0 || bits != 16) return {};
-            const qsizetype bytes = std::min(size, d.size() - body);
-            const qint64 frames = bytes / (2 * channels);
-            const auto* s = reinterpret_cast<const qint16*>(d.constData() + body);
-            QVector<qint16> mono(frames);
-            for (qint64 i = 0; i < frames; ++i) {
-                int sum = 0;
-                for (int c = 0; c < channels; ++c) sum += s[i * channels + c];
-                mono[i] = qint16(sum / channels);
+            const qint64 frames = std::min(size, fileSize - body) / (2 * channels);
+            Transcript::Levels levels;
+            // Whole windows of levelsOf per block (1 s or so): the blocks' levels joined = the levels of all at once
+            const qint64 window = std::max<qint64>(1, qint64(rate) * levels.frameMs / 1000);
+            const qint64 blockFrames = window * 100;
+            QVector<qint16> mono;
+            for (qint64 done = 0; done < frames;) {
+                const qint64 n = std::min(blockFrames, frames - done);
+                const QByteArray block = f.read(n * 2 * channels);
+                const qint64 got = block.size() / (2 * channels);
+                if (got <= 0) break;
+                const auto* s = reinterpret_cast<const qint16*>(block.constData());
+                mono.resize(qsizetype(got));
+                for (qint64 i = 0; i < got; ++i) {
+                    int sum = 0;
+                    for (int c = 0; c < channels; ++c) sum += s[i * channels + c];
+                    mono[qsizetype(i)] = qint16(sum / channels);
+                }
+                levels.db += Transcript::levelsOf(mono.constData(), got, rate, levels.frameMs).db;
+                done += got;
+                if (got < n) break; // short read: the file ends early
             }
-            return Transcript::levelsOf(mono.constData(), frames, rate);
+            return levels;
         }
         at = body + size + (size & 1);
     }
     return {};
-}
 }
 
 Transcriber::Transcriber(QObject* parent) : QObject(parent)
