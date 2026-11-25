@@ -149,6 +149,9 @@ int clampTrackDelta(const Timeline& tl, const QVector<int>& clipIds, TrackKind a
 void shiftFine(Clip& c, int fine);
 void moveClips(Timeline& tl, const QVector<int>& clipIds, int deltaFrames,
                TrackKind anchorKind, int trackDelta, const IdGen& newId);
+// Same, with each clip's own target start (whole frames; e.g. fine moves whose carry differs per clip)
+void moveClips(Timeline& tl, const QVector<int>& clipIds, const std::function<int(const Clip&)>& targetStart,
+               TrackKind anchorKind, int trackDelta, const IdGen& newId);
 
 enum class Edge { Start, End };
 // Length of a clip's source material in frames, converted with speed (Clip::retimedLength;

@@ -693,6 +693,13 @@ void shiftFine(Clip& c, int fine)
 void moveClips(Timeline& tl, const QVector<int>& clipIds, int deltaFrames,
                TrackKind anchorKind, int trackDelta, const IdGen& newId)
 {
+    moveClips(tl, clipIds, [deltaFrames](const Clip& c) { return c.start + deltaFrames; },
+              anchorKind, trackDelta, newId);
+}
+
+void moveClips(Timeline& tl, const QVector<int>& clipIds, const std::function<int(const Clip&)>& targetStart,
+               TrackKind anchorKind, int trackDelta, const IdGen& newId)
+{
     trackDelta = clampTrackDelta(tl, clipIds, anchorKind, trackDelta);
     struct Moving { Clip clip; TrackRef target; };
     QVector<Moving> moving;
@@ -701,7 +708,7 @@ void moveClips(Timeline& tl, const QVector<int>& clipIds, int deltaFrames,
         const Clip* c = findClip(tl, id, &ref);
         if (!c) continue;
         Moving m{*c, ref};
-        m.clip.start = std::max(0, c->start + deltaFrames);
+        m.clip.start = std::max(0, targetStart(*c));
         m.target.index = ref.index + trackDelta;
         moving << m;
     }
