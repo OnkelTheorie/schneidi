@@ -134,6 +134,12 @@ void StillFetcher::loop()
         {
             QMutexLocker lock(&m_mutex);
             if (gen != m_generation || fileGen != m_fileGeneration.value(job.path)) continue; // changed meanwhile
+            if (maxEdge != m_maxEdge) { // another size meanwhile: done again at it (the old one would stay cached)
+                bool dup = false;
+                for (const Request& j : m_jobs) dup |= j.path == job.path && j.frame == job.frame;
+                if (!dup) m_jobs.prepend(job);
+                continue;
+            }
             ++m_decoded;
             if (!img.isNull())
                 m_cache.insert(key(job.path, job.frame), new QImage(img), int(img.sizeInBytes() / 1024) + 1);
