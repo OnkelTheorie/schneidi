@@ -28,6 +28,7 @@
 #include "app/PageVisibility.h"
 #include "app/Theme.h"
 #include "cli/Live.h"
+#include "core/Direction.h"
 #include "core/I18n.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -39,6 +40,7 @@
 #include "ui/Viewer.h"
 #include "ui/direct/DirectMaterial.h"
 #include "ui/direct/DirectPage.h"
+#include "ui/direct/DirectText.h"
 #include "ui/direct/DirectRecipes.h"
 #include "ui/direct/DirectSuggestions.h"
 #include "ui/direct/DirectWish.h"
@@ -954,6 +956,22 @@ int main(int argc, char** argv)
     Theme::apply(app);
     std::setlocale(LC_NUMERIC, "C");
     I18n::install("de");
+    // Every reason and note `direct` can give has a text in the page's language (25.11.: "voices get loud (Mikrofon)"
+    // stood in English in the German page - the page knew only its own list of reasons)
+    {
+        const QJsonObject values{{"n", 2}, {"s", 1.5}, {"stream", "Mikrofon"}, {"word", "äh"}, {"slot", "clip1"}, {"sentence", 1}};
+        for (const QString& key : Direction::reasonKeys()) {
+            const QString english = Direction::reasonText({key, values});
+            const QString shown = DirectText::reason(QJsonObject{{"key", key}, {"values", values}, {"text", english}});
+            if (!CHECK(!shown.isEmpty() && shown != english)) std::printf("       reason %s: \"%s\"\n", qPrintable(key), qPrintable(shown));
+        }
+        CHECK_EQ(DirectText::reason(QJsonObject{{"key", "voice_shout"}, {"values", values}}), QString("Stimmen werden laut (Mikrofon)"));
+        for (const QString& key : Direction::noteKeys()) {
+            const QString shown = DirectText::note(QJsonObject{{"key", key}, {"values", values}});
+            if (!CHECK(!shown.isEmpty() && shown != Direction::noteText(key, values)))
+                std::printf("       note %s: \"%s\"\n", qPrintable(key), qPrintable(shown));
+        }
+    }
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     QTemporaryDir dir;
     const QStringList args = {"-f", "lavfi", "-i", "testsrc=size=320x180:rate=25:duration=6", "-f", "lavfi", "-i",

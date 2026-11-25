@@ -60,6 +60,9 @@ QString reason(const QJsonObject& r)
     if (key == "take") return T("Bester Take");
     if (key == "alt_take") return T("Anderer Take");
     if (key == "fallback_end") return T("Ende der Aufnahme");
+    // Every other reason `direct` gives: its own text in the UI language (voices, the end of a clip, …); the answer's
+    // English text only for a key this build does not know
+    if (Direction::reasonKeys().contains(key)) return Direction::reasonText({key, v}, Direction::Lang::Ui);
     return r.value("text").toString();
 }
 
