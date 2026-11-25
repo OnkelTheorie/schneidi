@@ -123,6 +123,43 @@ int main(int argc, char** argv)
         }
     }
 
+    // An enum holds every value its parameter's help text offers (aliases included): a validating client must not refuse
+    // render format "mp4" or quality "2", which the command reads. A parameter that also takes free values has no enum
+    {
+        const QHash<QString, QStringList> documented{
+            {"render/format", {"h264", "mp4", "webm", "vp9", "s264", "gif", "png", "wav", "srt", "vtt"}},
+            {"render/quality", {"high", "medium", "small", "web", "source", "0", "1", "2", "3", "4"}},
+            {"render/subtitles", {"none", "burn", "srt", "vtt"}},
+            {"short/for", {"shorts", "reels", "tiktok"}},
+            {"short/captions", {"karaoke", "word", "off"}},
+            {"short/accents", {"punch", "off"}},
+            {"short/game", {"cs2", "valorant", "none"}},
+            {"highlights/game", {"cs2", "valorant", "none"}},
+            {"check/for", {"shorts", "reels", "tiktok", "podcast", "youtube", "web", "broadcast"}},
+            {"transcribe/captions", {"karaoke", "word", "beat"}},
+            {"direct/recipe", {"short", "highlights", "talk", "template", "script"}},
+            {"brand/action", {"show", "set", "apply", "unset", "logo", "intro_outro"}},
+            {"app/page", {"media", "direct", "edit", "comp", "color", "studio", "deliver"}},
+            {"effects/kind", {"sfx", "music", "nodes", "recipes"}},
+        };
+        for (const Cli::Command& c : Cli::commands())
+            for (const Cli::Param& p : c.params) {
+                const QStringList values = Cli::ToolText::choices(c.name, p.name);
+                if (values.isEmpty()) continue;
+                const QString key = c.name + "/" + p.name;
+                // A new enum is added to the table above with what its help text offers
+                if (!CHECK(documented.contains(key) || key == "app/action"))
+                    std::printf("       %s: enum not checked against its help text\n", qPrintable(key));
+                for (const QString& v : documented.value(key))
+                    if (!CHECK(values.contains(v)))
+                        std::printf("       %s: the enum refuses '%s', which the command takes\n", qPrintable(key), qPrintable(v));
+                // Every enum value is one the help text names
+                for (const QString& v : values)
+                    if (!CHECK(p.help.contains(v)))
+                        std::printf("       %s: '%s' is not in the help text\n", qPrintable(key), qPrintable(v));
+            }
+    }
+
     // The shown parameters with their fixed values as enum; `help` has them too, with the full texts
     for (const QJsonValue& v : tools) {
         if (v["name"].toString() != "app") continue;
