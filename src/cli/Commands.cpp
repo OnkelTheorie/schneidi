@@ -1625,7 +1625,7 @@ const QVector<Command>& commands()
           {"model", T::String, "large, turbo, small, base, tiny, parakeet or a model file (default: see quality, else "
                                "the best installed)"},
           {"words", T::Boolean, "also return every word with its time"},
-          {"vocabulary", T::Json, "names, slang, game terms whisper should spell like this: a list or comma text, "
+          {"vocabulary", T::String, "names, slang, game terms whisper should spell like this: comma text (or a JSON list), "
                                   "added to the word list of the app's settings (File > Settings > Transcription) for "
                                   "this call. It biases the spelling, it does not make whisper hear a word; Parakeet "
                                   "ignores it"},

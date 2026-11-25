@@ -19,6 +19,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QTimer>
 
 #include <algorithm>
@@ -406,7 +407,9 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
     req.verbatim = a["verbatim"].toBool();
     // The word list: the settings' (File > Settings) and this call's
     {
-        const QJsonValue v = a["vocabulary"];
+        QJsonValue v = a["vocabulary"];
+        if (v.isString() && v.toString().trimmed().startsWith('['))
+            v = QJsonDocument::fromJson(v.toString().toUtf8()).array();
         QStringList given;
         if (v.isArray())
             for (const QJsonValue& w : v.toArray()) given << w.toString();
