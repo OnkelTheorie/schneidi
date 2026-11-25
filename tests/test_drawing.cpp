@@ -417,6 +417,23 @@ void testBox()
     const QImage after = render(t.p.timeline(), 0);
     CHECK(at(after, 40, 160, kRed));
     t.ov.setActive(false);
+    // Its transform switched off (a rotation kept): scaling switches it on from what is shown, the kept rotation does
+    // not come back and the box's middle stays (review ui-01)
+    t.p.edit("off", [id](Timeline& tl) {
+        Clip* d = TimelineOps::findClip(tl, id);
+        d->transform.rotation = 30;
+        d->transform.transformOn = false;
+    });
+    {
+        const QRectF flat = t.ov.boxRect(t.frame);
+        const QPointF m = flat.center(), k = flat.bottomRight();
+        CHECK(t.drag({k, m + (k - m) * 2}));
+        c = TimelineOps::findClip(t.p.timeline(), id);
+        CHECK(c && c->transform.transformOn && c->transform.rotation == 0);
+        const QRectF big = t.ov.boxRect(t.frame);
+        CHECK(std::abs(big.center().x() - m.x()) < 0.01 && std::abs(big.center().y() - m.y()) < 0.01);
+        CHECK(std::abs(big.width() - 2 * flat.width()) < 0.01);
+    }
     // A Media Pool source: no box
     t.timeline = false;
     CHECK(t.ov.boxRect(t.frame).isEmpty());

@@ -371,7 +371,15 @@ bool DrawOverlay::mouseMove(QMouseEvent* e, const QRectF& frame)
                       {AnimParam::PosY, m_startPosY - v.y()}};
         }
         m_editor->modifyClips({m_clipId}, T("Zeichnung"), [&](Clip& clip) {
-            if (m_part != Inside) clip.transform.transformOn = true;
+            if (m_part != Inside && !clip.transform.transformOn) {
+                // Switched on by the scaling, from what was shown: the kept (hidden) rotation, tilt and their keys
+                // would come back with it and the box would not stay under the mouse
+                clip.transform.transformOn = true;
+                clip.transform.rotation = clip.transform.tiltX = clip.transform.tiltY = 0;
+                for (AnimParam p : {AnimParam::ZoomX, AnimParam::ZoomY, AnimParam::PosX, AnimParam::PosY,
+                                    AnimParam::Rotation, AnimParam::TiltX, AnimParam::TiltY})
+                    clip.keys.remove(p);
+            }
             for (const auto& [param, v] : values) Keys::setValue(clip, param, t, v); // animated: a keyframe
         }, QString("draw:overlay:%1").arg(m_clipId));
         return true;
