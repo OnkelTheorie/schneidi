@@ -533,10 +533,14 @@ bool exportZip(const QString& idOrName, const QString& zipPath, bool overwrite, 
         if (!writeJson(file, toJson(*r))) return failWith(error, code, "SAVE_FAILED", "cannot write a temporary file");
         files << Zip::Source{QString("%1/%2").arg(r->id, QLatin1String(FileName)), file};
     } else {
-        QDirIterator it(r->dir, QDir::Files, QDirIterator::Subdirectories);
+        // Never hidden files or folders: QDir leaves out dot names only where they are hidden (not on Windows)
+        QDirIterator it(r->dir, QDir::Files | QDir::NoSymLinks, QDirIterator::Subdirectories);
         while (it.hasNext()) {
             const QString f = it.next();
-            files << Zip::Source{QString("%1/%2").arg(r->id, QDir(r->dir).relativeFilePath(f)), f};
+            const QString rel = QDir(r->dir).relativeFilePath(f);
+            const QStringList parts = rel.split('/', Qt::SkipEmptyParts);
+            if (std::any_of(parts.begin(), parts.end(), [](const QString& x) { return x.startsWith('.'); })) continue;
+            files << Zip::Source{QString("%1/%2").arg(r->id, rel), f};
         }
     }
     const QString part = zipPath + ".part";

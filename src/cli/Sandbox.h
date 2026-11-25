@@ -10,6 +10,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <functional>
+
 class Project;
 struct ProjectData;
 
@@ -32,6 +34,12 @@ bool appAllowed();
 // directory). Throws OUTSIDE_ROOT if it leaves the root, also through a symlink, HIDDEN for a hidden file or folder in
 // it (or something inside one); "@app" stays (APP_OFF if not allowed)
 QString resolve(const QString& path);
+// A key of a library a client gives (content template, compositing recipe): an id or name, or a file. With a root, a
+// key that names a file - absolute (also after --map), a file URL, with a separator or ending in ".<suffix>" - and is
+// no id or name `inLibrary` knows goes through resolve() like a path parameter (OUTSIDE_ROOT, HIDDEN) and comes back
+// absolute; any other key (or no root) comes back as given. The libraries open any existing file named so.
+QString libraryKey(const QString& key, const QStringList& suffixes, const std::function<bool(const QString&)>& inLibrary);
+bool namesFile(const QString& key, const QStringList& suffixes);
 // Only the path mapping (--map) of a client's path, nothing resolved or checked; unmapped paths stay as given
 QString mapPath(const QString& path);
 // Path relative to the root ("" = the root itself); null if outside (or no root)

@@ -249,10 +249,32 @@ QString problemsText(const QVector<TemplateFill::Problem>& problems)
     return parts.join("; ");
 }
 
+// A content template by id, name or path. In a work folder a path is one like every other (TemplateLibrary::find opens
+// any existing file): inside the root and not hidden, and the files the template names must be there too - `fill`
+// copies them next to the new project, `export` packs them
+std::optional<ContentTemplate> findContentTemplate(const QString& given, QString* err)
+{
+    bool path = false;
+    const QString key = Sandbox::libraryKey(given, {QString(ProjectFile::Extension)}, [&path](const QString& k) {
+        for (const ContentTemplate& t : TemplateLibrary::all())
+            if (t.id.compare(k, Qt::CaseInsensitive) == 0 || t.name.compare(k, Qt::CaseInsensitive) == 0) return true;
+        path = true;
+        return false;
+    });
+    std::optional<ContentTemplate> t = TemplateLibrary::find(key, err);
+    if (t && path) {
+        ProjectData d;
+        QString why;
+        if (!TemplateLibrary::load(*t, &d, &why)) fail("BAD_TEMPLATE", why);
+        Sandbox::checkProject(d);
+    }
+    return t;
+}
+
 std::optional<ContentTemplate> contentTemplate(const QString& key)
 {
     QString err;
-    std::optional<ContentTemplate> t = TemplateLibrary::find(key, &err);
+    std::optional<ContentTemplate> t = findContentTemplate(key, &err);
     if (!t) {
         QStringList ids;
         for (const ContentTemplate& c : TemplateLibrary::all()) ids << c.id;
@@ -496,6 +518,13 @@ QJsonObject saveTemplate(const QJsonObject& a)
 QJsonObject exportTemplate(const QJsonObject& a)
 {
     const ContentTemplate t = *contentTemplate(a["export"].toString());
+    // Only a template folder: a loose project names the folder it sits in (exportZip would pack that folder, or the
+    // other project in it that is named template.schneidi); the work folder itself is none either
+    if (QFileInfo(t.project).fileName() != QLatin1String(TemplateLibrary::ProjectFileName))
+        fail("BAD_TEMPLATE", QString("export: not a template folder (no %1): %2")
+                                 .arg(TemplateLibrary::ProjectFileName, t.project));
+    if (const QString rel = Sandbox::relative(t.dir); !rel.isNull() && rel.isEmpty())
+        fail("BAD_ARGUMENT", "export: give a template folder, not the work folder itself");
     const QString zip = a["zip"].toString();
     QString err, code;
     int files = 0;
@@ -1096,7 +1125,7 @@ QJsonObject cmdTemplates(const QJsonObject& a, Context& ctx)
         } catch (const Error& e) {
             if (e.code != "NOT_FOUND") throw;
             QString err;
-            const std::optional<ContentTemplate> t = TemplateLibrary::find(a["template"].toString(), &err);
+            const std::optional<ContentTemplate> t = findContentTemplate(a["template"].toString(), &err);
             if (!t) throw;
             return infoJson(loadTemplate(*t), t);
         }

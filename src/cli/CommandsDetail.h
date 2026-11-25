@@ -36,6 +36,9 @@ namespace Cli::detail {
 QString absolute(const QString& path);
 // "cannot read media: <path> (<why>)" for a file Engine::probe found nothing playable in (MediaProbe::whyUnreadable)
 QString unreadableMessage(const QString& path);
+// The key to look a compositing recipe up with (CompRecipes::find opens any existing file with a separator or ending
+// in .json): in a work folder such a key that is no recipe's id or name goes through the sandbox (EditOpsComp.cpp)
+QString recipeKey(const QString& key);
 
 // ---------- Times ----------
 

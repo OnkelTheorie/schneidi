@@ -1371,7 +1371,7 @@ QJsonObject libraryEntryJson(const QString& key)
         ShapeKind k;
         if (Shapes::kindFromId(rest, &k)) return {{"type", "shape"}, {"shape", rest}};
     }
-    if (prefix == "recipe:" && CompRecipes::find(rest)) return {{"type", "recipe"}, {"recipe", rest}};
+    if (prefix == "recipe:" && CompRecipes::find(recipeKey(rest))) return {{"type", "recipe"}, {"recipe", rest}};
     if (prefix == "lut:" || prefix == "luma:" || prefix == "preset:") {
         const QString path = EffectFavorites::filePath(key);
         const QVector<EffectFolders::LutEntry> list =
@@ -1435,7 +1435,7 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
         if (a.contains("export")) { // a recipe as ZIP
             if (!a.contains("to")) fail("BAD_ARGUMENT", "export: give 'to' (the .zip file)");
             int files = 0;
-            if (!CompRecipes::exportZip(a["export"].toString(), a["to"].toString(), a["replace"].toBool(), &err, &code, &files))
+            if (!CompRecipes::exportZip(recipeKey(a["export"].toString()), a["to"].toString(), a["replace"].toBool(), &err, &code, &files))
                 fail(code, err);
             return {{"exported", a["export"].toString()}, {"zip", QDir::toNativeSeparators(a["to"].toString())}, {"files", files}};
         }

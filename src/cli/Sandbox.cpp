@@ -179,6 +179,23 @@ QString resolve(const QString& given)
     return abs;
 }
 
+bool namesFile(const QString& given, const QStringList& suffixes)
+{
+    const QString key = given.trimmed();
+    if (key.isEmpty() || Live::isAppProject(key)) return false;
+    if (key.startsWith(QLatin1String("file:"), Qt::CaseInsensitive) || key.contains('/') || key.contains('\\')
+        || windowsStyle(key) || QDir::isAbsolutePath(key) || applyMaps(key) != key)
+        return true;
+    return std::any_of(suffixes.begin(), suffixes.end(),
+                       [&key](const QString& s) { return key.endsWith('.' + s, Qt::CaseInsensitive); });
+}
+
+QString libraryKey(const QString& key, const QStringList& suffixes, const std::function<bool(const QString&)>& inLibrary)
+{
+    if (state().root.isEmpty() || !namesFile(key, suffixes) || (inLibrary && inLibrary(key.trimmed()))) return key;
+    return resolve(key.trimmed());
+}
+
 bool namesOtherFiles(const QString& path)
 {
     if (state().root.isEmpty()) return false;
