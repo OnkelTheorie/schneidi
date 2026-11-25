@@ -357,7 +357,8 @@ QVector<Issue> story(const Timeline& tl, int from, int to, const ProjectFormat& 
             if (s.kind == k) return &s;
         return nullptr;
     };
-    const auto at = [&](const StorySection& s) { return num(secondsOf(s.from, f)); };
+    // (in the video: from the range start, like the other story and jump cut messages)
+    const auto at = [&](const StorySection& s) { return num(secondsOf(s.from - from, f)); };
 
     // Hook at the start
     if (from == 0 || o.rangeIsVideo) {
