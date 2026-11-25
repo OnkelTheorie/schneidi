@@ -1991,7 +1991,25 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
         };
         bool ok = true;
         switch (p.type) {
-        case ParamType::String: out[p.name] = v.isString() ? str : v.toVariant().toString(); break;
+        case ParamType::String:
+            if (v.isArray()) {
+                // A list where a string is due (colors:['#fc0','#202020'], tracks:['A2']) became "" - every list-like
+                // string parameter is a comma list, so the pieces are joined; objects and nested lists are refused
+                QStringList parts;
+                for (const QJsonValue& x : v.toArray()) {
+                    if (!x.isString() && !x.isDouble())
+                        fail("BAD_ARGUMENT", QString("parameter '%1' takes a string or a list of strings, not %2")
+                                                 .arg(p.name, QString::fromUtf8(QJsonDocument(v.toArray()).toJson(QJsonDocument::Compact)).left(80)));
+                    parts << x.toVariant().toString();
+                }
+                out[p.name] = parts.join(',');
+            } else if (v.isObject()) {
+                fail("BAD_ARGUMENT", QString("parameter '%1' takes a string, not %2")
+                                         .arg(p.name, QString::fromUtf8(QJsonDocument(v.toObject()).toJson(QJsonDocument::Compact)).left(80)));
+            } else {
+                out[p.name] = v.isString() ? str : v.toVariant().toString();
+            }
+            break;
         case ParamType::Path:
             out[p.name] = absolute(str);
             ok = v.isString() && !str.isEmpty();

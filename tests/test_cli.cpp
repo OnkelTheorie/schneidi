@@ -314,6 +314,24 @@ int runTests(int argc, char** argv)
             CHECK_EQ(code, QString("BAD_ARGUMENT"));
         }
         CHECK_EQ(Cli::normalize(*check, {{"source", g_path}, {"target_lufs", "-16"}})["target_lufs"].toDouble(), -16.0);
+        // A list where a string is due became "" silently (brand colors wiped, tracks:['A2'] measured the whole
+        // mix): joined into the comma list; objects and nested lists are refused
+        {
+            const auto tracks = [&](const QJsonValue& v) {
+                try {
+                    return Cli::normalize(*loudness, {{"source", g_path}, {"tracks", v}})["tracks"].toString();
+                } catch (const Cli::Error& e) {
+                    return e.code;
+                }
+            };
+            CHECK_EQ(tracks(QJsonArray{"A2"}), QString("A2"));
+            CHECK_EQ(tracks(QJsonArray{"A2", "Mikrofon"}), QString("A2,Mikrofon"));
+            CHECK_EQ(tracks(QJsonArray{2, 3}), QString("2,3"));
+            CHECK_EQ(tracks("A3"), QString("A3"));
+            CHECK_EQ(tracks(QJsonObject{{"track", "A2"}}), QString("BAD_ARGUMENT"));
+            CHECK_EQ(tracks(QJsonArray{QJsonArray{"A2"}}), QString("BAD_ARGUMENT"));
+            CHECK_EQ(tracks(QJsonArray{QJsonObject{}}), QString("BAD_ARGUMENT"));
+        }
     }
     // Times beyond int: an error, not an undefined cast
     {
