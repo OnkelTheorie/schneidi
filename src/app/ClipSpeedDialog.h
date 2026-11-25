@@ -35,5 +35,6 @@ private:
     double m_projectFps;
     int m_clipLength;
     double m_baseLength; // length at 100 %
+    double m_speed; // exact speed (the fields round it: 1/3 stays 1/3 when only a check box changes)
     bool m_updating = false;
 };

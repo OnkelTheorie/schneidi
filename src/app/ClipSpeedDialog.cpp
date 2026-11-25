@@ -10,10 +10,12 @@
 #include <QLabel>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <cmath>
 
 ClipSpeedDialog::ClipSpeedDialog(const Editor::Retime& current, int clipLength, double fps, QWidget* parent)
-    : QDialog(parent), m_projectFps(fps), m_clipLength(clipLength), m_baseLength(clipLength * current.speed)
+    : QDialog(parent), m_projectFps(fps), m_clipLength(clipLength), m_baseLength(clipLength * current.speed),
+      m_speed(std::clamp(current.speed, 0.01, 100.0)) // the percent field's range
 {
     setWindowTitle(T("Clip-Geschwindigkeit ändern"));
     auto* form = new QFormLayout;
@@ -80,7 +82,8 @@ void ClipSpeedDialog::percentEdited()
 {
     if (m_updating) return;
     m_updating = true;
-    m_fps->setValue(m_percent->value() / 100 * m_projectFps);
+    m_speed = m_percent->value() / 100;
+    m_fps->setValue(m_speed * m_projectFps);
     m_updating = false;
     updateDuration();
 }
@@ -89,7 +92,8 @@ void ClipSpeedDialog::fpsEdited()
 {
     if (m_updating) return;
     m_updating = true;
-    m_percent->setValue(m_fps->value() / m_projectFps * 100);
+    m_speed = m_fps->value() / m_projectFps;
+    m_percent->setValue(m_speed * 100);
     m_updating = false;
     updateDuration();
 }
@@ -97,9 +101,9 @@ void ClipSpeedDialog::fpsEdited()
 void ClipSpeedDialog::updateDuration()
 {
     // In-between pictures only matter in slow motion (the choice stays and applies once it gets slower)
-    m_interp->setEnabled(!m_freeze->isChecked() && m_percent->value() < 100);
+    m_interp->setEnabled(!m_freeze->isChecked() && m_speed < 1);
     const bool keepLength = !m_ripple->isChecked() || m_freeze->isChecked();
-    const int f = keepLength ? m_clipLength : std::max(1, int(std::lround(m_baseLength / (m_percent->value() / 100))));
+    const int f = keepLength ? m_clipLength : std::max(1, int(std::lround(m_baseLength / m_speed)));
     const int fps = std::max(1, int(std::lround(m_projectFps)));
     m_duration->setText(QString("%1:%2:%3")
                             .arg(f / fps / 60, 2, 10, QChar('0'))
@@ -109,7 +113,7 @@ void ClipSpeedDialog::updateDuration()
 
 Editor::Retime ClipSpeedDialog::retime() const
 {
-    return {m_percent->value() / 100, m_reverse->isChecked(), m_freeze->isChecked(), m_pitch->isChecked(),
+    return {m_speed, m_reverse->isChecked(), m_freeze->isChecked(), m_pitch->isChecked(),
             FrameInterp(m_interp->currentData().toInt())};
 }
 
