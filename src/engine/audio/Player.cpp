@@ -374,12 +374,15 @@ void Player::Impl::process(float* out, int frames)
             if (!scrubbing && !newer) underruns.fetch_add(1, std::memory_order_relaxed); // newer: not a dropout
         }
         sound = false;
-    } else if (s.inRun && !hold && !scrubbing && own >= 0 && s.handed - s.fadeInAt > kFade
-               && written.load(std::memory_order_acquire) == s.prevWritten && now - s.prevNow >= 4'000'000) {
+    } else if (s.inRun && !hold && own >= 0 && s.handed - s.fadeInAt > kFade
+               && written.load(std::memory_order_acquire) == s.prevWritten
+               && (scrubbing || now - s.prevNow >= 4'000'000)) {
         // Full, but the next callback could not be: less than `frames` of this generation left in the ring, and the
         // feeder wrote nothing since the callback before although it had the time (a feeder that keeps up tops the
         // ring up every 2 ms; a device that calls back in bursts, e.g. DirectSound, gives it no time in between - no
-        // underrun there, so no dip)
+        // underrun there, so no dip). Scrubbing too: a slice mix slower than the lead runs the ring dry in the middle
+        // of a slice, at full level (a slice's own end is faded already, fading its silence changes nothing); there
+        // even in a burst of callbacks - a needless dip in choppy scrub sound costs nothing, a missed fade is a click
         int64_t left = 0;
         const uint64_t w = written.load(std::memory_order_acquire);
         for (uint64_t r = consumed.load(std::memory_order_relaxed); r < w && left < frames; ++r)
@@ -568,6 +571,11 @@ bool Player::Impl::scrubStep(Feed& f, std::unique_lock<std::mutex>& lock)
         f.sPos = f.sLen = 0;
         f.sTail = false;
         f.sPlayed = 0;
+    }
+    // Tests: a feeder that falls behind (a slow slice mix) - nothing goes to the ring meanwhile
+    if (const int64_t stall = feedStallUntil.load(std::memory_order_relaxed); stall != 0 && nowNs() < stall) {
+        waitFor(wake, lock, std::chrono::milliseconds(2));
+        return true;
     }
     // As far ahead as playback keeps (the device may take a whole period at once): the newest request is taken
     // when the ring needs more, so a fast drag never queues up

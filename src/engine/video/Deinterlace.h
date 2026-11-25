@@ -26,4 +26,8 @@ bool canDeinterlace();
 // Thread-safe (one graph per call, one thread each: frames render in parallel already).
 AVFrame* deinterlace(const AVFrame* prev, const AVFrame* cur, const AVFrame* next, bool topFieldFirst);
 
+// Diagnostics (tests): pictures before `cur` the filter worked on instead of passing them through (each one costs as
+// much as `cur` itself; stays 0)
+int neighboursFiltered();
+
 } // namespace Video
