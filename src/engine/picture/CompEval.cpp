@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "engine/picture/CompEval.h"
+#include "engine/FileStamp.h"
 #include "engine/picture/CompCamera.h"
 #include "engine/picture/CompTrack.h"
 
@@ -277,6 +278,14 @@ bool evaluateGraph(const CompGraph& g, int transparent, const EffectInstance& co
         if (!s.node) continue;
         bool isStatic = s.kind && !varies(*s.kind, valuesOf(id)) && !animated.contains(id);
         uint64_t key = isStatic ? ownHash(s.node->type, valuesOf(id), env) : 0;
+        // A file it reads (a grade's LUT, a text's texture) keyed by its stamp too: overwritten under the same name,
+        // the cache kept the old look for the renderer's life
+        if (isStatic)
+            for (const QString& fk : ::Comp::fileKeys(s.node->type))
+                if (const QString path = valuesOf(id).value(fk).toString(); !path.isEmpty()) {
+                    const FileStamp::Stamp st = FileStamp::recent(path);
+                    key = mix(mix(key, uint64_t(st.size)), uint64_t(st.modified));
+                }
         // A follower reads the followed node's values (numOf): static only while they are fixed, keyed by them (a new
         // analysis or another value is a new key)
         if (isStatic && s.kind->param(QStringLiteral("follow"))) {

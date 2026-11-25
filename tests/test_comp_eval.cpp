@@ -21,12 +21,17 @@
 #include "core/ProjectFormat.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
+#include "engine/ColorGrade.h"
+#include "engine/FileStamp.h"
 #include "engine/RenderCache.h"
 #include "engine/picture/CompEval.h"
 #include "engine/picture/CompNodes.h"
 #include "engine/picture/Renderer.h"
 
 #include <QApplication>
+#include <QDateTime>
+#include <QFile>
+#include <QThread>
 #include <QElapsedTimer>
 #include <QImage>
 #include <QTemporaryDir>
@@ -541,6 +546,53 @@ void testFxVarying()
     }
 }
 
+// A static grade node with a LUT file: overwritten under the same name, the cached picture is not shown any more
+// (keyed by the file's stamp)
+void testLutOverwritten(const QString& dir)
+{
+    std::printf("static grade with an overwritten LUT\n");
+    FileStamp::setSettleMsForTest(50);
+    const QString path = dir + "/look.cube";
+    const auto writeLut = [&](bool invert, int second) {
+        QFile f(path);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+        QByteArray d("LUT_3D_SIZE 2\n");
+        for (int b = 0; b < 2; ++b)
+            for (int g = 0; g < 2; ++g)
+                for (int r = 0; r < 2; ++r)
+                    d += QByteArray::number(invert ? 1 - r : r) + " " + QByteArray::number(invert ? 1 - g : g) + " "
+                         + QByteArray::number(invert ? 1 - b : b) + "\n";
+        f.write(d);
+        f.close();
+        // Another modification time, a whole second apart (file systems with coarse times)
+        const QDateTime when = QDateTime::fromSecsSinceEpoch(1'700'000'000 + second);
+        return f.open(QIODevice::ReadWrite) && f.setFileTime(when, QFileDevice::FileModificationTime);
+    };
+    if (!CHECK(writeLut(false, 0))) return;
+    const auto settle = [&] { // looked at, held still, looked at again; the LUT cache looks at once too
+        FileStamp::now(path);
+        QThread::msleep(100);
+        FileStamp::now(path);
+        ColorGrade::revalidateLuts();
+    };
+    settle();
+    Env env;
+    env.size = QSize(16, 8);
+    Cache cache;
+    const EffectInstance e = comp({"color", "grade"}, {{1, 2, "src"}}, 2, {{"n1.color", QColor(200, 60, 30)}, {"n2.lut", path}});
+    Buf a, b, c;
+    Stats s1, s2;
+    CHECK(evaluate(e, env, &cache, &a, &s1));
+    env.t = 1, env.frameNo = 1;
+    CHECK(evaluate(e, env, &cache, &b, &s2) && s2.cached >= 1 && a.px == b.px); // static: from the cache
+    if (!CHECK(writeLut(true, 10))) return;
+    settle();
+    env.t = 2, env.frameNo = 2;
+    CHECK(evaluate(e, env, &cache, &c) && c.px != a.px);
+    if (!c.px.empty()) CHECK(c.px[0] < 128 && a.px[0] > 128); // red inverted
+    FileStamp::forget();
+}
+
 // A node following a tracker (numOf) is cached only while the tracker's values are fixed, and keyed by them: an
 // analysed tracker (keyframes) moves it per frame, a new analysis or another value is seen with a cache
 void testFollowCached()
@@ -802,6 +854,7 @@ int main(int argc, char** argv)
     if (!Check::haveFfmpeg()) return Check::skip("ffmpeg nicht gefunden");
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
+    testLutOverwritten(tmp.path());
     g_pattern = Check::makeMedia(tmp.filePath("pattern.mp4"), {"-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=2",
                                                                "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt",
                                                                "yuv420p"});
