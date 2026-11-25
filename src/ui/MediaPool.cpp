@@ -1846,7 +1846,11 @@ void MediaPool::showBinMenu(const QPoint& pos)
     QMenu menu(this);
     menu.addAction(T("Neuer Ordner"), this, &MediaPool::newBin);
     if (id != 0) {
-        menu.addAction(T("Ordner umbenennen"), this, [this, it] { m_bins->editItem(it); });
+        // by id: a rebuildBins() while the menu is open (watch folder, HDR scan) frees the item
+        menu.addAction(T("Ordner umbenennen"), this, [this, id] {
+            for (QTreeWidgetItemIterator i(m_bins); *i; ++i)
+                if ((*i)->data(0, Qt::UserRole).toInt() == id) return m_bins->editItem(*i);
+        });
         menu.addAction(T("Ordner entfernen"), this, [this, id] { removeBin(id); });
     }
     menu.addSeparator();
