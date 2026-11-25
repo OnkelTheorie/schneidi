@@ -1957,7 +1957,18 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
         const QString str = v.isString() ? v.toString() : QString();
         const auto list = [&](const QString& text) {
             if (v.isArray()) return v.toArray();
-            if (text.trimmed().startsWith('[')) return QJsonDocument::fromJson(text.toUtf8()).array();
+            if (v.isDouble()) return QJsonArray{v}; // clips:12 is that one clip (was an empty list: the whole mix)
+            if (!v.isString())
+                fail("BAD_ARGUMENT", QString("parameter '%1' takes a list (or a comma-separated string), not %2")
+                                         .arg(p.name, v.isBool() ? QString("true/false") : QString("an object")));
+            if (text.trimmed().startsWith('[')) {
+                // "[1,2" was an empty list without an error
+                QJsonParseError err;
+                const QJsonDocument doc = QJsonDocument::fromJson(text.toUtf8(), &err);
+                if (err.error != QJsonParseError::NoError || !doc.isArray())
+                    fail("BAD_ARGUMENT", QString("%1: invalid JSON list (%2)").arg(p.name, err.errorString()));
+                return doc.array();
+            }
             QJsonArray arr;
             for (const QString& x : text.split(',', Qt::SkipEmptyParts)) arr << x.trimmed();
             return arr;

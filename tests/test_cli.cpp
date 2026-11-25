@@ -222,6 +222,18 @@ int runTests(int argc, char** argv)
         CHECK(at("1,5s, 3s,2,25s") == (QJsonArray{"1.5s", "3s", "2.25s"}));
         CHECK(at("6,95") == (QJsonArray{"6", "95"}));
         CHECK(at("10, 20s") == (QJsonArray{"10", "20s"}));
+        // One number is a one-element list (loudness clips:12 measured the whole mix); broken JSON is an error
+        CHECK(Cli::normalize(*frames, {{"source", g_path}, {"at", 12}})["at"].toArray() == (QJsonArray{12}));
+        for (const QJsonValue& bad : {QJsonValue("[1,2"), QJsonValue(true), QJsonValue(QJsonObject{{"at", 1}})}) {
+            QString code;
+            try {
+                Cli::normalize(*frames, {{"source", g_path}, {"at", bad}});
+            } catch (const Cli::Error& e) {
+                code = e.code;
+            }
+            CHECK_EQ(code, QString("BAD_ARGUMENT"));
+        }
+        CHECK(at("[1, \"2s\"]") == (QJsonArray{1, "2s"}));
         // Numbers as text: no thousands separators ("1,500" was 1500); a lone comma is a decimal comma
         {
             const Cli::Command* newCmd = Cli::find("new");
