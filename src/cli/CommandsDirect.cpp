@@ -870,6 +870,8 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
             if (&b != a && b.on && b.file == a->file && b.from < a->to && a->from < b.to) {
                 a->from = std::min(a->from, b.from);
                 a->to = std::max(a->to, b.to);
+                for (const double h : b.hits) // (b's hits keep their punch)
+                    if (!a->hits.contains(h)) a->hits << h;
                 b.on = false;
             }
     }

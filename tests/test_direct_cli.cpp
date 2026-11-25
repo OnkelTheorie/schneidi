@@ -707,6 +707,26 @@ int main(int argc, char** argv)
             const QJsonObject punched = run("direct", {{"session", withHits}, {"apply", QJsonObject{{"on", "all"}}},
                                                        {"project_dir", dir.filePath("out/punch")}});
             CHECK(QJsonDocument(punched["done"].toArray()).toJson().contains("accents: a mild zoom punch on"));
+            // Two moments moved into each other become one: the hits of both keep their punch
+            {
+                QJsonArray on;
+                for (const QJsonValue& x : sug)
+                    if (x["on"].toBool()) on << x;
+                if (CHECK(on.size() >= 2)) {
+                    const QJsonObject first = on[0].toObject(), second = on[1].toObject();
+                    const double from = std::min(first["from_s"].toDouble(), second["from_s"].toDouble());
+                    const double to = std::max(first["to_s"].toDouble(), second["to_s"].toDouble());
+                    const QJsonObject merged = run(
+                        "direct", {{"session", withHits},
+                                   {"apply", QJsonObject{{"on", "all"},
+                                                         {"adjust", QJsonArray{QJsonObject{{"n", first["n"]}, {"from_s", from},
+                                                                                           {"to_s", to}}}}}},
+                                   {"project_dir", dir.filePath("out/punch-merged")}});
+                    const QString text = QJsonDocument(merged["done"].toArray()).toJson();
+                    if (!CHECK(text.contains(QString("zoom punch on %1 hits").arg(on.size()))))
+                        std::printf("       %s\n", qPrintable(text));
+                }
+            }
             QJsonObject options = withHits["options"].toObject();
             options["accents"] = "off";
             withHits["options"] = options;
