@@ -834,6 +834,14 @@ int main(int argc, char** argv)
              "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
         if (CHECK(!two.isEmpty())) {
             const QJsonObject r = run("direct", {{"recipe", "short"}, {"files", QJsonArray{two}}});
+            // The voices' levels are measured while suggesting (in the app a background job), the apply (on the app's
+            // UI thread) only reads them
+            int measured = 0;
+            for (const QJsonValue& x : r["session"]["suggestions"].toArray())
+                for (int stream : {1, 2})
+                    measured += AnalysisCache::get(Cli::detail::speechLevelKey(two, stream, x["from_s"].toDouble(),
+                                                                               x["to_s"].toDouble())).has_value();
+            CHECK(measured >= 2);
             const QJsonObject made = run("direct", {{"session", r["session"]["id"]}, {"apply", QJsonObject{{"on", "all"}}},
                                                     {"project_dir", dir.filePath("out/two-voices")}});
             const QString doneText = QJsonDocument(made["done"].toArray()).toJson();

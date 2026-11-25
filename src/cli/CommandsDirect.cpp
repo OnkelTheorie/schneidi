@@ -626,6 +626,40 @@ bool sameProject(const QString& a, const QString& b)
     return key(a) == key(b);
 }
 
+} // namespace
+
+AnalysisCache::Key speechLevelKey(const QString& file, int stream, double from, double to)
+{
+    return AnalysisCache::key("speech-level", file,
+                              QJsonObject{{"stream", stream}, {"from_ms", qint64(std::llround(from * 1000))},
+                                          {"to_ms", qint64(std::llround(to * 1000))}},
+                              1);
+}
+
+namespace {
+
+// The power of the 0.1 s blocks of a voice stream the voice detection hears words in, over [from, to] (seconds of the
+// file): {sum of their power, how many}; through the cache, so the apply (the app's on its UI thread) only reads what
+// the suggestion measured in the background
+QPair<double, int> speechBlocks(const QString& file, int stream, double from, double to)
+{
+    const AnalysisCache::Key key = speechLevelKey(file, stream, from, to);
+    if (const auto hit = AnalysisCache::get(key)) return {(*hit)["power"].toDouble(), (*hit)["blocks"].toInt()};
+    failIfCanceled();
+    std::vector<bool> speech;
+    const auto levels = AudioAnalysis::fileBlockLevels(file, stream, from, to, 0.1, &speech);
+    if (!levels) return {0, 0}; // (not readable: not cached)
+    double power = 0;
+    int blocks = 0;
+    for (size_t i = 0; i < levels->size() && i < speech.size(); ++i)
+        if (speech[i] && (*levels)[i] > -90) {
+            power += std::pow(10.0, (*levels)[i] / 10);
+            ++blocks;
+        }
+    AnalysisCache::put(key, QJsonObject{{"power", power}, {"blocks", blocks}});
+    return {power, blocks};
+}
+
 // The speech level of a voice stream in the moments used (dB, the power of the 0.1 s blocks the voice detection hears
 // words in); nullopt = no words in them (a stream that only breathes or hums is never raised)
 std::optional<double> speechLevelDb(const QString& file, int stream, const QVector<const Direction::Suggestion*>& used)
@@ -633,18 +667,52 @@ std::optional<double> speechLevelDb(const QString& file, int stream, const QVect
     double power = 0;
     int blocks = 0;
     for (const Direction::Suggestion* x : used) {
-        failIfCanceled();
-        std::vector<bool> speech;
-        const auto levels = AudioAnalysis::fileBlockLevels(file, stream, x->from, x->to, 0.1, &speech);
-        if (!levels) continue;
-        for (size_t i = 0; i < levels->size() && i < speech.size(); ++i)
-            if (speech[i] && (*levels)[i] > -90) {
-                power += std::pow(10.0, (*levels)[i] / 10);
-                ++blocks;
-            }
+        const auto [p, n] = speechBlocks(file, stream, x->from, x->to);
+        power += p;
+        blocks += n;
     }
     if (blocks < 3) return std::nullopt; // (under 0.3 s of words: too little to tell)
     return 10 * std::log10(power / blocks);
+}
+
+// The voice streams of material `i` the apply places (audio_stream auto on game material with several streams), each
+// with how long it is heard in `used`: soundStreams' rule, also for measuring their levels while suggesting
+QVector<QPair<int, double>> heardVoices(const Direction::Session& s, const QString& game, int i,
+                                        const QVector<const Direction::Suggestion*>& used)
+{
+    QVector<QPair<int, double>> out;
+    const QString choice = s.options.contains("audio_stream") ? s.options["audio_stream"].toVariant().toString().trimmed()
+                                                              : QString(s.recipe == QLatin1String("short") ? "auto" : "game");
+    if (choice.compare("auto", Qt::CaseInsensitive) != 0) return out;
+    const QStringList& names = s.material[i].audioStreams;
+    if (names.size() < 2) return out;
+    const bool mixAndChat = std::any_of(names.begin(), names.end(), StreamPresets::isMixTitle)
+                         && std::any_of(names.begin(), names.end(), StreamPresets::isChatOrMusicTitle);
+    if (game == QLatin1String("none") && !mixAndChat) return out;
+    const QVector<int> g = StreamPresets::gameStreams(names);
+    if (g.isEmpty()) return out;
+    for (const QJsonValue& v : s.material[i].voice) {
+        const int k = v["stream"].toInt(-1);
+        if (k < 0 || k >= names.size() || g.contains(k)) continue;
+        double heard = 0;
+        for (const QJsonValue& span : v["s"].toArray())
+            for (const Direction::Suggestion* x : used)
+                if (x->file == s.material[i].file)
+                    heard += std::max(0.0, std::min(span[1].toDouble(), x->to) - std::max(span[0].toDouble(), x->from));
+        if (heard >= 0.3) out << qMakePair(k, heard); // (less: a breath, a click)
+    }
+    return out;
+}
+
+// While suggesting (a background job in the app): the speech level of each voice stream in each suggestion, cached
+// for the apply
+void measureVoiceLevels(const Direction::Session& s, const QString& game)
+{
+    for (int i = 0; i < s.material.size(); ++i)
+        for (const Direction::Suggestion& x : s.suggestions) {
+            if (x.file != s.material[i].file) continue;
+            for (const auto& [k, heard] : heardVoices(s, game, i, {&x})) speechBlocks(x.file, k, x.from, x.to);
+        }
 }
 
 // The voices placed brought to one level, per recording (its microphone and its voice chat, recorded together): each
@@ -702,14 +770,7 @@ QVector<QJsonValue> soundStreams(const Direction::Session& s, const QString& gam
         QVector<int> voices;
         QStringList heardIn;
         if (autoVoice)
-            for (const QJsonValue& v : s.material[i].voice) {
-                const int k = v["stream"].toInt(-1);
-                if (k < 0 || k >= names.size() || g.contains(k)) continue;
-                double heard = 0;
-                for (const QJsonValue& span : v["s"].toArray())
-                    for (const Direction::Suggestion* x : mine)
-                        heard += std::max(0.0, std::min(span[1].toDouble(), x->to) - std::max(span[0].toDouble(), x->from));
-                if (heard < 0.3) continue; // a breath, a click
+            for (const auto& [k, heard] : heardVoices(s, game, i, mine)) {
                 voices << k;
                 heardIn << QString("%1 (%2 s heard)").arg(names[k]).arg(std::round(heard * 10) / 10);
             }
@@ -821,6 +882,8 @@ Direction::Session directSuggest(const QJsonObject& a, Context& ctx, CollectedMo
     s.material = found.material;
     if (s.recipe == QLatin1String("short")) suggestShort(s, found, files);
     else suggestHighlights(s, found, files);
+    measureVoiceLevels(s, game);
+    failIfCanceled();
     if (foundOut) *foundOut = found;
     return s;
 }

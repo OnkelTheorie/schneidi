@@ -96,6 +96,8 @@ QString timelineStamp(const QString& project, const QString& timeline);
 std::optional<QJsonObject> streamTranscript(const QString& file, int stream, const QString& language, bool verbatim,
                                             Context& ctx, const QStringList& vocabulary = {}, const QString& model = {},
                                             qint64 fromMs = 0, qint64 toMs = -1);
+// The cache key of a voice stream's speech level over [from, to] (seconds of the file), measured while suggesting
+AnalysisCache::Key speechLevelKey(const QString& file, int stream, double from, double to);
 // Its cache key (to look whether a transcript is there without making it)
 AnalysisCache::Key streamTranscriptKey(const QString& file, int stream, const QString& language, bool verbatim,
                                        const QStringList& vocabulary = {}, const QString& model = {}, qint64 fromMs = 0,
