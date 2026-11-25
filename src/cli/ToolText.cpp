@@ -50,8 +50,8 @@ const QHash<QString, Tool>& tools()
              {{"project"}, {"template"}, {"width"}, {"height"}, {"media"}},
              {"fps", "overwrite"}},
             {"templates",
-             "Start templates (for `new`) and content templates (projects with slots for clips, texts, music, logo). No "
-             "parameters: the list. info: a template's slots. fill + values: a new project (rows: one per table row).",
+             "Start templates (for `new`) and content templates (projects with slots). No parameters: the list. info: "
+             "a template's slots. fill + values: a new project (rows: one per table row).",
              {{"template"}, {"info"}, {"fill"}, {"values", "slot id -> file | {file, from, to} | text"},
               {"rows", "CSV/JSON table"}, {"out_project"}, {"out_dir"}, {"project", "fill this one in place"}},
              {"continue_on_error", "brand", "reframe", "strict", "overwrite", "copy_media", "save", "name", "description",
@@ -71,8 +71,8 @@ const QHash<QString, Tool>& tools()
              {{"project"}, {"out"}, {"timeline"}},
              {"format", "overwrite"}},
             {"edit",
-             "Change a timeline with a list of ops, all or nothing; saved with a backup (in the app: one undo step). The "
-             "answer lists the changes with new clip ids. plan:true = show the steps first.",
+             "Change a timeline with a list of ops, all or nothing; saved with a backup (in the app: one undo step). "
+             "The answer lists the changes with new clip ids.",
              {{"project"}, {"ops"}, {"timeline"}, {"dry_run"}, {"plan"}, {"plan_id"}, {"run", "plan steps or \"all\""}},
              {"discard", "full", "trust_custom_code"}},
             {"backups", "Saved states of a project, newest first.", {{"project"}}, {}},
@@ -101,9 +101,41 @@ const QHash<QString, Tool>& tools()
              {{"project"}, {"action", "", {"show", "set", "apply", "unset", "logo", "intro_outro"}}, {"logo"},
               {"colors", "comma list"}, {"fonts", "heading, body"}},
              {"global", "intro", "outro", "logo_corner", "logo_size", "timeline"}},
+            {"render",
+             "Render a timeline to a video, GIF, image sequence or audio file; out's extension must fit the format. "
+             "Subtitles are burned in only with subtitles:'burn'. GIF: e.g. height 480, fps 15.",
+             {{"project"}, {"out"}, {"preset", "e.g. youtube-1080p, tiktok"},
+              {"format", "",
+               {"h264", "h265", "av1", "vp9", "s264", "prores", "prores422", "proreslt", "proresproxy", "prores4444",
+                "dnxhr-sq", "dnxhr-hq", "dnxhr-hqx", "gif", "png", "tiff", "jpeg", "aac", "mp3", "opus", "wav", "aiff",
+                "flac", "alac", "srt", "vtt"}},
+              {"quality", "", {"high", "medium", "small", "web", "source"}},
+              {"max_mb", "file size limit"},
+              {"height"},
+              {"fps"},
+              {"subtitles", "", {"none", "burn", "srt", "vtt"}},
+              {"from"},
+              {"to"},
+              {"timeline"}},
+             {"overwrite", "trust_custom_code", "size", "encoder", "speed", "audio_bitrate", "channels", "audio_codec",
+              "embed_subtitles", "mute_tracks", "threads", "allow_missing", "review", "review_hits", "beats_track"}},
+            {"short",
+             "A finished vertical short of recordings in one call: moments, reframe, captions, check, render, contact "
+             "sheet.",
+             {{"files"}, {"project"}, {"out"}, {"for", "", {"shorts", "reels", "tiktok"}}, {"min_s"}, {"max_s"},
+              {"captions", "", {"karaoke", "word", "off"}}, {"accents", "", {"punch", "off"}},
+              {"game", "", {"cs2", "valorant", "none"}}},
+             {"timeline", "aspect", "reframe", "hook", "sfx", "audio_stream", "sheet", "language", "encoder",
+              "threads", "overwrite"}},
+            {"direct",
+             "Suggests what to cut with reasons, then applies the chosen as one edit. Suggest: recipe + files (or "
+             "project + timeline); apply: session + apply.",
+             {{"recipe", "", {"short", "highlights", "talk", "template", "script"}}, {"files"}, {"project"},
+              {"timeline"}, {"options", "the recipe's settings (help)"}, {"session", "id from the suggest"},
+              {"apply", "{on:'all'|[n…], adjust, order}"}},
+             {"plan", "dry_run", "project_dir", "finish"}},
             {"probe",
-             "Media file details: length, size, frame rate, audio streams and channels. gaps: stutter of game "
-             "recordings.",
+             "Media file details: length, size, frame rate, audio streams. gaps: stutter of game recordings.",
              {{"file"}, {"files"}, {"gaps"}},
              {"project", "bars"}},
             {"silence",
@@ -153,8 +185,8 @@ const QHash<QString, Tool>& tools()
              {{"source"}, {"clips", "measure each"}},
              {"tracks", "timeline", "from", "to", "channels", "audio_stream"}},
             {"check",
-             "What goes wrong before rendering or handing over: missing media, gaps, sound, unreadable subtitles, text "
-             "under phone UI, pace, hook. Apply its 'fix' ops with `edit`.",
+             "What goes wrong before rendering or handing over: media, gaps, sound, subtitles, phone UI, pace, hook. "
+             "Apply its 'fix' ops with `edit`.",
              {{"source", "project or rendered file"},
               {"for", "", {"shorts", "reels", "tiktok", "podcast", "youtube", "web", "broadcast"}},
               {"timeline"}},
@@ -259,11 +291,11 @@ const QVector<std::pair<QString, QStringList>>& editOpGroups()
                    "track_pan", "speak", "voiceover", "room_tone", "sfx", "music_bed", "fit_music", "snap_to_beat"}},
         {"text", {"title", "subtitle", "subtitles", "add_subtitle_track", "captions", "shape", "solid",
                                "clip_shape", "draw"}},
-        {"compositing", {"comp", "comp_from", "node", "track_node", "pick_region", "cutout_node"}},
+        {"comp", {"comp", "comp_from", "node", "track_node", "pick_region", "cutout_node"}},
         {"multicam", {"multicam", "angle", "angle_cuts", "flatten", "multicam_nudge", "add_angle", "angle_name",
                       "source_marker"}},
-        {"media pool", {"media", "bin", "remove_media"}},
-        {"template slots", {"slot", "fill"}},
+        {"pool", {"media", "bin", "remove_media"}},
+        {"slots", {"slot", "fill"}},
     };
     return groups;
 }
@@ -281,8 +313,8 @@ QString editOpsBrief()
         if (!seen.contains(d.name) && !d.usage.isEmpty()) other << d.name; // without usage: told by another op's
     if (!other.isEmpty()) grouped << "other: " + other.join(", ");
     return "[{op, …keys}] in order. " + grouped.join("; ")
-           + ". Times: \"4.5s\", \"MM:SS\", timecode or frames; ranges [from, to). Tracks \"V1\", \"A2\". Clip ids "
-             "from `info` or the last answer. An op's keys: help {command:'edit', op:'name'} (before first use).";
+           + ". Times: \"4.5s\", \"MM:SS\", timecode or frames; ranges [from, to). Tracks \"V1\", \"A2\"; clip ids "
+             "from `info` or the last answer. Keys: help {command:'edit', op:'name'} first.";
 }
 
 QStringList nearest(const QString& name, const QStringList& candidates, int max)

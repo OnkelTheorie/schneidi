@@ -315,7 +315,7 @@ void AiChat::prepare()
         && Ai::useCompact(m_compactMode, m_endpoint, context(m_endpoint))) {
         m_opsAsked = true;
         m_asking = true;
-        m_mcp->call("help", {{"command", "edit"}}, {}, [this](const McpClient::Result& r) {
+        m_mcp->call("help", {{"command", "edit"}, {"op", "all"}}, {}, [this](const McpClient::Result& r) {
             m_asking = false;
             if (!r.error) m_editOps = QJsonDocument::fromJson(r.text.toUtf8()).object()["commands"][0]["ops"].toArray();
             prepare();

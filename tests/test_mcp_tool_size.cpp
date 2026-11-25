@@ -24,8 +24,6 @@ namespace {
 constexpr qsizetype kBudget = 16000;
 // The MCP initialize instructions
 constexpr qsizetype kInstructions = 1200;
-// Tools whose short text waits for other branches (their parameters change there): not counted yet. TODO: empty
-const QStringList kPending{"short", "direct", "render"};
 
 QJsonObject request(const QJsonObject& msg, const Cli::Mcp::Options& opt = {})
 {
@@ -62,13 +60,9 @@ int main(int argc, char** argv)
     const qsizetype total = size(QJsonObject{{"tools", tools}});
     std::printf("       tools/list: %lld characters (~%lld tokens), budget %lld\n", qlonglong(total),
                 qlonglong(total / 4), qlonglong(kBudget));
-    qsizetype pending = 0;
-    for (const QJsonValue& t : tools) {
+    for (const QJsonValue& t : tools)
         std::printf("         %-16s %5lld\n", qPrintable(t["name"].toString()), qlonglong(size(t)));
-        if (kPending.contains(t["name"].toString())) pending += size(t) + 1;
-    }
-    if (pending) std::printf("       not counted yet (pending: %s): %lld\n", qPrintable(kPending.join(", ")), qlonglong(pending));
-    CHECK(total - pending <= kBudget);
+    CHECK(total <= kBudget);
     const QString instructions =
         request({{"jsonrpc", "2.0"}, {"id", 1}, {"method", "initialize"}, {"params", QJsonObject{}}})["instructions"].toString();
     std::printf("       instructions: %lld characters\n", qlonglong(instructions.size()));
@@ -79,7 +73,6 @@ int main(int argc, char** argv)
     // ---- Every tool has its short text, and every parameter is either shown or left to `help` on purpose ----
     for (const Cli::Command& c : Cli::commands()) {
         const Cli::ToolText::Tool* t = Cli::ToolText::find(c.name);
-        if (!t && kPending.contains(c.name)) continue;
         if (!CHECK(t)) {
             std::printf("       %s has no short text in cli/ToolText.cpp\n", qPrintable(c.name));
             continue;
@@ -153,13 +146,25 @@ int main(int argc, char** argv)
         }
     }
     {
-        // help edit: the rules once (not every op a second time in the 'ops' text), the ops with usage and summary
-        const QJsonObject r = Cli::Mcp::callTool({{"name", "help"}, {"arguments", QJsonObject{{"command", "edit"}}}}, {}, {});
-        const QByteArray text = r["content"][0]["text"].toString().toUtf8();
+        // help edit without op: what each op is for, one line each by group; details per op, op:'all' on request
+        const auto helpText = [](const QJsonObject& args) {
+            const QJsonObject r = Cli::Mcp::callTool({{"name", "help"}, {"arguments", args}}, {}, {});
+            return r["content"][0]["text"].toString().toUtf8();
+        };
+        const QByteArray text = helpText({{"command", "edit"}});
         std::printf("       help edit: %lld characters\n", qlonglong(text.size()));
-        CHECK(text.size() < 30000);
-        const QJsonObject o = QJsonDocument::fromJson(text).object();
-        CHECK(o["commands"][0]["ops"].toArray().size() > 90);
+        CHECK(text.size() < 12000);
+        const QJsonObject o = QJsonDocument::fromJson(text).object()["commands"][0].toObject();
+        int lines = 0;
+        for (const QJsonValue& g : o["ops"].toObject()) lines += int(g.toArray().size());
+        CHECK(lines > 90 && o["ops"]["sound"].toArray().first().toString().startsWith("volume: "));
+        CHECK(o["details"].toString().contains("op:'all'"));
+        const QByteArray all = helpText({{"command", "edit"}, {"op", "all"}});
+        CHECK(all.size() > 30000);
+        // An op list answers at most 10 ops, the rest named for the next call
+        const QJsonObject many = QJsonDocument::fromJson(helpText({{"command", "edit"},
+            {"op", "append,place,keep,split,trim,move,delete,fade,title,volume,duck,speed"}})).object()["commands"][0].toObject();
+        CHECK(many["ops"].toArray().size() == 10 && many["more"].toString().contains("duck,speed"));
     }
 
     // ---- Errors teach: the name meant, the valid ones, the help call ----

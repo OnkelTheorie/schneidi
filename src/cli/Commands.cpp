@@ -2258,6 +2258,9 @@ QString firstSentence(const QString& text)
     return out;
 }
 
+// Ops one `help` call with an op list answers (op:'all' gives every op)
+constexpr int kHelpOps = 10;
+
 QJsonObject cmdHelp(const QJsonObject& a, Context&)
 {
     // The servers are not commands of the table: their options
@@ -2275,15 +2278,33 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
         if (c.name == "edit" && a.contains("command")) {
             QJsonArray ops = editOpsHelp();
             if (!a.contains("op")) {
-                // What each op is for; the details of all of them are ~40 KB, an AI asks for the ones it uses
-                for (QJsonValueRef v : ops) {
-                    QJsonObject op = v.toObject();
-                    op.remove("details");
-                    v = op;
+                // What each op is for, one line each by group (the usage and details of every op were 26 KB in one
+                // answer: an AI asks for the ones it uses, op:'all' gives everything)
+                QHash<QString, QString> lines;
+                for (const QJsonValue& v : ops) {
+                    QString line = v["summary"].toString();
+                    if (line.isEmpty()) line = v["usage"].toString();
+                    line = firstSentence(line);
+                    if (line.size() > 72) line = line.left(line.lastIndexOf(QLatin1Char(' '), 70)) + QStringLiteral("…");
+                    lines.insert(v["op"].toString(), v["op"].toString() + ": " + line);
                 }
-                o["details"] = "help with op:'<name>' (or a comma list, \"all\" = every op) shows the details of ops";
-                // The ops' usage and summary follow in 'ops': the parameter text keeps only the rules (it had them all
-                // a second time)
+                QJsonObject grouped;
+                QStringList seen;
+                for (const auto& [group, names] : ToolText::editOpGroups()) {
+                    QJsonArray g;
+                    for (const QString& n : names)
+                        if (lines.contains(n)) g << lines.value(n);
+                    grouped[group] = g;
+                    seen << names;
+                }
+                QJsonArray other;
+                for (const QJsonValue& v : ops)
+                    if (!seen.contains(v["op"].toString())) other << lines.value(v["op"].toString());
+                if (!other.isEmpty()) grouped["other"] = other;
+                o["ops"] = grouped;
+                o["details"] = QString("an op's keys and details: help {command:'edit', op:'name'} (up to %1 ops as a "
+                                       "comma list); every op in full: op:'all' (~45 KB)").arg(kHelpOps);
+                // The parameter text keeps only the rules (it had every op a second time)
                 QJsonObject schema = o["params"].toObject();
                 QJsonObject props = schema["properties"].toObject();
                 QJsonObject opsParam = props["ops"].toObject();
@@ -2291,6 +2312,8 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
                 props["ops"] = opsParam;
                 schema["properties"] = props;
                 o["params"] = schema;
+                list << o;
+                continue;
             } else if (a["op"].toString() != "all") {
                 // Only the asked ops (the full list is long); the parameter list of `edit` itself is left out too
                 const QStringList wanted = a["op"].toString().split(',', Qt::SkipEmptyParts);
@@ -2312,6 +2335,15 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
                     fail("NOT_FOUND", "no op " + a["op"].toString()
                                           + (close.isEmpty() ? QString() : " - did you mean " + close.join(", ") + "?")
                                           + " (ops: " + names.join(", ") + ")");
+                }
+                // At most kHelpOps ops in one answer (a list of every op was ~45 KB): the rest named for the next call
+                if (only.size() > kHelpOps) {
+                    QStringList rest;
+                    for (qsizetype i = kHelpOps; i < only.size(); ++i) rest << only.at(i).toObject().value("op").toString();
+                    while (only.size() > kHelpOps) only.removeLast();
+                    o["more"] = QString("only the first %1 ops here; ask again for: %2 (or op:'all' for every op)")
+                                    .arg(kHelpOps)
+                                    .arg(rest.join(","));
                 }
                 ops = only;
                 o.remove("params");
