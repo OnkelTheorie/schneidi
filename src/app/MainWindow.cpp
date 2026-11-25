@@ -1472,8 +1472,9 @@ void MainWindow::speechDialog()
     // The words as the file's transcript (Transcript panel, op 'captions' later), as the CLI op 'speak' does
     if (!r.words.isEmpty())
         m_project->setTranscript(m.path, MediaTranscript{0, Speech::voiceLanguage(Extensions::voiceName(r.voice)), r.words});
-    QUndoStack* undo = m_project->undoStack();
-    undo->beginMacro(T("Sprechertext"));
+    // No macro up front (it deleted the redo steps also when the voice found no place): the steps become one after
+    m_project->closeMerge();
+    const int before = m_project->undoStack()->index();
     const int len = m_editor->placeSourceRange(m.path, 0, m.length - 1, at, track);
     if (len > 0 && dlg.captions()) {
         // Word captions of this clip only (like the Transcript panel's, karaoke style)
@@ -1489,7 +1490,7 @@ void MainWindow::speechDialog()
         if (const QVector<SubtitleCue> cues = Captions::fromWords(words, o); !cues.isEmpty())
             m_editor->addCaptions(cues, T("Wort-Untertitel"), style);
     }
-    undo->endMacro();
+    if (m_project->undoStack()->index() > before) m_project->combineSteps(before, T("Sprechertext"));
 }
 
 void MainWindow::exportSubtitlesDialog()
