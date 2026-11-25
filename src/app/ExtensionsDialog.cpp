@@ -12,6 +12,7 @@
 #include <QMessageBox>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QScreen>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -23,6 +24,12 @@ ExtensionsDialog::ExtensionsDialog(QWidget* parent) : QDialog(parent)
 {
     setWindowTitle(T("Erweiterungen"));
     auto* lay = new QVBoxLayout(this);
+#ifdef Q_OS_ANDROID
+    // Android draws no window frame: the title inside, so the dialog does not read as part of the window behind it
+    auto* heading = new QLabel(T("Erweiterungen"));
+    heading->setObjectName("PanelTitle");
+    lay->addWidget(heading);
+#endif
     auto* intro = new QLabel(T("Zusätze, die schneidi nur bei Bedarf herunterlädt. Sie laufen ganz auf diesem Rechner "
                                "(keine Daten gehen ins Internet) und lassen sich jederzeit wieder entfernen."));
     intro->setWordWrap(true);
@@ -98,11 +105,14 @@ ExtensionsDialog::ExtensionsDialog(QWidget* parent) : QDialog(parent)
 
     lay->addStretch(1); // extra height goes below the list, not between the rows
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+#ifndef Q_OS_ANDROID
+    // (Android: nothing installed and no file manager to show the app's own folder)
     auto* folder = buttons->addButton(T("Ordner öffnen"), QDialogButtonBox::ActionRole);
     connect(folder, &QPushButton::clicked, this, [] {
         QDir().mkpath(Extensions::rootDir());
         QDesktopServices::openUrl(QUrl::fromLocalFile(Extensions::rootDir()));
     });
+#endif
     connect(buttons, &QDialogButtonBox::rejected, this, &ExtensionsDialog::reject);
     lay->addWidget(buttons);
 
@@ -123,7 +133,13 @@ ExtensionsDialog::ExtensionsDialog(QWidget* parent) : QDialog(parent)
         }
         startNext();
     });
+#ifdef Q_OS_ANDROID
+    // A phone is narrower than 640 (the text ran off the screen's right edge, Close with it): the screen's width at
+    // most, the texts wrap
+    if (const QScreen* screen = this->screen()) setMaximumWidth(screen->availableGeometry().width());
+#else
     setMinimumWidth(640);
+#endif
     refresh();
 }
 
