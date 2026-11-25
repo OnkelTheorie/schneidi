@@ -8,6 +8,7 @@
 //  - a ripple head trim moves the clips of other tracks over the trimmed clip with its content (sfx on a kill)
 //  - audio_streams on keep/append; the game streams of a recording for `short`
 //  - the colour grade of a clip reaches its kill feed copy on a locked track
+//  - deleting the track of a kill feed copy's clip leaves the copy alone (the old track index read another track)
 //  - render format "mp4" = h264
 #include "check.h"
 #include "timeline_guard.h"
@@ -420,6 +421,35 @@ void testCopyGrade()
 }
 
 // --- the game sound of a multi-stream recording
+// --- deleting the track of a kill feed copy's clip: the copy (below it) stays. The track's old index pointed at the
+// track above (the copy found no pieces there and was deleted) or past the end
+void testCopyBaseTrackDeleted()
+{
+    for (const bool top : {false, true}) {
+        Project p;
+        Selection sel;
+        Editor ed(&p, &sel);
+        p.addMedia({"/x/cs2/a.mkv", "a.mkv", 400, true, true, false});
+        int copy = 0;
+        p.edit("setup", [&](Timeline& tl) {
+            tl.video.resize(top ? 2 : 3);
+            Clip v;
+            v.id = p.newClipId();
+            v.mediaPath = "/x/cs2/a.mkv";
+            v.out = 99;
+            v.linkId = p.newLinkId();
+            tl.video[1].clips << v;
+            Clip k = v;
+            k.id = copy = p.newClipId();
+            k.keepRegion = "killfeed";
+            tl.video[0].clips << k;
+        });
+        ed.removeTrack({TrackKind::Video, 1});
+        CHECK_EQ(p.timeline().video.size(), top ? 1 : 2);
+        CHECK(TimelineOps::findClip(p.timeline(), copy));
+    }
+}
+
 void testGameStreams()
 {
     CHECK_EQ(StreamPresets::gameStreams({"Mix", "Spotify", "Discord", "System Output", "Mikrofon"}), QVector<int>{3});
@@ -622,6 +652,7 @@ int main(int argc, char** argv)
     testOverwriteOnMutedTrack();
     testRippleHeadTrim();
     testCopyGrade();
+    testCopyBaseTrackDeleted();
     testGameStreams();
     QTemporaryDir dir;
     qputenv("XDG_DATA_HOME", dir.filePath("data").toUtf8()); // backups of the test projects
