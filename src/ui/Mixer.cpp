@@ -881,11 +881,11 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
     m_master->layout()->setContentsMargins(5, 4, 3, 4);
     m_master->fader->onChange = [this](double db) {
         m_master->setVolume(db);
-        m_editor->setTrackVolume(-1, db, "mixer-master");
+        editor()->setTrackVolume(-1, db, "mixer-master");
     };
     m_master->fader->onFinish = [this] { m_project->closeMerge(); };
     // Limiter on the master (like a bus limiter in DaVinci Fairlight): click = on/off, right-click = ceiling
-    connect(m_master->limiter, &QToolButton::clicked, this, [this](bool on) { m_editor->setMasterLimiter(on); });
+    connect(m_master->limiter, &QToolButton::clicked, this, [this](bool on) { editor()->setMasterLimiter(on); });
     connect(m_master->limiter, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
         QMenu menu(this);
         menu.addSection(T("Limiter-Obergrenze"));
@@ -894,7 +894,7 @@ Mixer::Mixer(Project* project, Engine* engine, QWidget* parent)
             QAction* a = menu.addAction(QString("%1 dBFS").arg(db, 0, 'f', 1));
             a->setCheckable(true);
             a->setChecked(std::abs(current - db) < 0.001);
-            connect(a, &QAction::triggered, this, [this, db] { m_editor->setMasterLimiterCeiling(db); }); // switches it on
+            connect(a, &QAction::triggered, this, [this, db] { editor()->setMasterLimiterCeiling(db); }); // switches it on
         }
         menu.exec(m_master->limiter->mapToGlobal(pos));
     });
@@ -1009,24 +1009,24 @@ void Mixer::rebuildStrips(int count)
             // With automation the fader shows the level at the playhead: a move trims the whole curve by as much
             const double fader = t && !t->volumeAuto.isEmpty() ? t->volumeDb + (db - s->shown) : db;
             s->setVolume(db);
-            m_editor->setTrackVolume(i, fader, "mixer-vol-" + QString::number(i));
+            editor()->setTrackVolume(i, fader, "mixer-vol-" + QString::number(i));
         };
         s->pan->onChange = [this, i, s](double v) {
             const Track* t = i < m_project->timeline().audio.size() ? &m_project->timeline().audio[i] : nullptr;
             // With pan automation the knob shows the pan at the playhead: a turn trims the whole curve by as much
             const double knob = t && !t->panAuto.isEmpty() ? t->pan + (v - s->shownPan) : v;
             s->setPan(v);
-            m_editor->setTrackPan(i, knob, "mixer-pan-" + QString::number(i));
+            editor()->setTrackPan(i, knob, "mixer-pan-" + QString::number(i));
         };
         s->fader->onFinish = s->pan->onFinish = [this] { m_project->closeMerge(); };
         const auto track = [this, i]() -> const Track* {
             return i < m_project->timeline().audio.size() ? &m_project->timeline().audio[i] : nullptr;
         };
         connect(s->mute, &QToolButton::clicked, this, [this, i, track] {
-            if (const Track* t = track()) m_editor->setTrackMuted(i, !t->muted);
+            if (const Track* t = track()) editor()->setTrackMuted(i, !t->muted);
         });
         connect(s->solo, &QToolButton::clicked, this, [this, i, track] {
-            if (const Track* t = track()) m_editor->setTrackSolo(i, !t->solo);
+            if (const Track* t = track()) editor()->setTrackSolo(i, !t->solo);
         });
         connect(s->arm, &QToolButton::clicked, this, [this, i](bool on) {
             if (m_recorder) m_recorder->setArmedTrack(on ? i : -1);
