@@ -118,7 +118,8 @@ void install()
     if (!s_file.open(QIODevice::WriteOnly | mode | QIODevice::Text)) return;
     write("INFO ", QString("schneidi %1 gestartet (%2, Qt %3)")
                        .arg(QCoreApplication::applicationVersion(), QSysInfo::prettyProductName(), qVersion()));
-    s_previous = qInstallMessageHandler(qtHandler);
+    // Installed again (tests): Qt hands back qtHandler itself, which as s_previous would call itself forever
+    if (const QtMessageHandler previous = qInstallMessageHandler(qtHandler); previous != qtHandler) s_previous = previous;
     // Registered after s_file/s_mutex exist: runs before their destructors
     static bool once = false;
     if (!once) std::atexit(writeEnd);

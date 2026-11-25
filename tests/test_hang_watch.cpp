@@ -119,6 +119,11 @@ void troubledLogsAreKept()
     writeLog(current, "no end\n");
     Log::install();
     CHECK(keptCount() == 10);
+
+    // A Qt message after the repeated installs reaches the log once (the handler called itself forever before)
+    qWarning("after reinstall");
+    QFile log(current);
+    CHECK(log.open(QIODevice::ReadOnly) && QString::fromUtf8(log.readAll()).count("after reinstall") == 1);
 }
 
 } // namespace
