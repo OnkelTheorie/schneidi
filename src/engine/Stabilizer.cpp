@@ -314,8 +314,13 @@ bool Stabilizer::analyze(const Request& r, QString* error, const std::atomic<boo
     const RetimeMap map(timing, fileLength);
     const int warped = speed != 1.0 || reverse ? std::max(1, int(fileLength / speed)) : fileLength;
     const int from = std::max(0, r.from);
-    const int to = std::min(r.to, warped - 1);
     if (r.to <= from) return fail(T("Der Clip ist zu kurz zum Stabilisieren."));
+    // Unknown length (no container duration: a raw stream, a recording still being written): measured up to the range's
+    // end, so a file that ends before it fails instead of storing an unmeasured result as done
+    const bool unknownLength = fileLength <= 0;
+    if (unknownLength && (speed != 1.0 || reverse))
+        return fail(T("Die Analyse ist fehlgeschlagen: %1").arg(QFileInfo(r.file).fileName()));
+    const int to = unknownLength ? r.to : std::min(r.to, warped - 1);
 
     // The picture fit into the analysis size like the timeline shows it (black bars for another aspect ratio)
     const bool sideways = std::lround(std::abs(info.rotation)) % 180 == 90;
