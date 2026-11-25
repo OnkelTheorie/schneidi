@@ -528,9 +528,14 @@ int CompOverlay::repick()
 
 QImage CompOverlay::clipPicture(const Clip& c, int frame, int maxEdge)
 {
-    // One decoder per clip while picking on it (each click would open the file again); a changed clip (source, in)
-    // gets a new one
-    const QString key = QStringLiteral("%1|%2|%3|%4").arg(c.id).arg(c.mediaPath).arg(c.in).arg(c.length());
+    // One decoder per clip while picking on it (each click would open the file again); a changed clip (source, in,
+    // timing, shape, the project's size) gets a new one
+    const ProjectFormat f = m_editor->project()->timelineFormat();
+    QString key = QStringLiteral("%1|%2|%3|%4|%5|%6|%7|%8|%9")
+                      .arg(c.id).arg(c.mediaPath).arg(c.in).arg(c.length()).arg(c.speed).arg(c.reverse)
+                      .arg(c.freeze ? c.stillFrame() : -1).arg(int(c.interpolate)).arg(c.pictureAspect);
+    key += QStringLiteral("|%1x%2|%3").arg(f.width).arg(f.height).arg(c.hdrToSdr);
+    for (const SpeedPoint& p : c.ramp) key += QStringLiteral("|%1:%2:%3").arg(p.source).arg(p.speed).arg(p.smooth);
     if (!m_source || key != m_sourceKey) {
         if (c.isNested() || c.isTitle()) return {};
         m_source = Tracker::clipPictures(m_editor->project()->timelineFormat(), c);
