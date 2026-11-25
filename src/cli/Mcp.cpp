@@ -165,12 +165,15 @@ ProgramFile programFile(const QString& path)
     return {path, fi.exists() ? fi.lastModified() : QDateTime(), fi.exists() ? fi.size() : -1};
 }
 
-// The file on disk is another one now (there and different: one being replaced may be gone for a moment)
-bool updated(const ProgramFile& started)
+// The file on disk is another one than `seen` now (there and different: one being replaced may be gone for a moment);
+// then `seen` becomes it, so each change is reported once (every answer carried the note before)
+bool updated(ProgramFile& seen)
 {
-    if (started.path.isEmpty() || started.size < 0) return false;
-    const ProgramFile now = programFile(started.path);
-    return now.size >= 0 && (now.size != started.size || now.modified != started.modified);
+    if (seen.path.isEmpty() || seen.size < 0) return false;
+    const ProgramFile now = programFile(seen.path);
+    if (now.size < 0 || (now.size == seen.size && now.modified == seen.modified)) return false;
+    seen = now;
+    return true;
 }
 
 } // namespace
@@ -344,16 +347,17 @@ int run(const Options& opt)
     };
     QString exe = qEnvironmentVariable("APPIMAGE");
     if (exe.isEmpty()) exe = QCoreApplication::applicationFilePath();
-    const ProgramFile started = programFile(exe);
-    const ToolCall here = [&opt, started](const QJsonObject& params, const Send& notify, const Done& done) {
+    // The program file as last seen: the note goes with the first answer after each change, not with every answer
+    auto seen = std::make_shared<ProgramFile>(programFile(exe));
+    const ToolCall here = [&opt, seen](const QJsonObject& params, const Send& notify, const Done& done) {
         QJsonObject result = callTool(params, opt, notify);
-        if (updated(started)) {
+        if (updated(*seen)) {
             QJsonArray content = result["content"].toArray();
             content << QJsonObject{
                 {"type", "text"},
                 {"text", QString("Note: schneidi was updated (%1) while this MCP server kept running the old version: "
                                  "restart the schneidi MCP server (or start a new chat/session) to use the new version.")
-                             .arg(QDir::toNativeSeparators(started.path))}};
+                             .arg(QDir::toNativeSeparators(seen->path))}};
             result["content"] = content;
         }
         done(result);
