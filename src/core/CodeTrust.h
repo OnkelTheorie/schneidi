@@ -67,6 +67,11 @@ void remember(const QString& path, const QStringList& codes);
 bool admit(const QString& path, const QStringList& codes);
 // The user trusts the codes of the file: in this run and remembered for the file
 void trustFile(const QString& path, const QStringList& codes);
+// Trust given in this process stays in it: remember() (and so trustFile(), saves, trust_custom_code) writes no record.
+// A work-folder server (cli/Sandbox.h) sets it: its clients are no one the desktop user asked, so what they trust
+// or write must not run later in the user's app without its TrustDialog. Records already there still count (admit).
+void setSessionOnly(bool on);
+bool sessionOnly();
 // Drop the record of a file (a temporary file that was moved)
 void forget(const QString& path);
 // Drop the records of files that no longer exist; at most once a day unless forced (app/CLI start, cheap: one

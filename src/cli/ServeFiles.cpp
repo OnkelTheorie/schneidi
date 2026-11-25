@@ -224,9 +224,39 @@ void Server::startUpload(const QString& id)
     });
 }
 
-// A server others reach must not fetch from itself or its own network's link-local services (cloud metadata …) for
-// them; on 127.0.0.1 the client is on this computer anyway - unless a reverse proxy (--public-url) or web pages of
-// other sites (--allow-origin) bring clients from elsewhere.
+namespace {
+
+// An IPv4-mapped IPv6 address ("::ffff:10.0.0.1") as its IPv4 address
+QHostAddress plain(const QHostAddress& a)
+{
+    bool ok = false;
+    if (a.protocol() == QAbstractSocket::IPv6Protocol)
+        if (const quint32 v4 = a.toIPv4Address(&ok); ok) return QHostAddress(v4);
+    return a;
+}
+
+} // namespace
+
+bool refusedAddress(const QHostAddress& given)
+{
+    const QHostAddress a = plain(given);
+    return a.isLoopback() || a.isLinkLocal() || a.isMulticast() || a == QHostAddress::AnyIPv4 || a == QHostAddress::AnyIPv6
+           || a.isInSubnet(QHostAddress("0.0.0.0"), 8);
+}
+
+bool privateAddress(const QHostAddress& given)
+{
+    const QHostAddress a = plain(given);
+    static const std::pair<QHostAddress, int> nets[] = {
+        {QHostAddress("10.0.0.0"), 8},     {QHostAddress("172.16.0.0"), 12}, {QHostAddress("192.168.0.0"), 16},
+        {QHostAddress("100.64.0.0"), 10},  {QHostAddress("fc00::"), 7}};
+    return std::any_of(std::begin(nets), std::end(nets), [&a](const auto& n) { return a.isInSubnet(n.first, n.second); });
+}
+
+// A server others reach must not fetch from itself, its own network's link-local services (cloud metadata …) or,
+// unless --allow-private-urls, the private network it stands in (router, NAS, internal services) for them; on
+// 127.0.0.1 the client is on this computer anyway - unless a reverse proxy (--public-url) or web pages of other sites
+// (--allow-origin) bring clients from elsewhere. Redirects are checked the same way (download()).
 // Left open: QNetworkAccessManager resolves the name again when it connects, so a name that answers differently the
 // second time (DNS rebinding) gets past this check. Connecting to the checked address would need the name for TLS
 // (SNI, certificate) by hand, which QNetworkAccessManager does not offer.
@@ -236,16 +266,22 @@ void Server::checkHost(const QUrl& url, const std::function<void(const QString& 
         then({});
         return;
     }
-    QHostInfo::lookupHost(url.host(), this, [then, host = url.host()](const QHostInfo& info) {
+    QHostInfo::lookupHost(url.host(), this, [then, host = url.host(), allowPrivate = m_opt.privateUrls](const QHostInfo& info) {
         if (info.error() != QHostInfo::NoError) {
             then("cannot resolve " + host + ": " + info.errorString());
             return;
         }
-        for (const QHostAddress& a : info.addresses())
-            if (a.isLoopback() || a.isLinkLocal() || a.isMulticast() || a == QHostAddress::AnyIPv4 || a == QHostAddress::AnyIPv6) {
+        for (const QHostAddress& a : info.addresses()) {
+            if (refusedAddress(a)) {
                 then("not allowed from this server: " + host + " (" + a.toString() + ")");
                 return;
             }
+            if (!allowPrivate && privateAddress(a)) {
+                then("not allowed from this server: " + host + " (" + a.toString() + ") is in a private network "
+                     "(the server's owner can allow that with --allow-private-urls)");
+                return;
+            }
+        }
         then({});
     });
 }

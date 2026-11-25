@@ -4,6 +4,7 @@
 
 #include "cli/CommandsDetail.h"
 #include "cli/Live.h"
+#include "core/CodeTrust.h"
 #include "core/EffectFolders.h"
 #include "core/Project.h"
 #include "core/ProjectFile.h"
@@ -18,6 +19,13 @@
 #include <QRegularExpression>
 
 #include <algorithm>
+
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace Cli::Sandbox {
 
@@ -37,6 +45,7 @@ struct State {
     QString canonical; // with symlinks resolved
     QVector<Map> maps;
     bool app = true;
+    bool libraryWrites = false;
 };
 
 State& state()
@@ -102,6 +111,7 @@ void configure(const Settings& in)
 {
     State s;
     s.app = in.app && in.root.isEmpty();
+    s.libraryWrites = in.libraryWrites;
     if (!in.root.isEmpty()) {
         const QFileInfo fi(in.root);
         if (!fi.isDir()) fail("BAD_ARGUMENT", "work folder not found: " + in.root);
@@ -123,6 +133,8 @@ void configure(const Settings& in)
         s.maps << m;
     }
     state() = s;
+    // Trust given by a client of a work folder (trust_custom_code, code it writes) stays in this process
+    CodeTrust::setSessionOnly(!s.root.isEmpty());
     if (!s.app) Live::disable();
     if (!s.root.isEmpty()) QDir::setCurrent(s.root); // what still resolves against the working directory stays inside
 }
@@ -132,6 +144,18 @@ bool active() { return !state().root.isEmpty(); }
 QString mapPath(const QString& path) { return applyMaps(path); }
 QString root() { return state().root; }
 bool appAllowed() { return state().app; }
+
+bool libraryWritesAllowed() { return state().root.isEmpty() || state().libraryWrites; }
+
+void checkLibraryWrite(const QString& what)
+{
+    if (libraryWritesAllowed()) return;
+    fail("READ_ONLY", QString("%1: the own templates, recipes and the global brand kit belong to the server's user and "
+                              "are read-only here (work folder); keep a template as a project in the work folder "
+                              "(`templates fill` takes its path) or a brand kit in the project (brand set global:false). "
+                              "The server's owner can allow changes with --allow-library-writes")
+                         .arg(what));
+}
 
 QString resolve(const QString& given)
 {
@@ -179,6 +203,23 @@ QString resolve(const QString& given)
     return abs;
 }
 
+bool namesFile(const QString& given, const QStringList& suffixes)
+{
+    const QString key = given.trimmed();
+    if (key.isEmpty() || Live::isAppProject(key)) return false;
+    if (key.startsWith(QLatin1String("file:"), Qt::CaseInsensitive) || key.contains('/') || key.contains('\\')
+        || windowsStyle(key) || QDir::isAbsolutePath(key) || applyMaps(key) != key)
+        return true;
+    return std::any_of(suffixes.begin(), suffixes.end(),
+                       [&key](const QString& s) { return key.endsWith('.' + s, Qt::CaseInsensitive); });
+}
+
+QString libraryKey(const QString& key, const QStringList& suffixes, const std::function<bool(const QString&)>& inLibrary)
+{
+    if (state().root.isEmpty() || !namesFile(key, suffixes) || (inLibrary && inLibrary(key.trimmed()))) return key;
+    return resolve(key.trimmed());
+}
+
 bool namesOtherFiles(const QString& path)
 {
     if (state().root.isEmpty()) return false;
@@ -218,10 +259,35 @@ QString relative(const QString& absolutePath)
     return {};
 }
 
+bool windowsProtected(const QString& relativePath)
+{
+    static const QStringList names{"appdata", "application data", "local settings", "start menu"};
+    const QStringList parts = QString(relativePath).replace('\\', '/').split('/', Qt::SkipEmptyParts);
+    return std::any_of(parts.begin(), parts.end(), [](QString part) {
+        part = part.section(':', 0, 0); // "AppData::$INDEX_ALLOCATION" is the folder too
+        while (!part.isEmpty() && (part.endsWith('.') || part.endsWith(' '))) part.chop(1);
+        return names.contains(part.trimmed().toLower());
+    });
+}
+
 bool hidden(const QString& absolutePath)
 {
-    const QStringList parts = relative(absolutePath).split('/');
-    return std::any_of(parts.begin(), parts.end(), [](const QString& part) { return part.startsWith('.'); });
+    const QString rel = relative(absolutePath);
+    const QStringList parts = rel.split('/');
+    if (std::any_of(parts.begin(), parts.end(), [](const QString& part) { return part.startsWith('.'); })) return true;
+#ifdef Q_OS_WIN
+    // The Startup folder of a profile as work folder runs what is put there at the next login
+    if (windowsProtected(rel)) return true;
+    // Hidden or system by attribute, the path or a folder of it inside the work folder
+    for (QString probe = QDir::cleanPath(absolutePath); !relative(probe).isEmpty();) {
+        const DWORD attr = GetFileAttributesW(reinterpret_cast<const wchar_t*>(QDir::toNativeSeparators(probe).utf16()));
+        if (attr != INVALID_FILE_ATTRIBUTES && (attr & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM))) return true;
+        const QString parent = QFileInfo(probe).path();
+        if (parent == probe) break;
+        probe = parent;
+    }
+#endif
+    return false;
 }
 
 QString mapBack(const QString& path)
