@@ -17,6 +17,7 @@ class RenderQueue;
 class RenderQueuePanel;
 class QCheckBox;
 class QComboBox;
+class QDoubleSpinBox;
 class QFormLayout;
 class QLineEdit;
 class QPushButton;
@@ -120,6 +121,7 @@ private:
     QComboBox* m_rate; // output frame rate, data = QSize(num, den), empty = timeline
     QSize m_timelineSize; // last known timeline resolution
     QComboBox* m_quality;
+    QDoubleSpinBox* m_maxMb; // file size limit in MB, 0 = off (RenderSettings::maxMb)
     QComboBox* m_encoder; // video encoder (data: int(VideoEncoder)); hardware ones only when they work here
     // H.264/H.265 would use the free encoder (no graphics card, no x264/x265): hint with a button to the extension
     QWidget* m_betterRow = nullptr;

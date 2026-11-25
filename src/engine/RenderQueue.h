@@ -4,6 +4,7 @@
 // via the exporter, reports progress and sets the status per job in the project (saved with it).
 
 #include "core/RenderJob.h"
+#include "core/TargetSize.h"
 #include "engine/Exporter.h"
 
 #include <QElapsedTimer>
@@ -45,8 +46,14 @@ public:
     // Settings for the exporter (output size, codecs, range) from a job. Picks the video encoder: with Auto or a
     // hardware encoder this may wait once per session for the graphics card probe (HardwareEncoders).
     static ExportSettings exportSettings(const RenderJob& job, const ProjectFormat& format);
-    // The same with the project's media lengths (ExportSettings::mediaLengths)
+    // The same with the project's media lengths (ExportSettings::mediaLengths) and a file size limit
+    // (RenderSettings::maxMb) as sizePlan gives it, when that plan works out
     static ExportSettings exportSettings(const RenderJob& job, const Project& project);
+    // File size limit (RenderSettings::hasMaxMb): bit rates and size for the job's range as the timeline is now.
+    // scale: the picture may get smaller; audioFixed: the sound's bit rate stays as set (else at most 128 kbit/s)
+    static TargetSize::Plan sizePlan(const RenderJob& job, const Project& project, bool scale = true, bool audioFixed = false);
+    // The plan into the exporter's settings: its rates and size, no smart render, no other quality target
+    static void applySizePlan(ExportSettings& s, const TargetSize::Plan& plan);
     // Quality "like source": the video bit rate (kbit/s) the job would aim at with the timeline as it is now (its range,
     // output size and frame rate); 0 = another quality or nothing known (renders as "High"). Probes the files' headers.
     static int sourceBitrateK(const RenderJob& job, const Project& project);
@@ -76,6 +83,8 @@ private:
     bool launch(); // starts the exporter for m_current; false = failed at once (status set)
     void makeReviewMarks(const RenderJob& job); // in a worker thread, then launch() again with m_overlay
     void onExportFinished(bool ok, const QString& message);
+    // A job with a size limit came out larger: renders it once more at a lower rate (true = started that)
+    bool retryForSize(int id);
     // sourceBitrateK >= 0: quality "like source" aimed at it (0 = unknown, "High"); kept with the job
     void setStatus(int id, RenderStatus status, const QString& message = {}, qint64 ms = -1, const QString& encoder = {},
                    int sourceBitrateK = -1);
@@ -87,6 +96,7 @@ private:
     int m_current = 0;
     int m_percent = 0;
     bool m_preparing = false;
+    int m_retryVideoK = 0; // the running job's second try for its size limit: this video rate (0 = first try)
     QMetaObject::Connection m_probeWait; // waiting for the graphics card probe (HardwareEncoders::notifier)
     // Review job: its marks are being made (m_marksJob = that run's token; a canceled one's result is dropped)
     int m_marksJob = 0;

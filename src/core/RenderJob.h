@@ -78,6 +78,11 @@ struct RenderSettings {
     VideoEncoder encoder = VideoEncoder::Auto;
     // Smart render (H.264/H.265): copy unchanged stretches of the source instead of encoding them (engine/SmartRender)
     bool smartRender = true;
+    // File size limit in MB (1,000,000 bytes), 0 = none: the video at the bit rate that fills it (core/TargetSize, a
+    // smaller picture when that rate is too low for the size), quality and smart render do not apply. Formats with a
+    // quality choice only (hasMaxMb)
+    double maxMb = 0;
+    bool hasMaxMb() const; // maxMb set and the format takes it
 
     bool audioOnly() const;
     bool hasAudio() const;          // GIF and image sequences have no sound

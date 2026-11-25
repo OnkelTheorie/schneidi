@@ -3923,5 +3923,10 @@
  "An": "On",
  "Ton beim Scrubben": "Audio while scrubbing",
  "An: ziehst du die Abspielmarke oder gehst Einzelbilder, hörst du kurz den Ton an der Stelle (gut, um Schnitte an Sprache zu setzen). Umschalten auch im Menü Wiedergabe oder mit Shift+S.": "On: dragging the playhead or stepping frames plays a short moment of the sound there (handy for cutting on speech). Also switched in the Playback menu or with Shift+S.",
- "Verfolgung verworfen – Clip geändert": "Tracking discarded – clip changed"
+ "Verfolgung verworfen – Clip geändert": "Tracking discarded – clip changed",
+ "Die Datei bleibt unter dieser Größe (z. B. 9 MB für Discord, 16 MB für WhatsApp, 25 MB für E-Mail): die Bitrate wird aus Länge und Ton berechnet, ist sie fürs Bild zu niedrig, wird es kleiner (720p, 540p, 360p). Der Ton bekommt höchstens 128 kbit/s. Ersetzt die Qualität; nur H.264, H.265, AV1, VP9.": "The file stays below this size (e.g. 9 MB for Discord, 16 MB for WhatsApp, 25 MB for email): the bit rate is computed from the length and the sound; when it is too low for the picture, the picture gets smaller (720p, 540p, 360p). The sound gets at most 128 kbit/s. Replaces the quality; H.264, H.265, AV1, VP9 only.",
+ "Die maximale Dateigröße bestimmt die Bitrate": "The maximum file size sets the bit rate",
+ "Max. Dateigröße": "Max. file size",
+ "Passt nicht in %1 MB: für diese Länge bleibt zu wenig Bitrate fürs Bild. Bereich kürzen oder die Grenze erhöhen.": "Does not fit in %1 MB: too little bit rate is left for the picture at this length. Shorten the range or raise the limit.",
+ "max. %1 MB": "max. %1 MB"
 }
