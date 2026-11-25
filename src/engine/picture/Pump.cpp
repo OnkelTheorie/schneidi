@@ -339,8 +339,10 @@ struct Pump::Impl {
                 continue;
             }
             // forward: frame `next` is due at clock `next`; backward once the clock is below next + 1
+            // (a clock held at this frame's start reads up to a few 1e-15 off it at fractional frame rates - frame ->
+            // sound position -> frame is not exact in double; a frame early by less than a millionth is due)
             const double early = std::isnan(now) ? 0 : dir > 0 ? next - now : now - (next + 1);
-            if (early > 0) {
+            if (early > 1e-6) {
                 const double s = std::min(early / (fps() * std::abs(speed)), 0.05); // look again: the clock may stand
                 Audio::waitFor(ready, lock, std::chrono::nanoseconds(int64_t(s * 1e9)));
                 continue;

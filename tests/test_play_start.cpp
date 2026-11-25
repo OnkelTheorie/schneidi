@@ -121,5 +121,36 @@ int main(int argc, char** argv)
     }
     CHECK(worst < kMaxStartMs);
     engine.pause();
+
+    // Fractional frame rates: frame -> sound position -> frame is not exact in double (at 30000/1001 the clock of a held
+    // start reads 3.6e-15 below 4.5 % of the frames), and a start frame "not yet due" by that much was never shown, so
+    // never released the clock: 0.3 s of standing picture and sound. A jump while playing to such frames, not shown
+    // before (they must be rendered), has to start as fast as any other.
+    {
+        const FrameRate ntsc{30000, 1001};
+        engine.setFormat(ProjectFormat{320, 180, ntsc});
+        engine.updateTimeline(tl);
+        wait(500);
+        engine.seek(5);
+        wait(300);
+        engine.play();
+        wait(300);
+        worst = 0;
+        int tried = 0;
+        for (int f = 30; f < 240 && tried < 6; ++f) {
+            if (double(f) * 48000.0 / ntsc.fps() * ntsc.fps() / 48000.0 >= double(f)) continue; // the clock reads f exactly
+            ++tried;
+            t.restart();
+            engine.seek(f);
+            const double ms = clockMoves(engine, f, t);
+            std::printf("29.97 jump to %d: clock moves after %.1f ms\n", f, ms);
+            worst = ms < 0 ? 1e9 : std::max(worst, ms);
+            wait(150);
+            f += 8; // not a neighbour of what was just shown
+        }
+        CHECK(tried >= 3);
+        CHECK(worst < kMaxStartMs);
+        engine.pause();
+    }
     return Check::result();
 }
