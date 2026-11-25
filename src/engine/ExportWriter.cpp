@@ -802,13 +802,29 @@ struct ExportWriter::Impl {
         // kOwnProbeRuns probe runs of kOwnProbeRun pictures spread evenly over the clip (the whole clip when it is
         // shorter), each coded as the export codes it (B pictures, macroblock tree, cuts, hints) while the first pass
         // goes by: no picture is kept for them
-        std::vector<std::pair<int, int>> runs; // first picture, count
+        struct Run {
+            int at, count, fed; // first picture, pictures to code, pictures handed to the run's encoder
+        };
+        std::vector<Run> runs;
         for (int r = 0; r < kOwnProbeRuns; ++r) {
             int a = std::max(0, int(int64_t(s.length) * (2 * r + 1) / (2 * kOwnProbeRuns)) - kOwnProbeRun / 2);
-            if (!runs.empty()) a = std::max(a, runs.back().first + runs.back().second);
+            if (!runs.empty()) a = std::max(a, runs.back().at + runs.back().count);
             const int n = std::min(kOwnProbeRun, s.length - a);
-            if (n >= 2) runs.push_back({a, n});
+            if (n >= 2) runs.push_back({a, n, n});
         }
+        // A run's encoder gets the pictures after the run as well, as far as its lookahead reaches (and the next run
+        // is away): the run's pictures are then coded with the macroblock tree they have in the export. Coded are
+        // only the run's own - the encoder hands out a picture `delay` pictures after it went in and is dropped once
+        // the run's count came out. (Flushed at the run's end instead, the tree ran out over the run's 20 pictures:
+        // under constant quality their QP follows the tree's level, and the clip with stills came out 8.7 % over
+        // its prediction, 25.11.2026.)
+        static const int kAhead = [] {
+            const char* e = schneidi::h264::devEnv("SCHNEIDI_OWN_PROBE_AHEAD"); // (with SCHNEIDI_S264_DEV=1; 0 = as before)
+            return e ? std::atoi(e) : -1;
+        }();
+        const int ahead = kAhead >= 0 ? kAhead : std::max(0, ownProbeConfig().lookahead - 1); // (Encoder::delay() without frame threads)
+        for (size_t r = 0; r < runs.size(); ++r)
+            runs[r].fed = std::min(runs[r].count + ahead, (r + 1 < runs.size() ? runs[r + 1].at : s.length) - runs[r].at);
         std::vector<OwnProbe> probes;
         std::unique_ptr<schneidi::h264::Encoder> probe;
         try {
@@ -823,19 +839,20 @@ struct ExportWriter::Impl {
                     return false;
                 }
                 pass.add(ownPicture(f.get()), ownKeyAt(i));
-                for (const auto& [a, n] : runs) {
-                    if (i < a || i >= a + n) continue;
-                    if (i == a) {
+                for (const Run& run : runs) {
+                    if (i < run.at || i >= run.at + run.fed) continue;
+                    if (i == run.at) {
                         probe = std::make_unique<schneidi::h264::Encoder>(ownProbeConfig());
-                        probes.push_back({a, {}, {}});
+                        probes.push_back({run.at, run.fed, 0, {}, {}});
                     }
+                    if (!probe) continue; // the run's pictures are out
+                    OwnProbe& p = probes.back();
                     schneidi::h264::EncodeHints hints;
                     const bool hinted = ownHintAt(i, hints);
-                    probeOwnTake(probes.back(), probe->encode(ownPicture(f.get()), ownKeyAt(i), hinted ? &hints : nullptr), *probe);
-                    if (i == a + n - 1) {
-                        for (std::vector<uint8_t> au; !(au = probe->flush()).empty();) probeOwnTake(probes.back(), au, *probe);
-                        probe.reset();
-                    }
+                    probeOwnTake(p, probe->encode(ownPicture(f.get()), ownKeyAt(i), hinted ? &hints : nullptr), *probe);
+                    if (i == run.at + run.fed - 1)
+                        for (std::vector<uint8_t> au; p.coded < run.count && !(au = probe->flush()).empty();) probeOwnTake(p, au, *probe);
+                    if (p.coded >= run.count || i == run.at + run.fed - 1) probe.reset();
                 }
                 ++analysed;
             }
@@ -899,8 +916,10 @@ struct ExportWriter::Impl {
     // A probe run of ownFirstPass coded at ownQp: per picture of the run (display order) its bits and type
     struct OwnProbe {
         int at = 0;
+        int fed = 0;   // pictures its encoder got (its lookahead saw; >= the pictures coded)
+        int coded = 0; // pictures that came out
         std::vector<double> bits;
-        std::vector<char> type;
+        std::vector<char> type; // 0 = not coded
     };
     static void probeOwnTake(OwnProbe& p, const std::vector<uint8_t>& au, const schneidi::h264::Encoder& enc)
     {
@@ -908,10 +927,11 @@ struct ExportWriter::Impl {
         const size_t d = size_t(std::max(0, enc.lastDisplayIndex()));
         if (p.bits.size() <= d) {
             p.bits.resize(d + 1, 0);
-            p.type.resize(d + 1, 'P');
+            p.type.resize(d + 1, 0);
         }
         p.bits[d] = double(au.size()) * 8;
         p.type[d] = enc.lastType();
+        ++p.coded;
     }
 
     // Bits of the whole clip as the export codes it (ownQp, or constant quality): the probe runs' bits per first-pass
@@ -942,10 +962,12 @@ struct ExportWriter::Impl {
         double bitsI = 0, probeI = 0, bitsP = 0, probeP = 0;
         for (const OwnProbe& p : probes) {
             const std::vector<double> runQp =
-                crf ? schneidi::h264::crfFirstPassQps(st, cfg, size_t(p.at), size_t(p.at) + p.bits.size()) : std::vector<double>{};
+                crf ? schneidi::h264::crfFirstPassQps(st, cfg, size_t(p.at), size_t(p.at) + size_t(std::max(p.fed, int(p.bits.size()))))
+                    : std::vector<double>{};
             for (size_t d = 0; d < p.bits.size(); ++d) {
                 const size_t i = size_t(p.at) + d;
                 if (i >= st.size()) break;
+                if (!p.type[d]) continue;
                 const bool key = p.type[d] == 'I';
                 (key ? bitsI : bitsP) += p.bits[d];
                 (key ? probeI : probeP) += need(i, key, runQp, size_t(p.at));

@@ -1786,6 +1786,10 @@ S264_DEV(bool, gTpBinB, !devEnv("H264_TPBINB") || std::atoi(devEnv("H264_TPBINB"
 // as it stands; past that the clip ends over or under its size instead of starving (or flooding)
 // its last seconds (H264_TPDEV, <= 0 = no limit).
 S264_DEV(double, gTpDev, devEnv("H264_TPDEV") ? std::atof(devEnv("H264_TPDEV")) : 2.0);
+// ... and this much further times the share of the clip's bits (the model's, at the plan QP) that is still to be
+// coded (H264_TPDEVWIDE; 0 = the same limit everywhere): a debt found while most of the clip is still to come is
+// spread over much, so paying it starves nothing.
+S264_DEV(double, gTpDevWide, devEnv("H264_TPDEVWIDE") ? std::atof(devEnv("H264_TPDEVWIDE")) : 0.0);
 // How much of the way from that plan QP to the QP that spends exactly what is left the picture's QP
 // goes (H264_TPFOLLOW; 1 = all the way, as before 15.11.2026; default a quarter). The plan QP moves only as the model
 // learns; the other also swings with every stretch the model misjudged, and near the clip's end with
@@ -4806,8 +4810,13 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             const double plan = twoPassPlanQp(kOf(true), kOf(false), kB());
             qp = twoPassQp(kOf(true), kOf(false), kB(), plan);
             const double rest = qp;
+            double dev = gTpDev;
+            if (gTpDev > 0 && gTpDevWide > 0) {
+                const double all = tpBits(tpAllTab_, plan, kOf(true), kOf(false), kB());
+                dev += gTpDevWide * std::clamp(tpBits(tpRemTab_, plan, kOf(true), kOf(false), kB()) / std::max(1.0, all), 0.0, 1.0);
+            }
             if (rcFramesSeen_ >= 12) {
-                const double gap = gTpDev > 0 ? std::clamp(rest - plan, -gTpDev, gTpDev) : rest - plan;
+                const double gap = gTpDev > 0 ? std::clamp(rest - plan, -dev, dev) : rest - plan;
                 if (gTpLag > 0) {
                     const double lag = gTpLagShare > 0 ? std::min(gTpLag * cfg_.fps, gTpLagShare * double(cfg_.firstPass->size())) : gTpLag * cfg_.fps;
                     tpGap_ += (gap - tpGap_) / std::max(1.0, lag);
@@ -4815,9 +4824,9 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
                 qp = plan + gTpFollow * (qp - plan) + (1.0 - gTpFollow) * tpGap_;
             }
             if (gTpDev > 0 && rcFramesSeen_ >= 12)
-                qp = std::clamp(qp, plan - gTpDev, plan + gTpDev);
+                qp = std::clamp(qp, plan - dev, plan + dev);
             if (devEnv("H264_RC_TRACE"))
-                std::fprintf(stderr, "rc3: frame %d rest %.2f plan %.2f\n", frameIndex_, rest, plan);
+                std::fprintf(stderr, "rc3: frame %d rest %.2f plan %.2f dev %.2f\n", frameIndex_, rest, plan, dev);
             const double step = rcFramesSeen_ < 12 ? 2.0 : 0.5;
             if (rcQp_ > 0)
                 qp = std::clamp(qp, rcQp_ - step, rcQp_ + step);
