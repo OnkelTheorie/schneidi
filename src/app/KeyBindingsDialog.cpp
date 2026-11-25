@@ -345,10 +345,20 @@ void KeyBindingsDialog::fill()
     const auto useKey = [](const InputBindings::Entry& e, const QString& in) {
         return InputBindings::inputMouseButton(in) == Qt::NoButton ? QString(e.scope + '\n' + in) : in;
     };
+    // Keys shared on purpose (Alt+1..8: target track and multicam angle, InputBindings::sharedOnPurpose) count once
     QHash<QString, int> uses;
+    QHash<QString, QString> firstUser;
     for (const auto& e : entries)
-        for (const QString& in : bindings.inputs(e.id))
-            if (!in.isEmpty()) ++uses[useKey(e, in)];
+        for (const QString& in : bindings.inputs(e.id)) {
+            if (in.isEmpty()) continue;
+            const QString key = useKey(e, in);
+            if (const auto first = firstUser.constFind(key); first != firstUser.constEnd()) {
+                if (InputBindings::sharedOnPurpose(*first, e.id)) continue;
+            } else {
+                firstUser.insert(key, e.id);
+            }
+            ++uses[key];
+        }
     // Keys the window uses itself in a mode (Esc ends the large viewer): on a window action they clash there
     const QStringList internal = InputBindings::windowInternalKeys();
 

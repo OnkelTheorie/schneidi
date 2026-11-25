@@ -383,6 +383,12 @@ void testCaptureEscape()
     KeyBindingsDialog dlg;
     dlg.show();
     auto* table = dlg.findChild<QTableWidget*>();
+    // Alt+1..8 are shared on purpose (target track and multicam angle): no conflict mark on either
+    for (const char* id : {"target_video_1", "multicam_switch_1"})
+        if (const int row = rowOf(table, id); CHECK(row >= 0)) {
+            CHECK_EQ(table->item(row, 2)->text(), InputBindings::inputText("Alt+1"));
+            CHECK(table->item(row, 2)->foreground().color() != Theme::warning);
+        }
     capture(dlg, "deselect", 1, [](QWidget* f) { QTest::keyClick(f, Qt::Key_Escape); });
     CHECK_EQ(in("deselect").value(1), QString("Esc"));
     const int row = rowOf(table, "deselect");
