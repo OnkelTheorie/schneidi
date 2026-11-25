@@ -1888,10 +1888,22 @@ QJsonObject inputSchema(const Command& cmd)
         case ParamType::Number: s["type"] = "number"; break;
         case ParamType::Boolean: s["type"] = "boolean"; break;
         case ParamType::Time: s["type"] = QJsonArray{"integer", "string"}; break;
-        case ParamType::Times: s["type"] = "array"; s["items"] = QJsonObject{{"type", QJsonArray{"integer", "string"}}}; break;
+        // a list, or the same as one comma-separated text ("1,2,4"; edit run: "all") - normalize takes both
+        case ParamType::Times:
+            s["type"] = QJsonArray{"array", "string"};
+            s["items"] = QJsonObject{{"type", QJsonArray{"integer", "string"}}};
+            break;
         case ParamType::Paths: s["type"] = "array"; s["items"] = QJsonObject{{"type", "string"}}; break;
         case ParamType::Sources: s["type"] = "array"; s["items"] = QJsonObject{{"type", QJsonArray{"string", "object"}}}; break;
-        case ParamType::Json: s["type"] = "array"; s["items"] = QJsonObject{{"type", "object"}}; break;
+        case ParamType::Json:
+            // review_hits is one kill feed object or false (an array is refused); the others are lists of objects
+            if (p.name == QLatin1String("review_hits")) {
+                s["type"] = QJsonArray{"object", "boolean", "string"};
+            } else {
+                s["type"] = "array";
+                s["items"] = QJsonObject{{"type", "object"}};
+            }
+            break;
         case ParamType::Object: s["type"] = QJsonArray{"object", "string"}; break;
         case ParamType::Data: s["type"] = QJsonArray{"string", "array", "object"}; break;
         }
@@ -2125,7 +2137,9 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
             }
             break;
         case ParamType::Json:
-            if (v.isString()) {
+            if (v.isString() && (str.trimmed() == QLatin1String("false") || str.trimmed() == QLatin1String("true"))) {
+                out[p.name] = str.trimmed() == QLatin1String("true"); // --review_hits false (no JSON document)
+            } else if (v.isString()) {
                 QJsonParseError err;
                 const QJsonDocument doc = QJsonDocument::fromJson(str.toUtf8(), &err);
                 if (err.error != QJsonParseError::NoError)

@@ -746,6 +746,16 @@ int main(int argc, char* argv[])
             if (t["name"].toString() == "help")
                 CHECK(!t["inputSchema"]["properties"].toObject().contains("all")
                       && t["inputSchema"]["properties"].toObject().contains("command"));
+            // The schema allows what the help documents (review 25.11.): review_hits an object or false (an array is
+            // refused by render), edit run a list or "all"
+            if (t["name"].toString() == "render") {
+                const QJsonArray type = t["inputSchema"]["properties"]["review_hits"]["type"].toArray();
+                CHECK(type.contains("object") && type.contains("boolean") && !type.contains("array"));
+            }
+            if (t["name"].toString() == "edit") {
+                const QJsonArray type = t["inputSchema"]["properties"]["run"]["type"].toArray();
+                CHECK(type.contains("array") && type.contains("string"));
+            }
         }
         CHECK(tools.contains("render") && tools.contains("jobs") && tools.contains("files") && tools.contains("upload"));
         CHECK(!tools.contains("app") && !tools.contains("extensions"));

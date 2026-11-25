@@ -2701,6 +2701,12 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK(text.contains("'silence' fits 'delete_range'"));
         CHECK(!text.contains("for a project they are timeline frames and 'sound' fits the 'keep'"));
     }
+    // review_hits false from the command line (--review_hits false) is the switch, not invalid JSON
+    {
+        const Cli::Command* render = Cli::find("render");
+        const QJsonObject n = Cli::normalize(*render, {{"project", g_path}, {"out", "x.mp4"}, {"review_hits", "false"}});
+        CHECK(n["review_hits"].isBool() && !n["review_hits"].toBool());
+    }
     return Check::result();
 }
 
