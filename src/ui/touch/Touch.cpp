@@ -96,8 +96,11 @@ bool dragsItself(QWidget* w, QWidget* viewport)
     return false;
 }
 
+// timestamp: the finger's (QInputEvent::timestamp of the touch event): a made-up mouse event carries 0 otherwise,
+// and a widget comparing click times (RenderQueuePanel's double-click guard) took every later tap as older than its
+// limit - the render button answered once per run
 void sendMouse(QWidget* to, QEvent::Type type, const QPointF& global, bool down, const QPointingDevice* device,
-               Qt::KeyboardModifiers mods)
+               Qt::KeyboardModifiers mods, quint64 timestamp)
 {
     if (!to) return;
     if (type == QEvent::MouseButtonPress || type == QEvent::MouseButtonDblClick) clickFocus(to); // like a click
@@ -106,6 +109,7 @@ void sendMouse(QWidget* to, QEvent::Type type, const QPointF& global, bool down,
     const Qt::MouseButton button = type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton;
     QMouseEvent me(type, local, scene, global, button, down ? Qt::LeftButton : Qt::NoButton, mods,
                    device ? device : QPointingDevice::primaryPointingDevice());
+    me.setTimestamp(timestamp);
     QApplication::sendEvent(to, &me);
 }
 
@@ -147,6 +151,7 @@ protected:
             return false;
         auto* te = static_cast<QTouchEvent*>(e);
         if (!isTouchDevice(te->pointingDevice()) || te->points().isEmpty()) return false;
+        m_time = te->timestamp();
         return touch(te);
     }
 
@@ -256,13 +261,13 @@ private:
                             && QLineF(m_lastTapPos, m_press).length() < 3 * slopPx();
         if (second) {
             m_lastTap.invalidate();
-            sendMouse(to, QEvent::MouseButtonDblClick, m_press, true, m_device, m_mods);
+            sendMouse(to, QEvent::MouseButtonDblClick, m_press, true, m_device, m_mods, m_time);
         } else {
             m_lastTap.start();
             m_lastTapPos = m_press;
-            sendMouse(to, QEvent::MouseButtonPress, m_press, true, m_device, m_mods);
+            sendMouse(to, QEvent::MouseButtonPress, m_press, true, m_device, m_mods, m_time);
         }
-        if (alive) sendMouse(to, QEvent::MouseButtonRelease, m_press, false, m_device, m_mods);
+        if (alive) sendMouse(to, QEvent::MouseButtonRelease, m_press, false, m_device, m_mods, m_time);
     }
 
     void longPress()
@@ -274,8 +279,8 @@ private:
         if (view && view->dragEnabled() && view->indexAt(local(m_press).toPoint()).isValid()) {
             // Select the item under the finger; moving now drags it, lifting opens its menu
             const QPointer<KineticFilter> alive(this);
-            sendMouse(m_vp, QEvent::MouseButtonPress, m_press, true, m_device, m_mods);
-            if (alive) sendMouse(m_vp, QEvent::MouseButtonRelease, m_press, false, m_device, m_mods);
+            sendMouse(m_vp, QEvent::MouseButtonPress, m_press, true, m_device, m_mods, m_time);
+            if (alive) sendMouse(m_vp, QEvent::MouseButtonRelease, m_press, false, m_device, m_mods, m_time);
             if (alive) m_state = State::Held;
             return;
         }
@@ -305,6 +310,7 @@ private:
     State m_state = State::Idle;
     QPointer<const QPointingDevice> m_device;
     Qt::KeyboardModifiers m_mods;
+    quint64 m_time = 0; // the last touch event's timestamp (the mouse events made of it carry it: sendMouse)
     QPointF m_press, m_last, m_lastTapPos;
     QElapsedTimer m_lastTap;
     bool m_stoppedFling = false; // this touch began on a gliding list

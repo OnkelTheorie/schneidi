@@ -16,6 +16,9 @@
 // reopens – the chosen output, else the system default, else silence (the clock runs on) – and goes back to the
 // chosen output once it is there again. The picture stands for that moment (~0.3 s), then both run on in sync.
 //
+// Android: paused (and not scrubbing) for Options::idleSuspendMs, the device is stopped (a started stream keeps the
+// audio server busy mixing silence, a phone's battery); play() or scrub() starts it again. Elsewhere it keeps running.
+//
 // Speeds: 1 and -1 sound normal; 2 and 4 (and backwards) play the sound faster like tape; other speeds are silent
 // while the clock runs.
 //
@@ -47,6 +50,12 @@ public:
         // The device ran dry while playing (late callbacks): pause() doubles the buffer up to kMaxAutoBuffer, reopens
         // the device with it and calls this with the new size (GUI thread, no lock held) so it can be kept
         std::function<void(int)> bufferGrown;
+        // Paused this long (ms), the device is stopped until play()/scrub() (Device::suspend); 0 = never (desktop)
+#ifdef Q_OS_ANDROID
+        int idleSuspendMs = 2000;
+#else
+        int idleSuspendMs = 0;
+#endif
     };
     static constexpr int kMaxAutoBuffer = 4096;
     explicit Player(const Options& options);
@@ -110,6 +119,9 @@ public:
         int scrubJoins = 0;    // of them: continued the slice before without a seam
         int scrubReplaced = 0; // requests replaced by a newer one before they were mixed
         int scrubCuts = 0;     // slices cut short by a request elsewhere (the rest dropped, crossfaded)
+        int suspends = 0;      // device stopped while paused (Options::idleSuspendMs)
+        int resumes = 0;       // and started again
+        bool suspended = false; // stopped right now
     };
     Stats stats() const;
     // Tests: the feeder makes no sound for `ms` (a starved computer); the sound runs dry and must not click

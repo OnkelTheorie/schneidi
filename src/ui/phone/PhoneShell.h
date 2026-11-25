@@ -76,8 +76,25 @@ public:
     void setClipToolsShown(bool on);
     bool clipToolsShown() const { return m_clipMode; }
 
-    // One step back (Android's back key): an open sheet closes, then the clip bar goes (clipToolsLeft); false = nothing
-    // was open
+    // Phone portrait: the bar holds at most kBarSlots buttons, the last one "Mehr" (more), which opens a sheet of
+    // large tiles with the tools of the context not in the bar. Which ones the bar shows depends on the context
+    // (setToolContext: "main" = nothing selected, "clip", "title", "audio"; MainWindow decides by the selection), a
+    // table of tool ids per context (setBarTools); a context without a row takes "clip"'s. Landscape (the rail) and
+    // the tablet form show every tool as before.
+    static constexpr int kBarSlots = 5;
+    void setBarTools(const QString& context, const QStringList& ids);
+    void setToolContext(const QString& context); // "main" hides the clip tools, anything else shows them
+    QString toolContext() const { return m_context; }
+    bool barLimited() const { return !m_landscape && !m_tablet; }
+    QStringList barToolIds() const;  // the bar's tools now, in order ("more" last when limited)
+    QStringList moreToolIds() const; // what the "Mehr" sheet offers now ("done" = leave the clip tools)
+    void openMore();
+    void closeMore();
+    bool moreOpen() const;
+    QWidget* moreSheet() const { return m_more; }
+
+    // One step back (Android's back key): the "Mehr" sheet or an open sheet closes, then the clip bar goes
+    // (clipToolsLeft); false = nothing was open
     bool back();
 
     bool landscape() const { return m_landscape; } // the tools as a rail at the left (phone landscape, tablet)
@@ -113,7 +130,11 @@ private:
         QToolButton* button = nullptr;
         QScrollArea* scroll = nullptr; // the panel's place in the sheet (made on its first opening)
         bool clip = false;
+        QString symbol;
     };
+    void arrangeBar();            // which buttons the bar shows (limited: the context's row and "Mehr")
+    void placeMore();             // the "Mehr" sheet's geometry above the bar
+    QStringList contextIds() const; // the tools of the current context's group (main or clip), in their order
     QToolButton* makeToolButton(const QString& symbol, const QString& label);
     void relayout();      // the layout for the orientation (rebuilt when it changes)
     void placeSheet();    // portrait: the sheet's geometry over the timeline
@@ -152,6 +173,11 @@ private:
     QSize m_steadySize; // portrait: the shell's size when the rows' room was last measured (not under a keyboard)
     int m_steadyMost = 0;
     bool m_clipMode = false;
+    QString m_context = QStringLiteral("main");
+    QHash<QString, QStringList> m_barTools;
+    QToolButton* m_moreButton = nullptr;
+    QWidget* m_more = nullptr;  // the "Mehr" sheet (tiles), over a shade that closes it
+    QWidget* m_shade = nullptr;
     int m_dragStartY = -1;
     double m_dragStartShare = 0;
 };

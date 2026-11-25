@@ -166,7 +166,38 @@ void requestPermission(QObject* context, std::function<void(bool)> done)
     (*ask)(0, false);
 }
 
+void announce(const QStringList& paths)
+{
+    QStringList files;
+    for (const QString& p : paths) {
+        const QFileInfo fi(p);
+        if (fi.isDir()) {
+            const QDir dir(p);
+            for (const QString& name : dir.entryList(QDir::Files, QDir::Name)) files << dir.filePath(name);
+        } else if (fi.isFile()) {
+            files << fi.absoluteFilePath();
+        }
+    }
+    QJniObject context = QNativeInterface::QAndroidApplication::context();
+    if (files.isEmpty() || !context.isValid()) return;
+    QJniEnvironment env;
+    jobjectArray array = env->NewObjectArray(jsize(files.size()), env->FindClass("java/lang/String"), nullptr);
+    for (int i = 0; i < files.size(); ++i) {
+        QJniObject s = QJniObject::fromString(files[i]);
+        env->SetObjectArrayElement(array, jsize(i), s.object<jstring>());
+    }
+    // (no MIME types: guessed from the names; no listener: nothing waits for it)
+    QJniObject::callStaticMethod<void>(
+        "android/media/MediaScannerConnection", "scanFile",
+        "(Landroid/content/Context;[Ljava/lang/String;[Ljava/lang/String;Landroid/media/MediaScannerConnection$OnScanCompletedListener;)V",
+        context.object(), array, nullptr, nullptr);
+    env.checkAndClearExceptions();
+    env->DeleteLocalRef(array);
+}
+
 #else
+
+void announce(const QStringList&) {}
 
 QVector<DeviceMediaItem> list()
 {

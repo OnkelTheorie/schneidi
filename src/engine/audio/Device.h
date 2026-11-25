@@ -55,6 +55,10 @@ public:
     // Never call the callback again (at once, from any thread). Closing a vanished device can take long or hang in
     // the backend; detached, it can be closed in another thread while a new one plays.
     virtual void detach() {}
+    // Stops calling back and lets the sound system rest until resume() (a paused player on a phone: a started stream
+    // keeps the audio server mixing silence, ~20 % CPU on an A51). Not while detached. Default: keeps running.
+    virtual void suspend() {}
+    virtual void resume() {}
 
     // Opens and starts the output. The environment variable SCHNEIDI_AUDIO_DEVICE chooses a stand-in: "null" =
     // silence paced by a timer, "file:<path>" = 16-bit stereo raw file in real time (tests); "null:stall=<ms>" = like

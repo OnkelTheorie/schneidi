@@ -3949,5 +3949,7 @@
  "Untertitel: Zeilen weggelassen, die zwei Spracherkennungen verschieden gehört haben.": "Captions: lines left out that two speech recognitions heard differently.",
  "Untertitel nicht gegengeprüft: nur ein Whisper-Modell ist installiert.": "Captions not cross-checked: only one whisper model is installed.",
  "Keine Untertitel: Die zwei Spracherkennungen haben jede Zeile verschieden gehört.": "No captions: the two speech recognitions heard every line differently.",
- "Untertitel nicht gegengeprüft: ohne Grafikkarte dauert die zweite Erkennung zu lange.": "Captions not cross-checked: without a graphics card the second recognition takes too long."
+ "Untertitel nicht gegengeprüft: ohne Grafikkarte dauert die zweite Erkennung zu lange.": "Captions not cross-checked: without a graphics card the second recognition takes too long.",
+ "Tempo ändern": "Speed",
+ "Klingen-Werkzeug an/aus: an = ein Tipp auf einen Clip schneidet ihn": "Blade tool on/off: on = a tap on a clip cuts it"
 }

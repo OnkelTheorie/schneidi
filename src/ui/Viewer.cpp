@@ -549,8 +549,8 @@ void Viewer::addZoomActions(const QList<QAction*>& actions)
         return z == FrameView::kFit ? T("Einpassen") : QString("%1 %").arg(QString::number(z * 100, 'g', 4).replace('.', I18n::decimalPoint()));
     };
     // Narrow: "Fit" becomes a symbol, a percentage stays whole (it is short)
-    const auto show = [b, label](double z) {
-        b->setText(label(z));
+    const auto show = [this, b, label](double z) {
+        b->setText(m_shortZoom && z == FrameView::kFit ? QStringLiteral("⤢") : label(z));
         b->setCompactText(z == FrameView::kFit ? QStringLiteral("⤢") : label(z));
     };
     show(zoom());
@@ -595,6 +595,14 @@ void Viewer::updateBalance()
     // The transport buttons centered: as much room right of them as the timecode takes left
     const int balance = std::max(0, m_timecode->sizeHint().width() - m_barRight->sizeHint().width());
     m_barBalance->changeSize(balance, 0, QSizePolicy::Fixed, QSizePolicy::Minimum);
+}
+
+void Viewer::setShortZoomText(bool on)
+{
+    m_shortZoom = on;
+    if (auto* b = findChild<QToolButton*>("viewer_zoom"); b && zoom() == FrameView::kFit)
+        b->setText(on ? QStringLiteral("⤢") : T("Einpassen"));
+    if (m_compact) updateBalance();
 }
 
 void Viewer::setCompact(bool on)

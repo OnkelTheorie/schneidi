@@ -322,6 +322,7 @@ void MainWindow::setLayoutForm(LayoutForm form)
         disableShell();
     } else if (m_phone) { // phone <-> tablet: the same shell, another arrangement
         m_phone->setTablet(form == LayoutForm::Tablet);
+        phoneRows();
         if (form == LayoutForm::Tablet && m_phone->sheet().isEmpty()) m_phone->openSheet("inspector");
         if (form == LayoutForm::Phone) m_phone->closeSheet(); // (the phone shows its timeline; a tool opens a panel)
     } else {
@@ -391,7 +392,7 @@ QWidget* MainWindow::buildPhoneTopBar()
     };
     auto* menuButton = new QToolButton(bar);
     menuButton->setObjectName("phoneMenu");
-    menuButton->setText(QStringLiteral("⋮"));
+    menuButton->setText(QStringLiteral("☰")); // (three lines: a phone's sign for "the menu")
     menuButton->setToolTip(T("Menü"));
     menuButton->setPopupMode(QToolButton::InstantPopup);
     menuButton->setStyleSheet("QToolButton::menu-indicator { image: none; width: 0; }");
@@ -471,6 +472,17 @@ void MainWindow::phoneArrangeTopBar(bool landscape)
     if (jobs) lay->addWidget(jobs, row++, 0, 1, 3, Qt::AlignHCenter);
 }
 
+void MainWindow::phoneRows()
+{
+    // The phone (not the tablet form): the timeline's tool row with five controls at most (blade switch, snapping,
+    // magnetic V1, linked selection, the timeline list; voice-over is in the bottom bar, the rest in the menus) and
+    // the zoom button's "Fit" as its symbol. Again after each change of form or arrangement (buttons added later)
+    const bool phone = m_phone && !m_phone->tablet();
+    m_timeline->setPhoneRow(phone, {InputBindings::instance().action("magnetic_main"),
+                                    InputBindings::instance().action("linked_selection")});
+    m_viewer->setShortZoomText(phone);
+}
+
 void MainWindow::enableShell(bool tablet)
 {
     if (m_phone) return;
@@ -508,6 +520,7 @@ void MainWindow::enableShell(bool tablet)
         // Landscape: the timeline's tool row goes (the height is the picture's), the timeline as tall as its first
         // rows (PhoneShell::setTimelineHeightHint), measured again once the row is gone
         m_timeline->setBarShown(!landscape);
+        phoneRows();
         QTimer::singleShot(0, m_phone, [this] { if (m_phone) m_phone->refreshTimelineHeight(); });
 #ifdef Q_OS_ANDROID
         // Landscape: the height is scarce, the status bar goes (a swipe from the edge shows it for a moment);
@@ -551,6 +564,7 @@ void MainWindow::enableShell(bool tablet)
     updateAddMediaButton();
     m_viewer->screen()->setMinimumSize(160, 72);
     m_viewer->setCompact(true);
+
     // The large viewer: nothing beside the viewer to hide (full screen stays)
     if (auto* large = m_viewer->findChild<QToolButton*>("viewer_large")) large->hide();
 
@@ -572,6 +586,8 @@ void MainWindow::enableShell(bool tablet)
         m_chatPanel->setCompact(true); // (no own title or docking; the setup starts with a button, not a key field)
         return shellHome(m_chatPanel);
     });
+    // Voice-over from the bar (in the timeline's tool row on the desktop): records at the playhead, a tap again ends
+    m_phone->addActionTool("voiceover", QStringLiteral("●"), T("Aufnahme"), [] { trigger("voiceover_record"); }, false);
     m_phone->addPanelTool("export", QStringLiteral("⇪"), T("Export"), [this]() -> QWidget* {
         // The settings and, below them, the render queue (on the desktop it stands beside them): "Add to Render
         // Queue" alone rendered nothing on the phone, the queue's "Render all" was not on the screen
@@ -626,14 +642,39 @@ void MainWindow::enableShell(bool tablet)
         // The Audio tab, its Volume section at the top; a video without sound keeps the tab it shows
         if (!m_inspector->showAudio()) m_viewer->showNotice(T("Der ausgewählte Clip hat keinen Ton."), 2500);
     });
-    m_phone->addActionTool("speed", QStringLiteral("≫"), T("Geschwindigkeit"), [] { trigger("clip_speed"); });
+    // (short: five tools share the bar's width; the dialog it opens says "Geschwindigkeit")
+    m_phone->addActionTool("speed", QStringLiteral("≫"), T("Tempo ändern"), [] { trigger("clip_speed"); });
     m_phone->addActionTool("delete", QStringLiteral("⌫"), T("Löschen"), [] { trigger("ripple_delete"); });
     m_phone->addClipPanelTool("clipEffects", QStringLiteral("✦"), T("Effekte"), "effects");
     m_phone->addClipPanelTool("clipColor", QStringLiteral("◐"), T("Farbe"), "color");
+    // A title: its text and look are in the Inspector's Title tab
+    m_phone->addClipPanelTool("titleEdit", QStringLiteral("T"), T("Bearbeiten"), "inspector");
 
-    connect(m_selection, &Selection::changed, m_phone, [this] { m_phone->setClipToolsShown(!m_selection->isEmpty()); });
+    // What the phone's bar shows (portrait: four and "Mehr"; the rest as tiles behind "Mehr"), by what is selected.
+    // Nothing: adding things and the way out; a clip: the cuts used most (Teilen, Löschen - the tours' first steps),
+    // then its sound and speed; a title: its text first; a sound clip: like a clip
+    m_phone->setBarTools("main", {"media", "text", "voiceover", "export"});
+    m_phone->setBarTools("clip", {"split", "delete", "volume", "speed"});
+    m_phone->setBarTools("title", {"titleEdit", "split", "delete", "clipEffects"});
+    m_phone->setBarTools("audio", {"split", "delete", "volume", "speed"});
+
+    // The context: nothing selected, titles only, sound only (audio tracks), else clips
+    const auto context = [this] {
+        if (m_selection->isEmpty()) return QStringLiteral("main");
+        bool titles = true, sound = true;
+        const Timeline& tl = m_project->timeline();
+        for (const int id : m_selection->ids()) {
+            TrackRef where;
+            const Clip* c = TimelineOps::findClip(tl, id, &where);
+            if (!c) continue;
+            titles = titles && c->isTitle();
+            sound = sound && where.kind == TrackKind::Audio;
+        }
+        return titles ? QStringLiteral("title") : sound ? QStringLiteral("audio") : QStringLiteral("clip");
+    };
+    connect(m_selection, &Selection::changed, m_phone, [this, context] { m_phone->setToolContext(context()); });
     connect(m_phone, &PhoneShell::clipToolsLeft, this, [this] { m_selection->clear(); });
-    m_phone->setClipToolsShown(!m_selection->isEmpty());
+    m_phone->setToolContext(context());
     // The desktop's panel toggles follow the sheet (menus and keys show the open one), without saving anything
     const auto syncToggles = [this](const QString& open) {
         const QPair<QToolButton*, const char*> toggles[] = {
@@ -648,6 +689,8 @@ void MainWindow::enableShell(bool tablet)
     connect(m_phone, &PhoneShell::sheetChanged, this, syncToggles);
     syncToggles({});
     if (m_backgroundJobs) phoneAdoptBackgroundJobs(); // (a window built before: tests)
+    phoneRows();
+    QTimer::singleShot(0, this, [this] { if (m_phone) phoneRows(); }); // (tool buttons added after the shell)
     // The window's minimum from the phone layout now (the desktop's was set when its layout first ran): a resize to
     // the phone's size before the first show must not be held at the desktop's minimum
     if (tablet) m_phone->openSheet("inspector"); // the tablet's docked panel: the Inspector first
@@ -695,6 +738,8 @@ void MainWindow::disableShell()
         w->setVisible(!h.hidden);
     }
     // The desktop's own state
+    m_timeline->setPhoneRow(false);
+    m_viewer->setShortZoomText(false);
     m_timeline->setCompact(false);
     if (m_chatPanel) m_chatPanel->setCompact(false);
     m_timeline->setBarShown(true);

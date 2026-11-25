@@ -9,6 +9,7 @@
 #include "ui/timeline/TimelineView.h"
 
 #include <QAction>
+#include <QActionEvent>
 #include <QButtonGroup>
 #include <QComboBox>
 #include <QGridLayout>
@@ -171,6 +172,7 @@ TimelinePanel::TimelinePanel(Editor* editor, QWidget* parent) : QWidget(parent),
     auto* slideBtn = makeTool(Icon::Slide, T("Gleiten-Werkzeug: Clip ziehen verschiebt ihn zwischen seinen Nachbarn"));
     auto* bladeBtn = makeTool(Icon::Blade, T("Klingen-Werkzeug (B)"));
     auto* snapBtn = makeTool(Icon::Snap, T("Einrasten an/aus (N)"));
+    snapBtn->setObjectName("tool_snap");
     selectBtn->setChecked(true);
     snapBtn->setChecked(m_view->snapping());
 
@@ -341,6 +343,57 @@ void TimelinePanel::setCompact(bool on)
     m_vbar->setStyleSheet(thick);
 }
 
+void TimelinePanel::setPhoneRow(bool on, const QList<QAction*>& keep)
+{
+    for (QWidget* w : std::as_const(m_phoneHidden))
+        if (w) w->show();
+    m_phoneHidden.clear();
+    if (m_bladeSwitch) m_bladeSwitch->setVisible(on);
+    if (!on) {
+        if (m_barScroll) m_barScroll->setFixedHeight(m_barWidget->sizeHint().height());
+        return;
+    }
+    if (!m_bladeSwitch) {
+        // One switch for the two tools a phone cuts with: off = select (and move), on = blade (a tap cuts)
+        m_bladeSwitch = new QToolButton;
+        m_bladeSwitch->setObjectName("tool_blade_switch");
+        m_bladeSwitch->setIcon(toolIcon(Icon::Blade));
+        m_bladeSwitch->setIconSize(QSize(24, 24));
+        m_bladeSwitch->setCheckable(true);
+        m_bladeSwitch->setToolTip(T("Klingen-Werkzeug an/aus: an = ein Tipp auf einen Clip schneidet ihn"));
+        m_bladeSwitch->setChecked(m_view->tool() == TimelineView::Tool::Blade);
+        connect(m_bladeSwitch, &QToolButton::toggled, m_view, [this](bool blade) {
+            m_view->setTool(blade ? TimelineView::Tool::Blade : TimelineView::Tool::Select);
+        });
+        connect(m_view, &TimelineView::toolChanged, m_bladeSwitch, [this](TimelineView::Tool t) {
+            const QSignalBlocker block(m_bladeSwitch);
+            m_bladeSwitch->setChecked(t == TimelineView::Tool::Blade);
+        });
+        m_bar->insertWidget(0, m_bladeSwitch);
+    }
+    for (int i = 0; i < m_bar->count(); ++i) {
+        QWidget* w = m_bar->itemAt(i)->widget();
+        if (!w || w == m_bladeSwitch || w == m_timelines || w->isHidden()) continue;
+        if (w->objectName() == QLatin1String("tool_snap")) continue;
+        auto* b = qobject_cast<QToolButton*>(w);
+        if (b && b->defaultAction() && keep.contains(b->defaultAction())) continue;
+        if (w == m_back) continue; // (shown only inside a compound clip: the way back out)
+        w->hide(); // select, trim, blade, the separator, zoom, the caller's other buttons
+        m_phoneHidden << w;
+    }
+    if (m_barScroll) m_barScroll->setFixedHeight(m_barWidget->sizeHint().height());
+}
+
+QList<QWidget*> TimelinePanel::rowControls() const
+{
+    QList<QWidget*> out;
+    for (int i = 0; i < m_bar->count(); ++i)
+        if (QWidget* w = m_bar->itemAt(i)->widget(); w && !w->isHidden() && (qobject_cast<QAbstractButton*>(w)
+                                                                          || qobject_cast<QComboBox*>(w)))
+            out << w;
+    return out;
+}
+
 void TimelinePanel::syncScrollbars()
 {
     // The centred playhead (phones): sliding the timeline is the way along it, no bar under it
@@ -470,15 +523,33 @@ bool TimelinePanel::canGoBack() const
     return !m_history.isEmpty();
 }
 
+namespace {
+// A tool button of an action that keeps its own drawn icon: every change of the action (also one under a
+// QSignalBlocker, which sends the button its ActionChanged but no changed() signal) took the action's empty icon
+// over, and the button showed the action's long text instead ("Lücken …Spur 1)" in the phone's tool row)
+class ActionToolButton : public QToolButton {
+public:
+    explicit ActionToolButton(const QIcon& icon) : m_icon(icon) {}
+
+protected:
+    void actionEvent(QActionEvent* event) override
+    {
+        QToolButton::actionEvent(event);
+        if (event->type() == QEvent::ActionChanged) setIcon(m_icon);
+    }
+
+private:
+    QIcon m_icon;
+};
+} // namespace
+
 void TimelinePanel::addToolAction(QAction* action, Icon icon)
 {
-    auto* b = new QToolButton;
+    auto* b = new ActionToolButton(toolIcon(icon));
     b->setDefaultAction(action);
     b->setIcon(toolIcon(icon)); // setDefaultAction would otherwise take over menu text/icon
     b->setIconSize(QSize(20, 20));
     b->setToolButtonStyle(Qt::ToolButtonIconOnly);
     b->setToolTip(action->toolTip());
-    const QIcon ic = b->icon();
-    connect(action, &QAction::changed, b, [b, ic] { b->setIcon(ic); });
     m_bar->insertWidget(m_toolInsert++, b);
 }

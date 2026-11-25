@@ -41,6 +41,13 @@ public:
     // Phone layout (ui/phone/PhoneShell): the tool bar never sets the panel's width - fewer tools (slip and slide stay
     // in the menu), a narrow timeline list, the rest scrolls sideways
     void setCompact(bool on);
+    // Phone portrait: the tool row holds at most five controls - one switch between the selection tool and the blade,
+    // snapping, and what the caller keeps of its own buttons (`keep`: their actions, addToolAction), then the
+    // timeline list; trim, the other tools, zoom and the rest stay in the menus. Off: the row as before
+    void setPhoneRow(bool on, const QList<QAction*>& keep = {});
+    static constexpr int kPhoneRowMax = 5;
+    // The controls the tool row shows now (tests)
+    QList<QWidget*> rowControls() const;
     // Phone: thin indicators over the lanes that show only while the view moves, instead of the scroll bars
     void setScrollIndicators(bool on);
     // Phone landscape: the tool row above the lanes hidden (its tools are in the menus; the height goes to the picture)
@@ -71,6 +78,8 @@ private:
     QWidget* m_barWidget = nullptr;
     class QScrollArea* m_barScroll = nullptr; // setCompact
     bool m_barShown = true;                    // setBarShown
+    QToolButton* m_bladeSwitch = nullptr;      // setPhoneRow: selection tool <-> blade
+    QList<QWidget*> m_phoneHidden;             // what setPhoneRow hid (shown again when it goes)
 
     int m_toolInsert = 0;
 };

@@ -3933,5 +3933,7 @@
  "An": "Вкл.",
  "Ton beim Scrubben": "Звук при прокрутке",
  "An: ziehst du die Abspielmarke oder gehst Einzelbilder, hörst du kurz den Ton an der Stelle (gut, um Schnitte an Sprache zu setzen). Umschalten auch im Menü Wiedergabe oder mit Shift+S.": "Вкл.: когда ты перетаскиваешь указатель воспроизведения или идёшь по кадрам, на мгновение слышен звук в этой точке (удобно, чтобы резать по речи). Переключается и в меню Воспроизведение или клавишей Shift+S.",
- "Verfolgung verworfen – Clip geändert": "Отслеживание отменено – клип изменён"
+ "Verfolgung verworfen – Clip geändert": "Отслеживание отменено – клип изменён",
+ "Tempo ändern": "Скорость",
+ "Klingen-Werkzeug an/aus: an = ein Tipp auf einen Clip schneidet ihn": "Лезвие вкл/выкл: вкл = касание клипа разрезает его"
 }
