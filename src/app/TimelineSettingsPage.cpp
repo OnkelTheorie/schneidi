@@ -95,6 +95,15 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
                            "auch leise Sprache deutlich, linear die echte Lautstärke-Kurve (laute Stellen stechen "
                            "heraus).")));
 
+    using TrH = TimelineOptions::TrackHeight;
+    m_trackHeight = combo("timeline_track_height",
+                          {{T("Klein"), int(TrH::Small)}, {T("Mittel"), int(TrH::Medium)}, {T("Groß"), int(TrH::Large)}},
+                          int(TimelineOptions::trackHeight()));
+    display->addRow(T("Spurhöhe"), m_trackHeight);
+    display->addRow(hint(T("So hoch sind die Spuren nach dem Start und gleich nach OK. Danach änderst du sie wie gewohnt "
+                           "mit Shift+Mausrad über Video- oder Tonspuren oder unter Timeline › Timeline-Ansicht › "
+                           "Spurhöhe.")));
+
     // Zoom and scroll: where wheel zoom stays put (ZoomAnchor; Edit timeline and Studio lanes, read live)
     QFormLayout* view = group(lay, T("Zoom und Scrollen"));
     m_zoomAnchor = combo("timeline_zoom_anchor",
@@ -339,6 +348,11 @@ TimelineOptions::WaveShape TimelineSettingsPage::waveShape() const
     return TimelineOptions::WaveShape(m_waveShape->currentData().toInt());
 }
 
+TimelineOptions::TrackHeight TimelineSettingsPage::trackHeight() const
+{
+    return TimelineOptions::TrackHeight(m_trackHeight->currentData().toInt());
+}
+
 TimelineOptions::WaveScale TimelineSettingsPage::waveScale() const
 {
     return TimelineOptions::WaveScale(m_waveScale->currentData().toInt());
@@ -348,6 +362,7 @@ void TimelineSettingsPage::store() const
 {
     if (waveShape() != TimelineOptions::waveShape()) TimelineOptions::setWaveShape(waveShape());
     if (waveScale() != TimelineOptions::waveScale()) TimelineOptions::setWaveScale(waveScale());
+    if (trackHeight() != TimelineOptions::trackHeight()) TimelineOptions::setTrackHeight(trackHeight());
     if (thumbnails() != TimelineOptions::thumbnails()) TimelineOptions::setThumbnails(thumbnails());
     if (!(bigStep() == TimelineOptions::bigStep())) TimelineOptions::setBigStep(bigStep());
     if (!(bigNudge() == TimelineOptions::bigNudge())) TimelineOptions::setBigNudge(bigNudge());

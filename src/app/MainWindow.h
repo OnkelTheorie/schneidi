@@ -16,6 +16,7 @@
 #include "engine/ProbeCache.h"
 #include "ui/SecondScreen.h"
 #include "ui/timeline/PlayheadMove.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "ui/timeline/ViewState.h"
 
 #include <QHash>
@@ -266,6 +267,8 @@ public:
     void settingsDialog(int tab = 0);
     // After Settings › Timeline changed: the timelines redraw what they show by those choices (no restart)
     void applyTimelineOptions();
+    // The timeline's tracks at a height step (Settings › Timeline, Timeline View › Track Height): user input
+    void setTrackHeightStep(TimelineOptions::TrackHeight height);
     // Texts of the big step/nudge actions with the sizes chosen in Settings › Timeline
     void updateStepTexts();
     // What AIs on the live connection hear while the app cannot take their commands (Cli::Live::Server::setWaiting;

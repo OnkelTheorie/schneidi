@@ -450,6 +450,16 @@ void testTimelineTab()
     // Pictures on video clips: filmstrip (default), first, first and last, none
     checkTimelineChoice("timeline_thumbnails", 4, int(TimelineOptions::Thumbnails::Filmstrip),
                         [] { return int(TimelineOptions::thumbnails()); });
+    // Track height: small, medium (default: the view's 64/52 from before), large
+    checkTimelineChoice("timeline_track_height", 3, int(TimelineOptions::TrackHeight::Medium),
+                        [] { return int(TimelineOptions::trackHeight()); });
+    {
+        using TH = TimelineOptions::TrackHeight;
+        CHECK_EQ(TimelineOptions::videoTrackHeight(TH::Medium), ViewState{}.videoTrackHeight);
+        CHECK_EQ(TimelineOptions::audioTrackHeight(TH::Medium), ViewState{}.audioTrackHeight);
+        CHECK(TimelineOptions::videoTrackHeight(TH::Small) < 64 && TimelineOptions::videoTrackHeight(TH::Large) > 64);
+        CHECK(TimelineOptions::audioTrackHeight(TH::Small) >= 28 && TimelineOptions::videoTrackHeight(TH::Large) <= 220);
+    }
     // Waveforms: mirrored (default) or from the bottom, dB (default) or linear
     checkTimelineChoice("timeline_wave_shape", 2, int(TimelineOptions::WaveShape::Mirrored),
                         [] { return int(TimelineOptions::waveShape()); });

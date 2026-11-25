@@ -64,6 +64,27 @@ void setClipFormat(ClipFormat choice)
     store("timeline/firstClipFormat", choice == ClipFormat::Adapt ? "adapt" : "keep", choice == ClipFormat::Ask);
 }
 
+TrackHeight trackHeight()
+{
+    const QString v = stored("timeline/trackHeight");
+    return v == "small" ? TrackHeight::Small : v == "large" ? TrackHeight::Large : TrackHeight::Medium;
+}
+
+void setTrackHeight(TrackHeight height)
+{
+    store("timeline/trackHeight", height == TrackHeight::Small ? "small" : "large", height == TrackHeight::Medium);
+}
+
+int videoTrackHeight(TrackHeight height)
+{
+    return height == TrackHeight::Small ? 44 : height == TrackHeight::Large ? 96 : 64;
+}
+
+int audioTrackHeight(TrackHeight height)
+{
+    return height == TrackHeight::Small ? 36 : height == TrackHeight::Large ? 78 : 52;
+}
+
 ShuttleSteps shuttleSteps() { return stored("timeline/shuttleSteps") == "gentle" ? ShuttleSteps::Gentle : ShuttleSteps::Double; }
 
 void setShuttleSteps(ShuttleSteps steps) { store("timeline/shuttleSteps", "gentle", steps == ShuttleSteps::Double); }

@@ -130,6 +130,16 @@ void setThumbnails(Thumbnails thumbnails);
 // shape mirrored around the middle (default, as before; DaVinci, Kdenlive, Audacity) or from the bottom (rectified,
 // Premiere and Final Cut: twice as tall on low tracks); height in dB, -48..0 dB (default, as before: speech does not
 // look flat) or linear (the plain amplitude, Avid's choice).
+// The height of the tracks (Settings › Timeline › Display): small 44/36, medium 64/52 (default, as before), large
+// 96/78 px for video/audio tracks. The timeline takes it at the start (not in touch mode, which has its own taller
+// rows) and when the choice changes; Timeline › Timeline View › Track Height sets the steps at once, and the
+// track-height wheel (Shift+wheel by default) changes them freely from there. Heights are not kept in the project.
+enum class TrackHeight { Small, Medium, Large };
+TrackHeight trackHeight();
+void setTrackHeight(TrackHeight height);
+int videoTrackHeight(TrackHeight height);
+int audioTrackHeight(TrackHeight height);
+
 enum class WaveShape { Mirrored, Bottom };
 enum class WaveScale { Db, Linear };
 WaveShape waveShape();

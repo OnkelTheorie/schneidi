@@ -81,6 +81,7 @@
 #include "ui/comp/CompPage.h"
 #include "ui/timeline/TimelineView.h"
 #include "ui/timeline/TimelineOptions.h"
+#include "ui/touch/Touch.h"
 
 #include <QAction>
 #include <QCursor>
@@ -360,6 +361,8 @@ void MainWindow::buildUi()
         if (m_engine->timelinePositions()) tv->setPlayhead(f);
     });
     TimelineOptions::applyEditDefaults(); // the user's still and transition lengths (Settings › Timeline)
+    // The tracks' height chosen in Settings › Timeline (medium = the view's own 64/52); touch mode keeps its taller rows
+    if (!Touch::modeActive()) setTrackHeightStep(TimelineOptions::trackHeight());
     // Snapping on/off is remembered across starts (test runs leave the settings alone)
     connect(tv, &TimelineView::snappingChanged, this, [this](bool on) {
         if (!m_autosaveDisabled) TimelineOptions::setSnapping(on);

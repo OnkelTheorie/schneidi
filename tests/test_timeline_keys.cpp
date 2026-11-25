@@ -198,6 +198,20 @@ void testWindow(const QString& media, const QString& shots)
     CHECK(!p->timeline().video[0].locked && !p->timeline().audio[0].locked);
     CHECK_EQ(p->undoStack()->count(), steps + 2);
 
+    // Track height steps (Timeline View › Track Height): the start = medium (64/52, as before); each step at once,
+    // no undo step (a view, not the project)
+    CHECK_EQ(tv->view().videoTrackHeight, 64);
+    CHECK_EQ(tv->view().audioTrackHeight, 52);
+    action("track_height_large")->trigger();
+    CHECK_EQ(tv->view().videoTrackHeight, 96);
+    CHECK_EQ(tv->view().audioTrackHeight, 78);
+    action("track_height_small")->trigger();
+    CHECK_EQ(tv->view().videoTrackHeight, 44);
+    CHECK_EQ(tv->view().audioTrackHeight, 36);
+    action("track_height_medium")->trigger();
+    CHECK_EQ(tv->view().videoTrackHeight, 64);
+    CHECK_EQ(p->undoStack()->count(), steps + 2);
+
     if (media.isEmpty()) return;
     // V1/A1: three pieces of the clip with spare material on both sides (frames 25-74, 100-149, 175-224 of 250)
     w.importFiles({media}, false);

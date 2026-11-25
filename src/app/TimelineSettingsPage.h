@@ -39,6 +39,7 @@ public:
     TimelineOptions::Thumbnails thumbnails() const; // pictures on video clips
     TimelineOptions::WaveShape waveShape() const;
     TimelineOptions::WaveScale waveScale() const;
+    TimelineOptions::TrackHeight trackHeight() const; // the tracks' height at the start
     int snapTargets() const;                        // TimelineOptions::SnapTarget flags
     double stillSeconds() const;                    // default length of new stills
     double transitionSeconds() const;               // default length of new transitions
@@ -64,6 +65,7 @@ private:
     QComboBox* m_thumbnails = nullptr;
     QComboBox* m_waveShape = nullptr;
     QComboBox* m_waveScale = nullptr;
+    QComboBox* m_trackHeight = nullptr;
     QVector<QPair<int, QCheckBox*>> m_snapTargets;
     QComboBox* m_snapReach = nullptr;
     QDoubleSpinBox* m_stillSeconds = nullptr;

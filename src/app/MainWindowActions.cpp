@@ -622,6 +622,12 @@ void MainWindow::buildActions()
     m_timeline->setOverviewOnPage(m_page == Page::Edit);
     connect(m_pages, &QStackedWidget::currentChanged, m_timeline,
             [this] { m_timeline->setOverviewOnPage(m_page == Page::Edit); });
+    // Track height in three steps (the wheel changes it freely from there; the start height: Settings › Timeline)
+    QMenu* heightMenu = viewOpts->addMenu(T("Spurhöhe"));
+    for (const auto& [id, text, step] : {std::tuple{"track_height_small", T("Klein"), TimelineOptions::TrackHeight::Small},
+                                         std::tuple{"track_height_medium", T("Mittel"), TimelineOptions::TrackHeight::Medium},
+                                         std::tuple{"track_height_large", T("Groß"), TimelineOptions::TrackHeight::Large}})
+        makeAction(heightMenu, id, text, QKeySequence(), [this, step] { setTrackHeightStep(step); });
     viewOpts->addSeparator();
     // On the Studio page the keys zoom its tracks (their own view), elsewhere the timeline
     const auto zoom = [this, tv](double factor) {
