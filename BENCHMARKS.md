@@ -66,6 +66,7 @@ large project, all threads: s / peak RAM (MB) | memory peak / after giving back 
 | 0.20.0 (4208f321) [f] | 2026-11-09 | 1.0 | 403 / 385 | 0.43 | 32.3 / 33.6 | 134 / 228 | 60.2 / 23.8 | 1.88 | 37.83 / 1552 | 1167 / 635 | 19.57 / 30.86 |
 | 0.21.0 (c83ad1cc) [g] | 2026-11-12 | 0.8 | 399 / 394 | 0.31 | 32.1 / 33.2 | 127 / 218 | 57.1 / 19.0 | 2.16 | 38.45 / 1549 | 1165 / 652 | 19.51 / 31.03 |
 | 0.25.0 (2c88f113) [h] | 2026-11-21 | 0.4 | 224 / 223 | 0.32 | 31.7 / 33.1 | 133 / 241 | 56.9 / 23.7 | 1.96 | 39.07 / 1927 | 1166 / 635 | 19.26 / 30.93 |
+| 0.26.0 (d61bf445) [i] | 2026-11-25 | 0.5 | 249 / 241 | 0.44 | 31.9 / 33.2 | 115 / 241 | 58 / 20.2 | 2.18 | 38.9 / 1568 | 1177 / 636 | 19.11 / 30.98 |
 
 Notes on rows:
 
@@ -78,6 +79,9 @@ Notes on rows:
   (stable under load) are usable. The other [b] rows were also started under load; a repeat in quiet conditions of the
   second one gave 2.1 s / 37.0 s (render) and 1659 MB (large project); 0.16.1 shows no sign of the load in its times.
 - **[c]** Partial run (startup and render only), in quiet conditions.
+- **[i]** Probe (0.44 ms) and the small project's render (2.18 s, peak 1034 MB instead of 698 MB) came out worse than
+  0.25.0 in this run; a second run of only these two steps right after gave 0.36 ms, 1.99 s and 703 MB, so run-to-run
+  noise, not a slowdown.
 - The longest playback gap of 40.2 ms in the "0.15.0 + speed fixes" row was one gap at a cut (frame 450); it was 19.9 ms
   in the 0.15.0 release run.
 - Peak RAM of the large project jumps between about 1550 MB and about 1900 MB from run to run on both 0.15.1 and 0.16.0
