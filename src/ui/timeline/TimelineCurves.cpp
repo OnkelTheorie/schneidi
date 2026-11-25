@@ -404,6 +404,11 @@ bool TimelineView::curvePress(QMouseEvent* e, const QPoint& pos)
     const int t = k[h->index].frame - c->in;
     if (h->part == 0) {
         QSet<int> times = sel->keyClip() == h->clipId && sel->keyParam() == int(h->param) ? sel->keyTimes() : QSet<int>{};
+        // only points inside the clip now: after a trim (or an undo) selected times can lie outside it
+        times.removeIf([&](int s) {
+            return s < 0 || s >= c->length()
+                || std::none_of(k.begin(), k.end(), [&](const Keyframe& key) { return key.frame - c->in == s; });
+        });
         const bool ctrl = e->modifiers() & Qt::ControlModifier; // Shift = one axis while dragging
         if (ctrl && times.contains(t)) times.remove(t);
         else if (ctrl) times.insert(t);
@@ -457,7 +462,7 @@ void TimelineView::curveMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         if (delta != 0) delta += keySnapDelta(*c, {grabbed.frame - c->in + delta}, times);
         const int lo = *std::min_element(times.begin(), times.end());
         const int hi = *std::max_element(times.begin(), times.end());
-        delta = std::clamp(delta, -lo, c->length() - 1 - hi);
+        delta = std::max(-lo, std::min(delta, c->length() - 1 - hi)); // not std::clamp: lo > hi would be undefined
         KeyTrack moved, kept;
         for (Keyframe key : m_curveOrig) {
             if (times.contains(key.frame - c->in)) {

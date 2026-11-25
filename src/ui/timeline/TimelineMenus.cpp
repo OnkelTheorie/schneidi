@@ -228,9 +228,12 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e)
         Selection* sel = m_editor->selection();
         if (sel->keyClip() != k->clipId || sel->keyParam() >= 0 || !sel->keyTimes().contains(k->t))
             sel->setKeyframes(k->clipId, {k->t});
-        const QVector<int> times = sel->keyTimes().values().toVector();
         const Clip* c = TimelineOps::findClip(m_editor->project()->timeline(), k->clipId);
         if (!c) return;
+        // only keys inside the clip now: a selected time a trim left outside it is not shown, so not changed either
+        QVector<int> times = sel->keyTimes().values().toVector();
+        const QVector<int> now = Keys::keyTimes(*c);
+        times.removeIf([&](int t) { return t < 0 || t >= c->length() || !now.contains(t); });
         std::optional<KeyEase> current;
         for (const KeyTrack& track : c->keys)
             for (const Keyframe& kf : track)
