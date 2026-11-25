@@ -207,8 +207,6 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
     if (!platform) fail("BAD_ARGUMENT", "for must be shorts, reels or tiktok (the platform)");
     if (platform->maxSeconds < pick.maxS) pick.maxS = platform->maxSeconds;
     pick.minS = std::min(pick.minS, pick.maxS);
-    // Sound of the recordings: game (default: only the game sound of multi-stream recordings), all, or streams
-    const QString streamChoice = a.contains("audio_stream") ? a["audio_stream"].toVariant().toString().trimmed() : QString("game");
     const GameHud::Game* game = nullptr;
     const bool noGame = a.contains("game") && a["game"].toString().trimmed().compare("none", Qt::CaseInsensitive) == 0;
     if (a.contains("game") && !noGame) {
