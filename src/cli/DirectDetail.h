@@ -152,6 +152,8 @@ QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, Co
 // The other installed whisper model for the check: large-v3 -> turbo, turbo -> large-v3, else the best other one;
 // empty = none (never downloads)
 QString checkModelFor(const QString& mainModel);
+// captions_check as given (auto, on, off, a boolean or nothing): anything else is BAD_ARGUMENT ("<name> must be …")
+void checkCaptionsCheck(const QJsonValue& v, const char* name);
 // A model fast enough for the check on a CPU: not a large one, or turbo
 bool fastCheckModel(const QString& model);
 // Whether check "auto" runs: nothing to transcribe (all cached), whisper on a GPU, or a fast model under 60 s of sound

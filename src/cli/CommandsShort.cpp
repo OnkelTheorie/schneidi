@@ -89,6 +89,14 @@ QString checkModelFor(const QString& mainModel)
     return {};
 }
 
+void checkCaptionsCheck(const QJsonValue& v, const char* name)
+{
+    if (v.isUndefined() || v.isNull() || v.isBool()) return;
+    const QString t = v.toString().trimmed().toLower();
+    if (!v.isString() || !(t.isEmpty() || t == QLatin1String("auto") || t == QLatin1String("on") || t == QLatin1String("off")))
+        fail("BAD_ARGUMENT", QString("%1 must be auto, on or off").arg(QLatin1String(name)));
+}
+
 bool fastCheckModel(const QString& model)
 {
     const QString name = QFileInfo(model).fileName();
@@ -508,6 +516,7 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
     // Effect sounds: none unless asked for (never by itself on every cut)
     const QString sfx = a.contains("sfx") ? a["sfx"].toString().trimmed().toLower() : QString("off");
     if (!QStringList{"off", "mild"}.contains(sfx)) fail("BAD_ARGUMENT", "sfx must be off or mild");
+    checkCaptionsCheck(a["captions_check"], "captions_check");
     const ShortPlatform* platform = shortPlatform(a.contains("for") ? a["for"].toString() : QString("shorts"));
     if (!platform) fail("BAD_ARGUMENT", "for must be shorts, reels or tiktok (the platform)");
     if (platform->maxSeconds < pick.maxS) pick.maxS = platform->maxSeconds;

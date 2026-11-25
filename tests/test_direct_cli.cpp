@@ -1438,6 +1438,17 @@ int main(int argc, char** argv)
         Q_UNUSED(target);
     }
 
+    // ---- captions_check: a wrong value is refused (it fell back to the setting without a word), the finish's answer
+    // field is in the help
+    {
+        CHECK_EQ(run("direct", {{"recipe", "short"}, {"files", QJsonArray{clip}}, {"options", QJsonObject{{"captions_check", "maybe"}}}})["error"].toString(),
+                 QString("BAD_ARGUMENT"));
+        CHECK_EQ(run("short", {{"files", QJsonArray{clip}}, {"captions_check", "maybe"}})["error"].toString(), QString("BAD_ARGUMENT"));
+        CHECK_EQ(run("direct", {{"project", dir.filePath("none.schneidi")}, {"finish", QJsonObject{{"timeline", "Short"}, {"captions_check", "ja"}}}})["error"].toString(),
+                 QString("BAD_ARGUMENT"));
+        CHECK(QJsonDocument(run("help", {{"command", "direct"}})).toJson().contains("captions_left_out"));
+    }
+
     // ---- The game seen in the picture: cached with the detector's version (a result of an older detector is not
     // taken: here one that "saw" cs2 in a holiday clip)
     {

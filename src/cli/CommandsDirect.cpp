@@ -110,6 +110,7 @@ void checkOptions(QJsonObject& o, const QString& recipe)
                                      .arg(k, QLatin1String(k) == QLatin1String("length_s") ? " or 'all'" : ""));
         o[k] = x;
     }
+    checkCaptionsCheck(o.value("captions_check"), "options.captions_check");
     for (const char* k : {"variants", "takes"}) {
         const QJsonValue v = o.value(k);
         if (!o.contains(k) || v.isNull()) continue;
@@ -1341,6 +1342,7 @@ QJsonObject cmdDirect(const QJsonObject& a, Context& ctx)
         sf.sfx = f["sfx"].toString("off").trimmed().toLower();
         if (!QStringList{"karaoke", "word", "off"}.contains(sf.captions)) fail("BAD_ARGUMENT", "captions must be karaoke, word or off");
         if (!QStringList{"off", "mild"}.contains(sf.sfx)) fail("BAD_ARGUMENT", "sfx must be off or mild");
+        checkCaptionsCheck(f["captions_check"], "finish.captions_check");
         // The game as the short's session saw it (given, or from the recordings' folder/name): hits on its kills
         QString game = f["game"].toString();
         QJsonValue terms = f["game_terms"];
