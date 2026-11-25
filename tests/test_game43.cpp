@@ -31,6 +31,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
@@ -39,6 +40,7 @@
 #include <QUndoStack>
 #include <clocale>
 #include <cmath>
+#include <cstring>
 #include <thread>
 
 namespace {
@@ -617,6 +619,22 @@ void testLayout(const QString& stretched)
         ClipSpeedDialog normal({1.0, false, false, true, FrameInterp::Flow}, 100, 25, nullptr);
         if (auto* interp = normal.findChild<QComboBox*>("FrameInterp"); CHECK(interp))
             CHECK(!interp->isEnabled()); // only matters in slow motion
+        if (std::strcmp(lang, "de") == 0) {
+            // An exact speed the fields round (1/3 = 33.3 %) stays exact when only a check box changes, and typing
+            // 20 fps in 60 fps gives exactly 1/3 too (the length with ripple would change by rounding)
+            ClipSpeedDialog third({1.0 / 3, false, false, false, FrameInterp::Repeat}, 600, 60, nullptr);
+            for (QCheckBox* box : third.findChildren<QCheckBox*>())
+                if (box->text() == T("Rückwärts")) box->setChecked(true);
+            CHECK_EQ(third.retime().speed, 1.0 / 3);
+            CHECK(third.retime().reverse);
+            const QList<QDoubleSpinBox*> fields = third.findChildren<QDoubleSpinBox*>();
+            if (CHECK_EQ(fields.size(), 2)) {
+                fields[0]->setValue(50);
+                CHECK_EQ(third.retime().speed, 0.5);
+                fields[1]->setValue(20);
+                CHECK_EQ(third.retime().speed, 20.0 / 60);
+            }
+        }
         ClipSpeedDialog speed({0.5, false, false, true, FrameInterp::Flow}, 100, 25, nullptr);
         speed.show();
         QCoreApplication::processEvents();

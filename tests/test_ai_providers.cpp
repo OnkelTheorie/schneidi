@@ -378,6 +378,14 @@ void testBodiesAndErrors()
     CHECK_EQ(r.text, QString("OK"));
     if (CHECK_EQ(r.calls.size(), 1)) CHECK_EQ(r.calls[0].input["y"].toInt(), 2);
     CHECK(Ai::parseBody(Ai::Protocol::OpenAi, {}).calls.isEmpty()); // empty answer: nothing, no crash
+    // A server without call ids: every round's calls get ids of their own (not "call_0" each time)
+    const QJsonObject noId = QJsonDocument::fromJson(R"({"choices":[{"message":{"tool_calls":[{"function":{"name":"info","arguments":"{}"}}]},
+        "finish_reason":"tool_calls"}]})").object();
+    const Ai::Reply first = Ai::parseBody(Ai::Protocol::OpenAi, noId), second = Ai::parseBody(Ai::Protocol::OpenAi, noId);
+    if (CHECK_EQ(first.calls.size(), 1) && CHECK_EQ(second.calls.size(), 1)) {
+        CHECK(!first.calls[0].id.isEmpty());
+        CHECK(first.calls[0].id != second.calls[0].id);
+    }
 
     Ai::Failure f = Ai::httpFailure(401, R"({"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}})");
     CHECK(f.kind == Ai::Failure::Kind::Key);

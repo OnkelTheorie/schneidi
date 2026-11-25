@@ -207,6 +207,11 @@ void testBackgroundThreads()
     Background::setChosenThreads(1);
     CHECK_EQ(Background::threads(6), 1); // the choice wins, also over a larger default
     CHECK_EQ(SettingsDialog(AiSettings{}).backgroundThreads(), 1); // shown again
+    // More than this computer has (settings from a larger one): shown and kept, not stored back as automatic
+    const int many = QThread::idealThreadCount() + 4;
+    Background::setChosenThreads(many);
+    CHECK_EQ(SettingsDialog(AiSettings{}).backgroundThreads(), many);
+    Background::setChosenThreads(1);
 
     // Sound output device: "system default" first, the stored device chosen; a stored device that is not there is
     // still listed (unplugged), so opening and confirming the dialog never switches it away by itself
