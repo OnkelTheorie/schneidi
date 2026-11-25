@@ -179,25 +179,28 @@ QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, Co
         if (!m) continue;
         MediaTranscript t;
         t.audioStream = s.stream;
+        // The longest part first: the language whisper hears there is the stream's, the other parts are heard in it
+        // (a part of only laughter came out as "en", and the check heard every part in that language)
+        QVector<QPair<qint64, qint64>> order = s.parts;
+        std::stable_sort(order.begin(), order.end(),
+                         [](const auto& a, const auto& b) { return a.second - a.first > b.second - b.first; });
+        QString language = v->language;
         bool any = false;
-        for (const auto& [from, to] : std::as_const(s.parts)) {
+        for (const auto& [from, to] : std::as_const(order)) {
             failIfCanceled();
-            const std::optional<QJsonObject> one = streamTranscript(s.file, s.stream, v->language, false, ctx, terms, {}, from, to);
+            const std::optional<QJsonObject> one = streamTranscript(s.file, s.stream, language, false, ctx, terms, {}, from, to);
             if (!one) continue;
-            if (!any) {
-                t.language = (*one)["language"].toString();
-                s.model = (*one)["model"].toString();
-            }
+            if (s.model.isEmpty()) s.model = (*one)["model"].toString();
             any = true;
-            for (const QJsonValue& w : (*one)["words"].toArray())
+            const QJsonArray words = (*one)["words"].toArray();
+            if (language.isEmpty() && !words.isEmpty()) language = (*one)["language"].toString();
+            for (const QJsonValue& w : words)
                 t.words << TranscriptWord{qint64(w[0].toDouble()), qint64(w[1].toDouble()), w[2].toString()};
         }
         if (!any) continue; // whisper could not hear it (not "no speech")
         if (s.model.isEmpty()) s.model = QFileInfo(defaultTranscribeModel()).fileName(); // (an entry from before)
-        if (t.language.isEmpty())
-            for (const auto& [from, to] : std::as_const(s.parts)) // a part without speech names no language
-                if (const auto hit = AnalysisCache::get(streamTranscriptKey(s.file, s.stream, v->language, false, terms, {}, from, to)))
-                    if (const QString l = (*hit)["language"].toString(); !l.isEmpty()) t.language = l;
+        std::sort(t.words.begin(), t.words.end(), [](const TranscriptWord& a, const TranscriptWord& b) { return a.from < b.from; });
+        t.language = language;
         m->transcripts << t;
         ++heard;
     }

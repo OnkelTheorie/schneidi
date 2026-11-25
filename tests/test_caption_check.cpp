@@ -27,22 +27,25 @@ namespace {
 
 int fakeWhisper(int argc, char** argv)
 {
-    QString out, input, model;
+    QString out, input, model, language;
     for (int i = 1; i + 1 < argc; ++i) {
         const QString a = QString::fromLocal8Bit(argv[i]);
         if (a == "-of") out = QString::fromLocal8Bit(argv[i + 1]);
         if (a == "-f") input = QString::fromLocal8Bit(argv[i + 1]);
         if (a == "-m") model = QFileInfo(QString::fromLocal8Bit(argv[i + 1])).fileName();
+        if (a == "-l") language = QString::fromLocal8Bit(argv[i + 1]);
     }
     if (out.isEmpty()) return 0; // a language detection pass: nothing to write
     if (qEnvironmentVariableIsSet("FAKE_WHISPER_FAIL")) return 3;
     const double seconds = std::max<qint64>(0, QFileInfo(input).size() - 44) / 32000.0;
     if (const QString log = qEnvironmentVariable("FAKE_WHISPER_LOG"); !log.isEmpty()) {
         QFile l(log);
-        if (l.open(QIODevice::Append)) l.write(QString("%1 %2\n").arg(model).arg(seconds, 0, 'f', 1).toUtf8());
+        if (l.open(QIODevice::Append)) l.write(QString("%1 %2 %3\n").arg(model).arg(seconds, 0, 'f', 1).arg(language).toUtf8());
     }
+    // A short piece heard without a language: whisper takes it for English (as it did with a part of only laughter)
+    const QString heardIn = language != "auto" ? language : seconds < 12 ? "en" : "de";
     const qint64 mid = qint64(seconds * 500);
-    const QJsonObject json{{"result", QJsonObject{{"language", "de"}}},
+    const QJsonObject json{{"result", QJsonObject{{"language", heardIn}}},
                            {"transcription", QJsonArray{QJsonObject{{"text", model.contains("small") ? " Servus" : " Hallo"},
                                                                     {"offsets", QJsonObject{{"from", mid}, {"to", mid + 800}}}}}}};
     QFile o(out + ".json");
@@ -157,8 +160,8 @@ int main(int argc, char** argv)
         const QStringList runs = takeLog(log);
         if (CHECK_EQ(runs.size(), 1)) {
             CHECK(runs[0].startsWith("ggml-large-v3-q5_0.bin"));
-            const double heard = runs[0].section(' ', 1).toDouble();
-            if (!CHECK(heard > 11 && heard <= 21)) std::printf("       whisper heard %.1f s\n", heard);
+            const double heard = runs[0].section(' ', 1, 1).toDouble();
+            if (!CHECK(heard > 11 && heard <= 21)) std::printf("       whisper: %s\n", qPrintable(runs[0]));
         }
     }
     // The check: "auto" on a processor runs with a fast model and under 60 s of sound to hear (the 20 s part, not
@@ -211,6 +214,22 @@ int main(int argc, char** argv)
         const QStringList keys = finishKeys(p, "off");
         if (!CHECK(keys.contains("error") && !keys.contains("no_captions_speech"))) std::printf("       notes %s\n", qPrintable(keys.join(", ")));
         qunsetenv("FAKE_WHISPER_FAIL");
+    }
+    // Two parts of one recording: the longest heard first, its language for the other one (heard alone, the short
+    // part would be "English")
+    {
+        const QString two = recording("two-parts.mkv");
+        const QString p = projectOf(dir.path(), "two-parts", two, 5, 4, 1);
+        run("edit", {{"project", p}, {"ops", QJsonArray{QJsonObject{{"op", "append"}, {"media", two}, {"in", "40s"}, {"duration", "14s"},
+                                                                  {"audio_only", true}, {"audio_streams", QJsonArray{1}}}}}});
+        takeLog(log);
+        Cli::detail::VoiceCaptions v;
+        Cli::detail::voiceCaptionWords(p, "@current", ctx, &v);
+        const QStringList runs = takeLog(log);
+        if (CHECK_EQ(runs.size(), 2)) {
+            CHECK(runs[0].section(' ', 1, 1).toDouble() > 15 && runs[0].endsWith(" auto"));
+            if (!CHECK(runs[1].section(' ', 1, 1).toDouble() < 12 && runs[1].endsWith(" de"))) std::printf("       %s\n", qPrintable(runs.join(" | ")));
+        }
     }
     // A recording with one sound stream (no voice stream of its own): its timeline sound is checked the same way
     {
