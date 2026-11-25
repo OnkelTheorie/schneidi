@@ -313,6 +313,32 @@ int main(int argc, char** argv)
         CHECK_EQ(run("short", {{"files", QJsonArray{clip}}, {"sfx", "loud"}})["error"].toString(), QString("BAD_ARGUMENT"));
         CHECK(QJsonDocument(again["done"].toArray()).toJson().contains("kill feed of cs2")); // game from the folder
         CHECK_EQ(run("short", {{"files", QJsonArray{clip}}, {"out", out}})["error"].toString(), QString("EXISTS"));
+        // The free project name taken between choosing it and `new` (another short of the same video): made by the
+        // stage callback when `new` starts. The next free name is taken; the other file stays as it was
+        {
+            const QString taken = dir.filePath("out/race.schneidi");
+            Cli::Context ctx;
+            bool planted = false;
+            ctx.stage = [&](const QString& stage) {
+                if (stage != QLatin1String("new") || planted) return;
+                planted = true;
+                QFile f(taken);
+                CHECK(f.open(QIODevice::WriteOnly));
+                f.write("someone else's");
+            };
+            const Cli::Command* cmd = Cli::find("short");
+            QJsonObject raced;
+            try {
+                raced = Cli::execute(*cmd, Cli::normalize(*cmd, {{"files", QJsonArray{clip}}, {"captions", "off"}, {"game", "none"},
+                                                                 {"max_s", 20}, {"out", dir.filePath("out/race.mp4")}}), ctx);
+            } catch (const Cli::Error& e) {
+                std::printf("       short (race): %s %s\n", qPrintable(e.code), qPrintable(e.message));
+            }
+            CHECK(planted);
+            CHECK_EQ(raced["project"].toString(), dir.filePath("out/race-2.schneidi"));
+            QFile f(taken);
+            CHECK(f.open(QIODevice::ReadOnly) && f.readAll() == "someone else's");
+        }
         // An existing timeline as the cut
         const QJsonObject fromTimeline =
             run("short", {{"project", proj}, {"timeline", "Short-Schnitt"}, {"captions", "off"}, {"for", "tiktok"},

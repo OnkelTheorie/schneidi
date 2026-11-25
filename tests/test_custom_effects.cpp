@@ -135,6 +135,37 @@ void filterOnPixels()
         CHECK(PC::applyFilter("fade=t=out:st=1:d=1", before.data(), w, h, 0.5));
         CHECK(before == src && out != src);
     }
+    // A time inside a fade gives the same picture whether reached frame by frame, after a jump back from behind the
+    // fade, or first thing on a fresh thread (a fresh cached graph): the fade goes by the clip time only
+    {
+        const char* chain = "fade=t=in:st=1:d=2";
+        const std::vector<uint8_t> src = gradient(w, h);
+        std::vector<uint8_t> forward = src;
+        for (double t : {0.0, 0.5, 1.0, 1.5}) {
+            std::vector<uint8_t> px = src;
+            CHECK(PC::applyFilter(chain, px.data(), w, h, t));
+        }
+        CHECK(PC::applyFilter(chain, forward.data(), w, h, 2.0));
+        std::vector<uint8_t> after = src, back = src, fresh = src;
+        CHECK(PC::applyFilter(chain, after.data(), w, h, 3.5));
+        CHECK(PC::applyFilter(chain, back.data(), w, h, 2.0));
+        bool freshOk = false;
+        std::thread([&] { freshOk = PC::applyFilter(chain, fresh.data(), w, h, 2.0); }).join();
+        CHECK(freshOk);
+        CHECK(forward != src && forward != std::vector<uint8_t>(src.size(), 0)); // half way: neither black nor full
+        CHECK(back == forward);
+        CHECK(fresh == forward);
+        CHECK(after == src);
+    }
+    // fade's frame form counts the cached graph's frames, not the clip's: refused, the message names st and d
+    for (const char* chain : {"fade=in:0:30", "fade=t=in:s=5:n=10", "fade=t=out:start_frame=3:nb_frames=4",
+                              "fade=t=in:st=1", "fade=t=in:st=0:d=1:n=10", "fade=t=in:d=0"}) {
+        QString why;
+        std::vector<uint8_t> px = gradient(w, h);
+        CHECK(!PC::applyFilter(chain, px.data(), w, h, 0.0, &why));
+        if (!CHECK(why.contains("counts frames") && why.contains("st and d")))
+            std::printf("       %s: %s\n", chain, qPrintable(why));
+    }
     // Frame numbers in expressions count the cached graph's frames, not the clip's: refused (t is the time)
     for (const char* chain : {"hue=h=n*5", "rotate=a=n/50", "geq=lum='N':cb=128:cr=128", "crop=w=iw/2:x=n",
                               "hue=enable='gt(n,3)':s=0"}) {
