@@ -80,6 +80,9 @@ public:
     }
     void setSquare(bool on)
     {
+        // (called with every frame of a playing centre-mode timeline: a repaint each time made the timeline under the
+        // non-opaque tile paint again too)
+        if (m_square == on) return;
         m_square = on;
         setToolTip(on ? text() : QString());
         update();
@@ -850,8 +853,10 @@ void MainWindow::updateAddMediaButton()
         const int side = std::min(lane.height() - 16, 36);
         tile->setGeometry(lane.right() - side - 6, lane.top() + (lane.height() - side) / 2, side, side);
     }
-    tile->show();
-    tile->raise();
+    if (tile->isHidden()) {
+        tile->show();
+        tile->raise();
+    }
 }
 
 void MainWindow::openGallery()
