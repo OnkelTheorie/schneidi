@@ -524,8 +524,8 @@ CutoutRun cutoutNode(const ProjectFormat& format, const Clip& c, int node, int f
         }
         given = &*own;
     }
-    from = std::clamp(from, 0, c.length() - 1);
-    to = std::clamp(to, 0, c.length() - 1);
+    from = std::clamp(from, 0, std::max(0, c.length() - 1)); // max: a zero length clip would clamp to -1 (undefined)
+    to = std::clamp(to, 0, std::max(0, c.length() - 1));
     if (to < from) std::swap(from, to);
     const auto source = Tracker::clipPictures(format, c);
     return cutoutFrames([&](int f) { return source(f, kAnalysisEdge); }, from, to, *given,
