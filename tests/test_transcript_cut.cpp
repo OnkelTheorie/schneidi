@@ -155,6 +155,10 @@ void testPanel()
     QObject::connect(&panel, &TranscriptPanel::seekRequested, [&](int frame) { seek = frame; });
     panel.selectWords(2, 3);
     CHECK(panel.cutSelection());
+    // A second cut key before the queued rebuild: the old selection cuts nothing (review ui-03)
+    const int steps = f.project.undoStack()->index();
+    CHECK(!panel.cutSelection());
+    CHECK_EQ(f.project.undoStack()->index(), steps);
     QCoreApplication::processEvents();
     CHECK_EQ(seek, 65);
     CHECK_EQ(panel.words().size(), 4);
