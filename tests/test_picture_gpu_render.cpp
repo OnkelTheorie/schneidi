@@ -595,6 +595,21 @@ int main(int argc, char** argv)
              "-c:v", "libx264", "-preset", "ultrafast", "-qp", "0", "-flags", "+ildct+ilme", "-x264-params", "tff=1",
              "-field_order", "tt"});
         if (CHECK(!il.isEmpty())) same("interlaced 4:2:0", oneTrack({media(1, il, 0, 20)}), {3}, 1.5, 30);
+        // Interlaced sources are deinterlaced by the reader (bwdif): the card draws the same deinterlaced picture as
+        // the CPU - a moving bar (combing if either side got the woven fields), also scaled down as in the preview
+        const QString bar = Check::makeMedia(
+            tmp.filePath("interlaced-bar.mp4"),
+            {"-f", "lavfi", "-i",
+             "color=c=black:size=1280x720:rate=50:duration=1.04,format=yuv420p,"
+             "geq=lum='if(lt(mod(X+N*12\\,1280)\\,96)\\,235\\,16)':cb='if(lt(mod(X+N*12\\,1280)\\,96)\\,90\\,128)':cr=128,"
+             "tinterlace=mode=interleave_top,setfield=tff",
+             "-frames:v", "25", "-flags", "+ilme+ildct", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "8",
+             "-pix_fmt", "yuv420p"});
+        if (CHECK(!bar.isEmpty())) {
+            same("deinterlaced moving bar", oneTrack({media(1, bar, 0, 20)}), {3, 10}, 1.5, 30);
+            same("deinterlaced bar, preview", oneTrack({media(1, bar, 0, 20)}), {10}, 1.5, 30, Picture::Mode::Preview,
+                 QSize(640, 360));
+        }
     }
 
     // The card lost (driver reset, GPU removed): the frame whose end reported it goes the CPU way, not the stale pixels
