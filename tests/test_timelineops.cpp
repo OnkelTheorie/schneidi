@@ -365,6 +365,15 @@ int main(int argc, char** argv)
         tl.video[0].clips << title;
         CHECK_EQ(clampTrim(tl, {3}, Edge::Start, -50, kSrc), -50);
         CHECK_EQ(clampTrim(tl, {3}, Edge::End, 5000, kSrc), 5000);
+        // Review 2026-11-25 (F2): a clip that reaches past its material (a nested timeline got shorter, a file was
+        // relinked to a shorter one) is trimmed by what was asked when it gets shorter, never cut back to the
+        // material in one step; it cannot grow
+        Timeline past = tracks(1, 0);
+        past.video[0].clips << mk(5, "p", 0, 300); // out 299, the file has 200 frames
+        CHECK_EQ(clampTrim(past, {5}, Edge::End, -1, kSrc), -1);
+        CHECK_EQ(clampTrim(past, {5}, Edge::End, 1, kSrc), 0);
+        trimClips(past, {5}, Edge::End, -10, kSrc);
+        CHECK_EQ(dump(past), QString("V1: p[0-290|0-289]"));
     }
 
     // --- Trim mode: Ripple, Roll, Slip, Slide

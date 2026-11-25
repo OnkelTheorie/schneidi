@@ -740,7 +740,9 @@ int clampTrim(const Timeline& tl, const QVector<int>& clipIds, Edge edge, int de
             delta = std::min(delta, c->length() - 1);     // at least 1 frame
         } else {
             const int len = sourceLength ? sourceLength(*c) : 0;
-            if (len > 0) delta = std::min(delta, len - 1 - c->out);
+            // Not past the end of the material - only growth is limited: a clip that already reaches past it (a
+            // nested timeline got shorter, a file was relinked to a shorter one) shortens by what was asked
+            if (len > 0 && delta > 0) delta = std::min(delta, std::max(0, len - 1 - c->out));
             if (idx + 1 < clips.size() && !overwrite) delta = std::min(delta, clips[idx + 1].start - c->end());
             delta = std::max(delta, 1 - c->length());
         }
