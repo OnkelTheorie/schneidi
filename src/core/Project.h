@@ -329,6 +329,10 @@ private:
     QVector<GradeStill> m_stills;
     QJsonObject m_direction;
     QHash<QString, QString> m_missingAt; // ProjectData::missingAt, carried from load to save
+    // How the timelines were shown when the file was read (zoom, scroll, playhead): carried to the next save, so a
+    // CLI/MCP edit of a closed project does not reset them (the app saves its own instead)
+    QVector<SavedView> m_views;
+    int m_playhead = 0;
     std::optional<TemplateInfo> m_templateInfo;
     int m_lastBinId = 0;
     // Files imported (outside the undo history) into a bin that an undo then removed: their bin, so that the redo

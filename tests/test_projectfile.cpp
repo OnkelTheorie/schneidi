@@ -364,6 +364,33 @@ void testMovedBeforeMedia(const QString& root)
     CHECK(f.readAll().contains("\"relPath\": \"moved-b/media/x.mp4\""));
 }
 
+// A CLI/MCP edit of a closed project loads it into a Project and saves Project::data(): the saved views (zoom, scroll,
+// playhead per timeline) and the playhead stay as they were (they were dropped: the app opened zoomed to fit at 0)
+void testViewsKept(const QString& dir)
+{
+    ProjectData d;
+    d.timeline.video.resize(1);
+    d.timeline.audio.resize(1);
+    Sequence seq;
+    seq.id = 1;
+    seq.name = "Timeline 1";
+    seq.timeline = d.timeline;
+    d.sequences << seq;
+    d.currentSequence = 1;
+    d.playhead = 123;
+    d.views << SavedView{1, 2.5, 40, 12, 123} << SavedView{7, 1.5, 0, 0, 5}; // 7: a timeline that is gone
+    const QString path = dir + "/views.schneidi";
+    QString err;
+    CHECK(ProjectFile::save(d, path, &err));
+    ProjectData loaded;
+    CHECK(ProjectFile::load(path, &loaded, &err));
+    Project p;
+    p.load(loaded);
+    const ProjectData back = p.data();
+    CHECK_EQ(back.playhead, 123);
+    if (CHECK_EQ(back.views.size(), 1)) CHECK(back.views[0] == (SavedView{1, 2.5, 40, 12, 123}));
+}
+
 // The write lock: an old lock of a running holder stays taken (a long CLI session), the lock of a process
 // that is gone is taken over
 void testLock(const QString& dir)
@@ -457,6 +484,7 @@ int main(int argc, char** argv)
     testBackups(dir);
     testLock(dir);
     testMovedBeforeMedia(tmp.path());
+    testViewsKept(dir);
 
     // --- Save -> load -> save identical, all values equal
     const ProjectData orig = fullProject(dir);

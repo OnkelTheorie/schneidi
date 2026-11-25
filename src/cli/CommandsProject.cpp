@@ -453,6 +453,8 @@ QByteArray planBase(const Session& s, const QString& path)
 {
     ProjectData d = Live::host() ? Live::host()->liveProject()->data() : s.project.data();
     d.playhead = 0;
+    d.views.clear();     // UI state carried from the file (Project::data), as the playhead
+    d.missingAt.clear(); // where missing files were expected when read: no part of the edit
     d.renderQueue.clear();
     d.currentSequence = -1; // every timeline in "sequences"
     d.timeline = emptyTimeline();

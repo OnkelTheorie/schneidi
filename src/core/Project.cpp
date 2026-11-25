@@ -331,6 +331,10 @@ ProjectData Project::data() const
     d.watchLog = m_watchLog;
     d.watchRevision = m_watchRevision;
     d.missingAt = m_missingAt;
+    d.playhead = m_playhead;
+    for (const SavedView& v : m_views) // of timelines still there
+        if (std::any_of(m_sequences.cbegin(), m_sequences.cend(), [&](const Sequence& s) { return s.id == v.sequence; }))
+            d.views << v;
     return d;
 }
 
@@ -422,6 +426,8 @@ void Project::load(const ProjectData& d)
     m_stills = d.stills;
     m_direction = d.direction;
     m_missingAt = d.missingAt;
+    m_views = d.views;
+    m_playhead = d.playhead;
     m_templateInfo = d.templateInfo;
     m_watchFolders = d.watchFolders;
     for (WatchFolder& w : m_watchFolders)
