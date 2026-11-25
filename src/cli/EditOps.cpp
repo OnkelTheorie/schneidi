@@ -1080,7 +1080,16 @@ void opRemoveTrack(Session& s, const QJsonObject& op)
     QJsonArray given = op.value("tracks").toArray();
     if (given.isEmpty()) given = op.value("track").isArray() ? op.value("track").toArray() : QJsonArray{op.value("track")};
     QVector<TrackRef> refs;
+    QVector<int> subs; // subtitle tracks (ST1 …) in the list: were looked up as track names, "no track 'ST1'"
     for (const QJsonValue& v : given) {
+        if (const QString st = v.toString().trimmed().toUpper(); st.startsWith("ST") && st.mid(2).toInt() > 0) {
+            const int index = st.mid(2).toInt() - 1;
+            if (index >= s.project.timeline().subtitles.size()) fail("NOT_FOUND", "no subtitle track " + st);
+            if (s.project.timeline().subtitles[index].locked)
+                fail("FAILED", "cannot remove subtitle track " + st + ": it is locked");
+            if (!subs.contains(index)) subs << index;
+            continue;
+        }
         TrackKind k = TrackKind::Video;
         const int index = parseTrackIn(s.project.timeline(), v, &k);
         if (!refs.contains(TrackRef{k, index})) refs << TrackRef{k, index};
@@ -1108,6 +1117,8 @@ void opRemoveTrack(Session& s, const QJsonObject& op)
     }
     std::sort(refs.begin(), refs.end(), [](const TrackRef& a, const TrackRef& b) { return a.index > b.index; });
     for (const TrackRef& r : refs) s.editor.removeTrack(r);
+    std::sort(subs.begin(), subs.end(), std::greater<int>()); // named before any goes, as the others
+    for (int index : subs) s.editor.removeSubtitleTrack(index);
 }
 
 // Details of the ops that place source ranges (import presets, core/StreamPresets.h)
@@ -1281,7 +1292,7 @@ QVector<OpDef> makeOps()
          {}, opAddTrack},
         {"remove_track", "{op:'remove_track', track} or {op:'remove_track', tracks:[…]}",
          "remove tracks with their clips (V1/A2 or a track's name like 'Mix'; not the last one of a kind; ST1 … = "
-         "subtitle tracks)",
+         "subtitle tracks, also in tracks:[…])",
          "Track names are those of the timeline when the op runs: after removing A1 the old A2 is A1, so a second op "
          "{track:'A5'} means the track that was A6. Several tracks in ONE op (tracks:['A1','A2','A5'] or "
          "track:[…]) are all named as they are before it and removed together.",

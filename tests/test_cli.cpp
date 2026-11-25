@@ -2690,6 +2690,14 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK_EQ(audioTracks(), before - 3);
         CHECK(messageOf("edit", {{"project", proj}, {"ops", R"([{"op":"remove_track","tracks":["V1","V2"]}])"}})
                   .contains("a timeline keeps at least one video track"));
+        // Subtitle tracks in the list too (review 25.11.: "ST1" in tracks:[…] was "no track 'ST1'")
+        ed(R"([{"op":"add_subtitle_track","name":"DE"},{"op":"add_subtitle_track","name":"FR"}])");
+        const auto subtitleTracks = [&] { return int(run("info", {{"project", proj}})["timeline"]["subtitles"].toArray().size()); };
+        const int subs = subtitleTracks();
+        CHECK(subs >= 2);
+        ed(R"([{"op":"remove_track","tracks":["ST1","ST2","A1"]}])");
+        CHECK_EQ(subtitleTracks(), subs - 2);
+        CHECK_EQ(audioTracks(), before - 4);
     }
     // A project loaded from its file keeps no undo history: every op kept a snapshot of the whole timeline, so an
     // edit with a thousand appends took over a gigabyte and 3000 ran out of memory
