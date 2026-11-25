@@ -191,6 +191,14 @@ int parseTime(const QJsonValue& v, const ProjectFormat& fmt, const QString& what
          QString("%1: '%2' is not a time (use frames, \"4.5s\", \"MM:SS\" or \"HH:MM:SS:FF\")").arg(what, s));
 }
 
+int parseSignedTime(const QJsonValue& v, const ProjectFormat& fmt, const QString& what)
+{
+    if (v.isUndefined()) return 0;
+    if (v.isDouble() && v.toDouble() < 0) return -parseTime(QJsonValue(-v.toDouble()), fmt, what);
+    if (v.isString() && v.toString().trimmed().startsWith('-')) return -parseTime(v.toString().trimmed().mid(1), fmt, what);
+    return parseTime(v, fmt, what);
+}
+
 QString tc(int frames, const ProjectFormat& fmt) { return Timecode::format(frames, fmt.rate.timebase()); }
 double seconds(int frames, const ProjectFormat& fmt) { return std::round(frames / fmt.rate.fps() * 1000) / 1000; }
 

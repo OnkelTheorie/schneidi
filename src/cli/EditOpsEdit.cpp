@@ -374,10 +374,7 @@ void opTrim(Session& s, const QJsonObject& op)
     if (edgeName != "start" && edgeName != "end") fail("BAD_ARGUMENT", "edge must be 'start' or 'end'");
     const TimelineOps::Edge edge = edgeName == "start" ? TimelineOps::Edge::Start : TimelineOps::Edge::End;
     const QJsonValue by = op.value("by");
-    int delta = 0;
-    if (by.isDouble()) delta = by.toInt();
-    else if (by.isString() && by.toString().startsWith('-')) delta = -parseTime(by.toString().mid(1), s.format(), "by");
-    else if (by.isString()) delta = parseTime(by, s.format(), "by");
+    int delta = parseSignedTime(by, s.format(), "by");
     if (mode == "normal") {
         if (op.contains("to")) delta = timeOf(s, op, "to") - (edge == TimelineOps::Edge::Start ? c.start : c.end());
         const int id = c.id, startBefore = c.start, endBefore = c.end();

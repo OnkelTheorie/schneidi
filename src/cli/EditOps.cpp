@@ -716,10 +716,7 @@ void opEnable(Session& s, const QJsonObject& op, bool on)
 void opMove(Session& s, const QJsonObject& op)
 {
     const QJsonValue by = op.value("by");
-    int delta = 0;
-    if (by.isDouble()) delta = by.toInt();
-    else if (by.isString() && by.toString().startsWith('-')) delta = -parseTime(by.toString().mid(1), s.format(), "by");
-    else if (by.isString()) delta = parseTime(by, s.format(), "by");
+    int delta = parseSignedTime(by, s.format(), "by");
     const QVector<int> ids = clipIds(s, op);
     if (op.contains("to")) delta = timeOf(s, op, "to") - clipOf(s, {{"clip", ids.first()}}).start;
     const int trackDelta = op.value("track_delta").toInt();

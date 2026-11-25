@@ -1018,6 +1018,12 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
             CHECK(tracks[1]["name"].toString() != QString("Titles"));
             CHECK(tracks[1]["locked"].toBool());
         }
+        // trim/move 'by' as 2.5 (meant: seconds) or true did nothing and answered ok: refused like other times
+        for (const char* op : {R"({"op":"trim","clip":%1,"by":2.5})", R"({"op":"trim","clip":%1,"by":true})",
+                               R"({"op":"move","clips":[%1],"by":-1.5})"}) {
+            const QString msg = messageOf("edit", {{"project", g_path}, {"ops", QString("[%1]").arg(QString(op).arg(ids()[0]))}});
+            Check::report(msg.startsWith("BAD_ARGUMENT") && msg.contains("by"), qPrintable(msg), __FILE__, __LINE__);
+        }
         // Unlink: moving the video leaves the audio
         c = ids();
         ed(QString(R"([{"op":"unlink","clips":[%1]},{"op":"move","clips":[%1],"by":5}])").arg(c[0]));
