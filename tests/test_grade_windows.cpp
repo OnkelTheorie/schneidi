@@ -630,6 +630,20 @@ void testTrack(const QString& media)
     CHECK(!panel.tracking());
     t = TimelineOps::findClip(p.timeline(), id);
     CHECK_EQ(Keys::keyTimes(*t, {GradeWindows::param(1, "x")}).size(), 1);
+    // The clip slipped while tracking: the path was measured on the frames it showed then (keys are source frames, they
+    // would land shifted) -> dropped
+    panel.startTracking(true);
+    if (QThread* worker = panel.findChild<QThread*>()) worker->wait(120000);
+    p.edit("slip", [&](Timeline& tl) {
+        Clip* c = TimelineOps::findClip(tl, id);
+        c->in += 2;
+        c->out += 2;
+    });
+    const auto keysBefore = Keys::keyTimes(*TimelineOps::findClip(p.timeline(), id), {GradeWindows::param(1, "x")}).size();
+    CHECK(spy.wait(120000));
+    CHECK(!panel.tracking());
+    t = TimelineOps::findClip(p.timeline(), id);
+    CHECK_EQ(Keys::keyTimes(*t, {GradeWindows::param(1, "x")}).size(), keysBefore);
 }
 
 } // namespace

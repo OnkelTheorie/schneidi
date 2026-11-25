@@ -1316,7 +1316,7 @@ void ColorPanel::startTracking(bool forward)
     });
     m_trackThread->setParent(this); // the destructor waits for it, then it goes with the panel
     const int generation = ++m_trackGeneration;
-    connect(m_trackThread, &QThread::finished, this, [this, result, clipId = clip.id, start = clip.start, n, from,
+    connect(m_trackThread, &QThread::finished, this, [this, result, clip, clipId = clip.id, start = clip.start, n, from,
                                                       generation] {
         m_trackThread->wait();
         delete m_trackThread;
@@ -1328,6 +1328,13 @@ void ColorPanel::startTracking(bool forward)
             // discarded: the clip id may name another clip by now
         } else if (!result->error.isEmpty()) {
             text = result->error;
+        } else if (const Clip* now = TimelineOps::findClip(m_editor->project()->timeline(), clipId);
+                   !now || now->mediaPath != clip.mediaPath || now->in != clip.in || now->out != clip.out
+                   || now->speed != clip.speed || now->reverse != clip.reverse || now->freeze != clip.freeze
+                   || now->freezeFrame != clip.freezeFrame || now->ramp != clip.ramp) {
+            // Slipped, head-trimmed or retimed while tracking (or another timeline shown): the path was measured on
+            // the frames the clip showed then and would land shifted (the keys are stored as source frames)
+            text = T("Verfolgung verworfen – Clip geändert");
         } else {
             // The clip may have moved meanwhile: the keyframes count from its start, so they still fit
             m_editor->setGradeWindowPath(clipId, n, from, result->points);

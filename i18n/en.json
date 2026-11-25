@@ -343,6 +343,7 @@
  "An: ein neuer Knoten kommt hinter den gewählten (oder den Ausgang). Aus: er wird nur hingelegt, du verbindest ihn selbst.": "On: a new node goes behind the selected one (or the output). Off: it is only placed, you link it yourself.",
  "Analyse": "Analysis",
  "Analyse verworfen – Clip geändert": "Analysis discarded – clip changed",
+ "Verfolgung verworfen – Clip geändert": "Tracking discarded – clip changed",
  "Analysieren": "Analyze",
  "Analysiert das Material …": "Analyzing the material …",
  "Analysiert – erneut analysieren ersetzt das Ergebnis": "Analyzed – analyzing again replaces the result",
