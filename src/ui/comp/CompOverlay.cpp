@@ -494,6 +494,7 @@ int CompOverlay::repick()
             m_last.placed = m_repickPlaced;
         }
         m_repickPlaced = m_last.placed;
+        const int before = undo->index();
         undo->beginMacro(T("Fläche wählen"));
         QString err;
         id = RegionPick::applyPick(*m_editor, m_editor->project()->timelineFormat(), m_last.clipId, m_last.node,
@@ -515,6 +516,7 @@ int CompOverlay::repick()
             }
         }
         undo->endMacro();
+        if (!id) CompUi::dropRefusedStep(undo, before); // refused: no empty step left behind
         m_repickIndex = id ? undo->index() : -1;
         m_repickNode = m_last.node;
         m_inRepick = false;
