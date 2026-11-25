@@ -154,6 +154,33 @@ int timeRef(Session& s, const QJsonObject& r, const char* key)
 
 } // namespace
 
+int spanOf(Session& s, const QJsonObject& op, const char* key, int fallback)
+{
+    if (op.contains(key) && op[key].isObject())
+        fail("BAD_ARGUMENT", QString("'%1' is a length or source time (frames, \"2s\", a timecode), not a timeline "
+                                     "position like {clip, offset}").arg(key));
+    return timeOf(s, op, key, fallback);
+}
+
+bool rangeEnds(const QJsonValue& r, QJsonValue* from, QJsonValue* to)
+{
+    if (r.isArray()) {
+        if (r.toArray().size() != 2) return false;
+        *from = r.toArray().at(0), *to = r.toArray().at(1);
+        return true;
+    }
+    const QJsonObject o = r.toObject();
+    if (o.contains("from") && o.contains("to")) {
+        *from = o.value("from"), *to = o.value("to");
+        return true;
+    }
+    if (o.contains("start") && o.contains("end")) { // as answers name ranges
+        *from = o.value("start"), *to = o.value("end");
+        return true;
+    }
+    return false;
+}
+
 int timeOf(Session& s, const QJsonObject& op, const char* key, int fallback)
 {
     if (!op.contains(key)) {
@@ -217,9 +244,9 @@ namespace {
 // Source range [in, out) of a media file: defaults to the whole file
 void sourceRange(Session& s, const QJsonObject& op, const MediaInfo& m, int* in, int* out)
 {
-    *in = timeOf(s, op, "in", 0);
-    qint64 end = op.contains("out") ? timeOf(s, op, "out") : m.length;
-    if (op.contains("duration")) end = qint64(*in) + timeOf(s, op, "duration");
+    *in = spanOf(s, op, "in", 0);
+    qint64 end = op.contains("out") ? spanOf(s, op, "out") : m.length;
+    if (op.contains("duration")) end = qint64(*in) + spanOf(s, op, "duration");
     if (!m.isImage) end = std::min<qint64>(end, m.length); // a still takes any length (its default: the still length)
     if (end > kMaxFrame)
         fail("BAD_ARGUMENT", QString("the source range ends at frame %1, beyond the limit of %2").arg(end).arg(kMaxFrame));
@@ -525,16 +552,13 @@ void opKeep(Session& s, const QJsonObject& op)
         fail("BAD_ARGUMENT", "missing 'ranges': the parts of the source to keep in order, e.g. "
                              "{\"op\":\"keep\",\"media\":\"/path/to/clip.mkv\",\"ranges\":[[\"2s\",\"5.5s\"],[\"10s\",\"12s\"]]}");
     for (const QJsonValue& r : ranges) {
-        QJsonObject sub;
         const QJsonObject o = r.toObject();
         // "2s-5s", ["5s"] or {from} without to had no in/out: the whole file was placed, silently
-        if (!(r.isArray() && r.toArray().size() == 2) && !(o.contains("start") && o.contains("end"))
-            && !(o.contains("from") && o.contains("to")))
+        QJsonValue rf, rt;
+        if (!rangeEnds(r, &rf, &rt))
             fail("BAD_ARGUMENT", QString("keep: %1 is no range - ranges are [from, to] pairs (or {from, to})")
                                      .arg(jsonSnippet(r)));
-        if (r.isArray()) sub = {{"in", r.toArray().at(0)}, {"out", r.toArray().at(1)}};
-        else if (o.contains("start") && o.contains("end")) sub = {{"in", o.value("start")}, {"out", o.value("end")}}; // as answers name ranges
-        else sub = {{"in", o.value("from")}, {"out", o.value("to")}};
+        QJsonObject sub{{"in", rf}, {"out", rt}};
         int in = 0, out = 0;
         sourceRange(s, sub, m, &in, &out);
         // speed: of this range, else of the whole op
@@ -770,8 +794,8 @@ void opFade(Session& s, const QJsonObject& op)
     }
     for (int id : clipIds(s, sel)) {
         if (s.editor.isSubtitle(id)) continue;
-        if (op.contains("in")) s.editor.setClipFade(id, TimelineOps::Edge::Start, timeOf(s, op, "in"));
-        if (op.contains("out")) s.editor.setClipFade(id, TimelineOps::Edge::End, timeOf(s, op, "out"));
+        if (op.contains("in")) s.editor.setClipFade(id, TimelineOps::Edge::Start, spanOf(s, op, "in"));
+        if (op.contains("out")) s.editor.setClipFade(id, TimelineOps::Edge::End, spanOf(s, op, "out"));
     }
 }
 
@@ -1012,7 +1036,14 @@ void opEffect(Session& s, const QJsonObject& op)
                                           d->video ? "video effects" : "audio effects");
     QVariantMap values;
     const QJsonObject params = op.value("params").toObject();
-    for (auto it = params.begin(); it != params.end(); ++it) values[EffectRegistry::storedKey(effectId, it.key())] = effectValue(*d, it.key(), it.value(), s.format().size(), s.project);
+    for (auto it = params.begin(); it != params.end(); ++it) {
+        const QVariant v = effectValue(*d, it.key(), it.value(), s.format().size(), s.project);
+        // A number outside the parameter's range is set to its end: said, not silently (`effects` lists the ranges)
+        if (it.value().isDouble() && v.typeId() == QMetaType::Double && v.toDouble() != it.value().toDouble())
+            s.notes << QString("%1.%2 %3 is outside its range: set to %4 (`effects` lists the ranges)")
+                           .arg(effectId, it.key()).arg(it.value().toDouble()).arg(v.toDouble());
+        values[EffectRegistry::storedKey(effectId, it.key())] = v;
+    }
     if (QString why; Picture::Custom::isCustom(effectId) && !Picture::Custom::canRender(effectId, &why))
         s.notes << QString("%1 is stored but skipped while rendering on this machine: %2").arg(effectId, why);
     s.editor.addEffect(targets, effectId); // clips that have it already keep it
@@ -1049,7 +1080,16 @@ void opRemoveTrack(Session& s, const QJsonObject& op)
     QJsonArray given = op.value("tracks").toArray();
     if (given.isEmpty()) given = op.value("track").isArray() ? op.value("track").toArray() : QJsonArray{op.value("track")};
     QVector<TrackRef> refs;
+    QVector<int> subs; // subtitle tracks (ST1 …) in the list: were looked up as track names, "no track 'ST1'"
     for (const QJsonValue& v : given) {
+        if (const QString st = v.toString().trimmed().toUpper(); st.startsWith("ST") && st.mid(2).toInt() > 0) {
+            const int index = st.mid(2).toInt() - 1;
+            if (index >= s.project.timeline().subtitles.size()) fail("NOT_FOUND", "no subtitle track " + st);
+            if (s.project.timeline().subtitles[index].locked)
+                fail("FAILED", "cannot remove subtitle track " + st + ": it is locked");
+            if (!subs.contains(index)) subs << index;
+            continue;
+        }
         TrackKind k = TrackKind::Video;
         const int index = parseTrackIn(s.project.timeline(), v, &k);
         if (!refs.contains(TrackRef{k, index})) refs << TrackRef{k, index};
@@ -1077,6 +1117,8 @@ void opRemoveTrack(Session& s, const QJsonObject& op)
     }
     std::sort(refs.begin(), refs.end(), [](const TrackRef& a, const TrackRef& b) { return a.index > b.index; });
     for (const TrackRef& r : refs) s.editor.removeTrack(r);
+    std::sort(subs.begin(), subs.end(), std::greater<int>()); // named before any goes, as the others
+    for (int index : subs) s.editor.removeSubtitleTrack(index);
 }
 
 // Details of the ops that place source ranges (import presets, core/StreamPresets.h)
@@ -1153,16 +1195,20 @@ QVector<OpDef> makeOps()
          "track that cannot follow, e.g. a clip lies across the cut) fails with OUT_OF_SYNC (also speed, trim with "
          "ripple, insert); a partner on a locked track stays on purpose (a note says how far apart).",
          opDelete, kClipKeys},
-        {"delete_range", "{op:'delete_range', from, to, ripple?:true} or {op:'delete_range', ranges:[[from,to],...]}",
-         "remove time ranges on all tracks; `ranges` are all timeline times before the cut (e.g. words of "
+        {"delete_range", "{op:'delete_range', from, to, ripple?:true} or {op:'delete_range', ranges:[[from,to] | {from,to},...]}",
+         "remove time ranges on all tracks; `ranges` are all timeline times before the cut, [from, to] pairs or "
+         "{from, to, ...} objects as answers list them (the 'silence' ranges of `silence` on the project, words of "
          "`transcribe` with words:true), applied together", {},
          [](Session& s, const QJsonObject& op) {
              QVector<QPair<int, int>> ranges;
              if (op.contains("ranges")) {
                  for (const QJsonValue& v : op.value("ranges").toArray()) {
-                     const QJsonArray r = v.toArray();
-                     if (r.size() != 2) fail("BAD_ARGUMENT", "ranges are [from, to] pairs");
-                     QJsonObject pair{{"from", r[0]}, {"to", r[1]}};
+                     QJsonValue rf, rt;
+                     if (!rangeEnds(v, &rf, &rt))
+                         fail("BAD_ARGUMENT", QString("delete_range: %1 is no range - ranges are [from, to] pairs or "
+                                                      "{from, to} objects (as silence and transcribe list them)")
+                                                  .arg(jsonSnippet(v)));
+                     QJsonObject pair{{"from", rf}, {"to", rt}};
                      ranges << qMakePair(timeOf(s, pair, "from"), timeOf(s, pair, "to"));
                  }
                  if (ranges.isEmpty()) fail("BAD_ARGUMENT", "'ranges' is empty");
@@ -1247,7 +1293,7 @@ QVector<OpDef> makeOps()
          {}, opAddTrack},
         {"remove_track", "{op:'remove_track', track} or {op:'remove_track', tracks:[…]}",
          "remove tracks with their clips (V1/A2 or a track's name like 'Mix'; not the last one of a kind; ST1 … = "
-         "subtitle tracks)",
+         "subtitle tracks, also in tracks:[…])",
          "Track names are those of the timeline when the op runs: after removing A1 the old A2 is A1, so a second op "
          "{track:'A5'} means the track that was A6. Several tracks in ONE op (tracks:['A1','A2','A5'] or "
          "track:[…]) are all named as they are before it and removed together.",
@@ -1502,7 +1548,8 @@ QString editHelp()
                "from, cue times …) can also be relative, resolved when the op runs so earlier ops that move clips do "
                "not shift it: {clip:id, offset?} (from the clip start), {clip:id, from_end}, {clip:id, source} (where "
                "the clip plays that source time; speed and ramps included) or {media:file, source} (first clip that "
-               "plays it); source times in seconds (\"12.4s\") are safest. Tracks: \"V1\", \"A2\" (a "
+               "plays it); source times in seconds (\"12.4s\") are safest. Lengths and source times (fade in/out, length, "
+               "in/out of a file) take no such object. Tracks: \"V1\", \"A2\" (a "
                "media clip goes to V<n> and A<n>). Clip ids come from `info` and change when clips are split. "
                "Linked audio/video partners are included unless linked:false; ops for one kind of clip (effect, color, "
                "transform, volume, keyframe …) take only the given clips of that kind, a clip of the other kind "

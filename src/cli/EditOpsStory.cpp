@@ -168,7 +168,7 @@ void opHookVariants(Session& s, const QJsonObject& op)
     const int length = lengthOf(s);
     if (length <= 0) s.failEmpty();
     const ProjectFormat f = s.format();
-    const int teaser = op.contains("length") ? timeOf(s, op, "length") : framesOf(s, 2.0);
+    const int teaser = op.contains("length") ? spanOf(s, op, "length") : framesOf(s, 2.0);
     if (teaser <= 0) fail("BAD_ARGUMENT", "length must be at least one frame");
     // The strong moments: given (best first), else the markers
     QVector<int> strong;

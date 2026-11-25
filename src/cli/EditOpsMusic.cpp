@@ -238,7 +238,7 @@ void opFitMusic(Session& s, const QJsonObject& op)
         frames = timelineEnd(s, g.clip ? g.clip->id : 0) - (op.contains("at") ? timeOf(s, op, "at") : g.clip ? g.clip->start : 0);
         if (frames <= 0) fail("EMPTY", "length:'timeline': the timeline has nothing besides the song to take the length from");
     } else {
-        frames = timeOf(s, op, "length");
+        frames = spanOf(s, op, "length");
     }
     if (frames <= 0) fail("BAD_ARGUMENT", "'length' must be more than 0");
 

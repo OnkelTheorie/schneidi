@@ -745,7 +745,6 @@ void opTrackAutomation(Session& s, const QJsonObject& op, AutoTarget target)
     if (t.locked) fail("LOCKED", QString("track %1 is locked").arg(trackName({k, index})));
     const bool clear = op.value("clear").toBool();
     if (clear == op.contains("points")) fail("BAD_ARGUMENT", "give points (a curve) or clear:true");
-    const ProjectFormat& fmt = s.project.format();
     const bool part = op.contains("from") || op.contains("to");
     if (clear) {
         if (part) fail("BAD_ARGUMENT", "clear removes the whole curve (for a part give points with from/to)");
@@ -773,13 +772,13 @@ void opTrackAutomation(Session& s, const QJsonObject& op, AutoTarget target)
         if (d < lo || d > hi)
             fail("BAD_ARGUMENT", QString("%1 %2 out of range %3..%4 (on top of the %5)")
                                      .arg(key).arg(d).arg(lo).arg(hi).arg(pan ? "pan knob" : "fader"));
-        pts << AutoPoint{parseTime(at, fmt, "points.at"), d};
+        pts << AutoPoint{timeOf(s, QJsonObject{{"points.at", at}}, "points.at"), d}; // {clip, offset} too
     }
     if (pts.isEmpty() && !part) fail("BAD_ARGUMENT", "points is empty (to remove the curve give clear:true)");
     AutoCurve next = Automation::normalized(pts, target);
     if (part) {
-        const int from = op.contains("from") ? parseTime(op.value("from"), fmt, "from") : (next.isEmpty() ? 0 : next.first().frame);
-        const int to = op.contains("to") ? parseTime(op.value("to"), fmt, "to") : (next.isEmpty() ? from : next.last().frame);
+        const int from = op.contains("from") ? timeOf(s, op, "from") : (next.isEmpty() ? 0 : next.first().frame);
+        const int to = op.contains("to") ? timeOf(s, op, "to") : (next.isEmpty() ? from : next.last().frame);
         if (to < from) fail("BAD_ARGUMENT", "to lies before from");
         AutoCurve whole = t.automation(target);
         Automation::replaceRange(whole, from, to, next, target);

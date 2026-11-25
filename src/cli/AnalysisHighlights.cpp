@@ -354,16 +354,47 @@ QJsonObject highlightsFile(const QJsonObject& a, Context& ctx)
     return r;
 }
 
+namespace {
+
+// `top`: a file's best n candidates, and 'keep' / 'keep_clean' made of only those (in time order) - they held every
+// candidate, so keep with them put all moments on the timeline, not the best n
+void keepTop(QJsonObject& r, int n)
+{
+    QJsonArray c = r["candidates"].toArray();
+    while (c.size() > n) c.removeLast();
+    r["candidates"] = c;
+    QList<QJsonObject> byTime;
+    for (const QJsonValue& v : c) byTime << v.toObject();
+    std::stable_sort(byTime.begin(), byTime.end(),
+                     [](const QJsonObject& x, const QJsonObject& y) { return x["from"].toInt() < y["from"].toInt(); });
+    QJsonArray keep, keepClean;
+    for (const QJsonObject& o : byTime) {
+        keep << QJsonArray{o["from"], o["to"]};
+        if (!o.contains("stutter")) keepClean << QJsonArray{o["from"], o["to"]};
+        for (const QJsonValue& p : o["clean"].toArray()) keepClean << QJsonArray{p["from"], p["to"]};
+    }
+    if (r.contains("keep")) r["keep"] = keep;
+    if (r.contains("keep_clean")) r["keep_clean"] = keepClean;
+}
+
+} // namespace
+
 QJsonObject cmdHighlights(const QJsonObject& a, Context& ctx)
 {
     QJsonObject out = perFile(a, ctx, highlightsFile, 2);
+    const int top = std::max(1, a["top"].toInt());
     if (!out.contains("files")) {
-        if (a.contains("top")) {
-            QJsonArray c = out["candidates"].toArray();
-            while (c.size() > std::max(1, a["top"].toInt())) c.removeLast();
-            out["candidates"] = c;
-        }
+        if (a.contains("top")) keepTop(out, top);
         return out;
+    }
+    if (a.contains("top")) {
+        QJsonArray files = out["files"].toArray();
+        for (int i = 0; i < files.size(); ++i) {
+            QJsonObject r = files[i].toObject();
+            if (r.contains("candidates")) keepTop(r, top);
+            files[i] = r;
+        }
+        out["files"] = files;
     }
     // Several files: the best moments of all of them
     QJsonArray best;
@@ -376,7 +407,7 @@ QJsonObject cmdHighlights(const QJsonObject& a, Context& ctx)
     QList<QJsonValue> sorted(best.begin(), best.end());
     std::stable_sort(sorted.begin(), sorted.end(),
                      [](const QJsonValue& x, const QJsonValue& y) { return x["score"].toDouble() > y["score"].toDouble(); });
-    if (a.contains("top")) sorted = sorted.mid(0, std::max(1, a["top"].toInt()));
+    if (a.contains("top")) sorted = sorted.mid(0, top);
     QJsonArray list;
     for (const QJsonValue& v : sorted) list << v;
     out["best"] = list;

@@ -354,13 +354,15 @@ void opCutPauses(Session& s, const QJsonObject& op)
         // Only these (a choice of the ranges an earlier run listed): nothing is measured
         const QJsonArray list = op.value("ranges").toArray();
         if (list.isEmpty() && !op.value("ranges").isArray())
-            fail("BAD_ARGUMENT", "ranges: [[from, to], ...] (timeline times)");
+            fail("BAD_ARGUMENT", "ranges: [[from, to], ...] or [{from, to}, ...] (timeline times)");
         for (const QJsonValue& v : list) {
-            const QJsonArray pair = v.toArray();
-            if (pair.size() != 2) fail("BAD_ARGUMENT", "ranges: each one is [from, to]");
+            // A pair, or an entry of the list an earlier run answered ({n, from, to, ...})
+            QJsonValue rf, rt;
+            if (!rangeEnds(v, &rf, &rt))
+                fail("BAD_ARGUMENT", "ranges: each one is [from, to] or {from, to} (an entry of an earlier run's list)");
             PauseCut::Range r;
-            r.from = parseTime(pair[0], f, "ranges");
-            r.to = parseTime(pair[1], f, "ranges");
+            r.from = parseTime(rf, f, "ranges");
+            r.to = parseTime(rt, f, "ranges");
             if (r.to <= r.from) fail("BAD_ARGUMENT", QString("ranges: %1 must end after it starts").arg(tc(r.from, f)));
             a.ranges << r;
         }
@@ -493,8 +495,8 @@ void addPauseOps(QVector<OpDef>& ops)
                  "transcripts while the other tracks are quiet - only as good as the transcript: whisper leaves most "
                  "of them out, transcribe with verbatim:true first (the transcript's language decides what is a filler; "
                  "answers like \"mhm\" stay). Without ranges the op measures and cuts everything "
-                 "it finds; ranges = cut exactly these (timeline times, as an earlier run listed them - leave out "
-                 "the ones to keep). Markers in a pause move to the cut, subtitles follow, every new sound edge gets a "
+                 "it finds; ranges = cut exactly these (timeline times: [from, to] pairs or the {n, from, to, ...} "
+                 "entries an earlier run listed, as they are - leave out the ones to keep). Markers in a pause move to the cut, subtitles follow, every new sound edge gets a "
                  "1-2 frame fade (no clicks); a track not listened to that is cut too is named in also_cut. A locked "
                  "track (video, audio, subtitles) with content after the first cut = error TRACK_LOCKED. Live in the "
                  "app schneidi-cli measures first; a timeline changed meanwhile = PAUSES_STALE. The answer's notes give cut_pauses {ranges:[{n, kind:'pause'|"
