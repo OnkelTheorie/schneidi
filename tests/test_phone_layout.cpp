@@ -37,6 +37,7 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QFile>
+#include <QFontDatabase>
 #include <QFontInfo>
 #include <QFileInfo>
 #include <QTemporaryDir>
@@ -977,8 +978,10 @@ void testSteadyTransport(Engine& engine)
     emit engine.positionChanged(89898);
     settle();
     centred("360 wide, long timecode");
-    Check::report(tc->font().fixedPitch() || QFontInfo(tc->font()).fixedPitch(), "timecode in a fixed-pitch font",
-                  __FILE__, __LINE__, QFontInfo(tc->font()).family());
+    // (Only where the system has a fixed-pitch font at all: a bare build container has none)
+    if (QFontInfo(QFontDatabase::systemFont(QFontDatabase::FixedFont)).fixedPitch())
+        Check::report(tc->font().fixedPitch() || QFontInfo(tc->font()).fixedPitch(), "timecode in a fixed-pitch font",
+                      __FILE__, __LINE__, QFontInfo(tc->font()).family());
 }
 
 // Item 3 of the phone review: thin scroll indicators that show while the content moves, instead of finger-wide bars

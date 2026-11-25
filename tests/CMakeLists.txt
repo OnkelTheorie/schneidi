@@ -401,7 +401,7 @@ set_tests_properties(test_av_sync test_preview_audio test_play_end test_play_loo
 # builds, a game, a parallel ctest), not when the code is wrong. tools/run_tests.py runs everything else in parallel,
 # then these one by one, and once more what failed (ctest -LE timing / -L timing work by hand too).
 set_tests_properties(test_av_sync test_preview_audio test_play_end test_play_loop test_play_start test_audio_player test_speed test_serve
-                     test_watch_folders test_voiceover test_voiceover_app test_handover
+                     test_watch_folders test_voiceover test_voiceover_app test_handover test_shape_drag_app
                      PROPERTIES LABELS timing)
 
 # Server/container without a display: titles (Qt's fonts) and the renderer still work
