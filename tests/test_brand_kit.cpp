@@ -389,6 +389,17 @@ void testLogoAndIntro(const QString& dir)
     CHECK_EQ(p.timeline().audio[0].clips.size(), 3); // with their sound
     p.undoStack()->undo();
     CHECK_EQ(p.timeline().video[0].clips.size(), 1);
+    // A locked A1 (a protected music bed): its clips stay as they are, the intro/outro come without their sound (the
+    // intro's sound overwrote the locked clip, the outro's picture moved away from its sound)
+    p.edit("lock A1", [](Timeline& t) { t.audio[0].locked = true; });
+    const QVector<Clip> music = p.timeline().audio[0].clips;
+    CHECK(ed.addIntroOutro());
+    CHECK(p.timeline().audio[0].clips == music);
+    CHECK_EQ(p.timeline().video[0].clips.size(), 3);
+    for (const Track& t : p.timeline().audio)
+        for (const Clip& c : t.clips) CHECK(c.mediaPath != "/x/intro.mp4" && c.mediaPath != "/x/outro.mp4");
+    p.undoStack()->undo();
+    p.undoStack()->undo();
     CHECK(Brand::setGlobal({}));
 }
 
