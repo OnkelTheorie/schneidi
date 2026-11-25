@@ -255,6 +255,9 @@ QWidget* SettingsDialog::buildGeneral()
     m_threads->setObjectName("background_threads");
     m_threads->addItem(T("Automatisch"), 0);
     for (int n = std::max(1, QThread::idealThreadCount()); n >= 1; --n) m_threads->addItem(QString::number(n), n);
+    // A saved number above this computer's (settings from a larger one): shown and kept, not turned into "automatic"
+    if (const int saved = Background::chosenThreads(); saved > 0 && m_threads->findData(saved) < 0)
+        m_threads->insertItem(1, QString::number(saved), saved);
     m_threads->setCurrentIndex(std::max(0, m_threads->findData(Background::chosenThreads())));
     pform->addRow(T("Threads für Hintergrundarbeit"), m_threads);
     pform->addRow(hint(T("Transkription (Whisper), Analysen, Proxys und das Einlesen beim Import. Weniger Threads: "
