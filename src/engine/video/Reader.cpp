@@ -3,6 +3,7 @@
 #include "engine/OpenMedia.h"
 #include "engine/video/Hardware.h"
 #include "engine/video/Convert.h"
+#include "engine/video/Deinterlace.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -1377,6 +1378,111 @@ struct Reader::Impl {
         pending.clear();
         done.notify_all();
     }
+
+    // A raw picture (as decoded, never deinterlaced): what Reader::picture did before Options::deinterlace. Any thread.
+    std::shared_ptr<const Picture> request(int64_t position, const Fetch& fetch, bool* exact)
+    {
+        lastUse = nowMs();
+        std::unique_lock lock(m);
+        if (!started) {
+            started = true;
+            fps = av_q2d(info.frameRate);
+            Impl* impl = this;
+            thread = std::thread([impl] { impl->run(); });
+        }
+        if (lost) return nullptr; // the decoder thread has ended: nobody would answer
+        if (fetch.cancel && fetch.cancel->load()) return nullptr; // before it moves the read-ahead's target
+        // Read-ahead follows requests in order; out-of-order workers stay within a few frames
+        sequential = high >= 0 && position >= high - 8 && position <= high + 2;
+        if (!sequential || position > high) high = position;
+        Request req{position, nullptr, false};
+        req.nearest = fetch.nearest;
+        if (!answer(req)) {
+            pending.push_back(&req);
+            work.notify_one();
+            if (!fetch.cancel) {
+                done.wait(lock, [&] { return req.done; });
+            } else {
+                // Nobody signals the cancel flag: look at it now and then
+                while (!req.done) {
+                    if (fetch.cancel->load()) {
+                        pending.remove(&req);
+                        ++stats.cancelled;
+                        // Nothing else asked: stop decoding towards it (the next request sets the reference again)
+                        if (pending.empty()) high = -1;
+                        work.notify_one();
+                        return nullptr;
+                    }
+                    done.wait_for(lock, std::chrono::milliseconds(4));
+                }
+            }
+        } else {
+            work.notify_one(); // keep reading ahead
+        }
+        if (exact) *exact = req.exact;
+        return req.result;
+    }
+
+    // Options::deinterlace, any thread: the newest deinterlaced pictures (exact ones only), so the workers and the
+    // requests for the same frame do not filter it again
+    static constexpr int kDeintKept = 4;
+    std::mutex deintM;
+    std::deque<std::shared_ptr<const Picture>> deintKept;
+    std::atomic<bool> interlacedSeen{false}; // an interlaced picture came: fetch the picture before first
+    std::atomic<bool> deintFailed{false};    // the filter refused (pixel format, no libavfilter): woven from now on
+
+    std::shared_ptr<const Picture> keptDeinterlaced(int64_t position)
+    {
+        std::lock_guard lock(deintM);
+        for (const auto& p : deintKept)
+            if (p->position == position) return p;
+        return nullptr;
+    }
+
+    // `pic` (interlaced, answered for `position`) deinterlaced with the raw pictures before and after it as bwdif's
+    // neighbours in time; `before` = the answer for position - 1 if fetched already. A close picture (scrubbing:
+    // not `exact`) has itself as its neighbours (no decoding further) and is not kept.
+    std::shared_ptr<const Picture> deinterlaced(const std::shared_ptr<const Picture>& pic, bool exact,
+                                                std::shared_ptr<const Picture> before, int64_t position,
+                                                const std::atomic<bool>* cancel)
+    {
+        const int64_t p = pic->position;
+        std::shared_ptr<const Picture> prev = pic, next = pic;
+        if (exact) {
+            Fetch plain;
+            plain.cancel = cancel;
+            // The answer for p - 1 and p + 1 whatever way led here: frame p looks the same played or seeked to
+            if (!before || position != p) before = request(p - 1, plain, nullptr);
+            std::shared_ptr<const Picture> after = request(p + 1, plain, nullptr);
+            if (cancel && cancel->load()) return pic;
+            if (before && before->position < p && before->frame) prev = before;
+            if (after && after->position > p && after->frame) next = after;
+        }
+        AVFrame* out = Video::deinterlace(prev->frame, pic->frame, next->frame, pic->topFieldFirst);
+        if (!out) {
+            if (!deintFailed.exchange(true))
+                qWarning("Video: %s stays interlaced (%s)", path.constData(),
+                         canDeinterlace() ? "the deinterlacer does not take its pixel format"
+                                          : "no deinterlacer: FFmpeg without libavfilter");
+            return pic;
+        }
+        auto res = std::make_shared<Picture>();
+        res->frame = out;
+        res->position = p;
+        res->progressive = true;
+        res->topFieldFirst = pic->topFieldFirst;
+        res->deinterlaced = true;
+        if (exact) {
+            std::lock_guard lock(deintM);
+            deintKept.push_back(res);
+            while (int(deintKept.size()) > kDeintKept) deintKept.pop_front();
+        }
+        {
+            std::lock_guard lock(m);
+            ++stats.deinterlaced;
+        }
+        return res;
+    }
 };
 
 std::optional<bool> topFieldShownFirst(const AVFrame* frame, int fieldOrder)
@@ -1790,45 +1896,28 @@ std::shared_ptr<const Picture> Reader::picture(int64_t position)
 
 std::shared_ptr<const Picture> Reader::picture(int64_t position, const Fetch& fetch, bool* exact)
 {
-    d->lastUse = nowMs();
-    std::unique_lock lock(d->m);
-    if (!d->started) {
-        d->started = true;
-        d->fps = av_q2d(d->info.frameRate);
-        Impl* impl = d.get();
-        d->thread = std::thread([impl] { impl->run(); });
-    }
-    if (d->lost) return nullptr; // the decoder thread has ended: nobody would answer
-    if (fetch.cancel && fetch.cancel->load()) return nullptr; // before it moves the read-ahead's target
-    // Read-ahead follows requests in order; out-of-order workers stay within a few frames
-    d->sequential = d->high >= 0 && position >= d->high - 8 && position <= d->high + 2;
-    if (!d->sequential || position > d->high) d->high = position;
-    Impl::Request req{position, nullptr, false};
-    req.nearest = fetch.nearest;
-    if (!d->answer(req)) {
-        d->pending.push_back(&req);
-        d->work.notify_one();
-        if (!fetch.cancel) {
-            d->done.wait(lock, [&] { return req.done; });
-        } else {
-            // Nobody signals the cancel flag: look at it now and then
-            while (!req.done) {
-                if (fetch.cancel->load()) {
-                    d->pending.remove(&req);
-                    ++d->stats.cancelled;
-                    // Nothing else asked: stop decoding towards it (the next request sets the reference again)
-                    if (d->pending.empty()) d->high = -1;
-                    d->work.notify_one();
-                    return nullptr;
-                }
-                d->done.wait_for(lock, std::chrono::milliseconds(4));
-            }
+    if (!d->opt.deinterlace || d->turns != 0 || d->deintFailed.load()) return d->request(position, fetch, exact);
+    if (!fetch.nearest) {
+        if (auto kept = d->keptDeinterlaced(position)) {
+            d->lastUse = nowMs();
+            if (exact) *exact = true;
+            return kept;
         }
-    } else {
-        d->work.notify_one(); // keep reading ahead
     }
-    if (exact) *exact = req.exact;
-    return req.result;
+    // An interlaced stream: the picture before it first - the decoder goes forwards, asked for after the picture
+    // the one before may need a seek of its own (the first one after a seek)
+    std::shared_ptr<const Picture> before;
+    if (d->interlacedSeen.load() && !fetch.nearest) {
+        Fetch plain;
+        plain.cancel = fetch.cancel;
+        before = d->request(position - 1, plain, nullptr);
+    }
+    bool ex = true;
+    std::shared_ptr<const Picture> pic = d->request(position, fetch, &ex);
+    if (exact) *exact = ex;
+    if (!pic || !pic->frame || pic->progressive) return pic;
+    d->interlacedSeen = true;
+    return d->deinterlaced(pic, ex, std::move(before), position, fetch.cancel);
 }
 
 bool Reader::failed() const

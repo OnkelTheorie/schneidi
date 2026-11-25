@@ -134,6 +134,7 @@ schneidi_test(test_picture_passthrough) # export: a plain full-size video hands 
 schneidi_test(test_video_convert) # toRgba sets the colour matrix per conversion (BT.2020 after/before 601)
 schneidi_test(test_hdr_tone) # HDR -> SDR (HLG/PQ): known values, tables and the card's LUT against the exact function, real 10-bit files, Clip::hdrToSdr
 schneidi_test(test_video_reader) # own decoder: jumps/threads/hardware = pictures in order, hibernation, rotation, file properties
+schneidi_test(test_deinterlace) # interlaced sources deinterlaced by the reader: no combing, played = seeked to, preview = export
 schneidi_test(test_picture_regression) # picture engine against independent references: timing, layers, transitions, outline, downscale, threads
 schneidi_test(test_crop)
 schneidi_test(test_picture_pump) # preview frame pump: sync under load, catch-up, seek, live change, backward

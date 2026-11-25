@@ -63,6 +63,9 @@ struct Picture {
     int64_t position = 0;         // stream frame position
     bool progressive = true;
     bool topFieldFirst = false;
+    // Decoded interlaced and made progressive by the reader (Options::deinterlace; `progressive` is true then,
+    // `topFieldFirst` stays the decoded picture's)
+    bool deinterlaced = false;
     ~Picture();
 };
 
@@ -117,6 +120,12 @@ public:
         // too (the newest that fit into this many bytes), so steps back and jumps back a little are answered without
         // decoding again. Software decoding only (hardware pictures would have to be downloaded). 0 = off.
         int64_t keepBytes = 0;
+        // Interlaced pictures (flagged by the decoder or the stream) come deinterlaced (engine/video/Deinterlace:
+        // bwdif with the pictures before and after it, the same filter as the proxies), so the preview of the
+        // original, the export and the proxy show the same picture. Picture N depends on pictures N-1..N+1 only,
+        // never on the way there (played to, seeked to): the reader fetches the neighbours itself. Off: the woven
+        // fields as decoded (what the file holds: smart render, the proxy's probe). Rotated streams stay woven.
+        bool deinterlace = true;
     };
 
     // How picture() may answer
@@ -178,6 +187,7 @@ public:
         int hibernations = 0;     // decoder closed after a long pause, reopened on demand
         int nearest = 0;          // requests answered by a close picture instead of the exact one (Fetch::nearest)
         int cancelled = 0;        // requests given up by their caller (Fetch::cancel)
+        int deinterlaced = 0;     // pictures deinterlaced (Options::deinterlace; cached ones count once)
     };
     Stats stats() const;
     // Long stream analyses run by this process (files the first analysis could not describe; once per file and session)
