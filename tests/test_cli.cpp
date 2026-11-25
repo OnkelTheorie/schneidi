@@ -981,6 +981,16 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         CHECK(!subs.last()["style"]["box"].toBool());
         ed(QString(R"([{"op":"track","track":"V2","lock":false},{"op":"remove_track","track":"ST%1"}])").arg(subs.size()));
         CHECK_EQ(run("info", {{"project", g_path}})["timeline"]["subtitles"].toArray().size(), int(subs.size()) - 1);
+        // move_to and lock together: the moved track is locked, not the one that slid into its place
+        {
+            const QJsonObject moved = run("edit", {{"project", g_path}, {"dry_run", true},
+                                                   {"ops", R"([{"op":"track","track":"V1","move_to":"V2","lock":true}])"}});
+            const QJsonArray tracks = moved["timeline"]["tracks"].toArray();
+            CHECK_EQ(tracks[0]["name"].toString(), QString("Titles"));
+            CHECK(!tracks[0]["locked"].toBool());
+            CHECK(tracks[1]["name"].toString() != QString("Titles"));
+            CHECK(tracks[1]["locked"].toBool());
+        }
         // Unlink: moving the video leaves the audio
         c = ids();
         ed(QString(R"([{"op":"unlink","clips":[%1]},{"op":"move","clips":[%1],"by":5}])").arg(c[0]));

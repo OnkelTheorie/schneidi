@@ -611,7 +611,7 @@ void opTrack(Session& s, const QJsonObject& op)
     TrackKind k = TrackKind::Video;
     const int index = parseTrackIn(s.project.timeline(), op.value("track"), &k);
     if (index >= s.project.timeline().tracks(k).size()) fail("NOT_FOUND", "no track " + name);
-    const TrackRef ref{k, index};
+    TrackRef ref{k, index};
     const auto state = [&] { return s.project.timeline().track(ref); };
     if (op.contains("name")) ed.renameTrack(ref, op.value("name").toString());
     if (op.contains("color")) {
@@ -629,7 +629,10 @@ void opTrack(Session& s, const QJsonObject& op)
         TrackKind k2 = k;
         const int to = parseTrack(op.value("move_to"), &k2);
         if (k2 != k || to >= s.project.timeline().tracks(k).size()) fail("BAD_ARGUMENT", "move_to must be an existing track of the same kind");
+        const QVector<Track> before = s.project.timeline().tracks(k);
         ed.moveTrack(k, index, to);
+        // The lock below is for the moved track: at `index` now lies another one
+        if (s.project.timeline().tracks(k) != before) ref.index = std::clamp(to, 0, int(before.size()) - 1);
     }
     if (op.contains("lock") && op.value("lock").toBool() != state().locked) ed.toggleTrackLock(ref); // last: blocks the rest
 }
