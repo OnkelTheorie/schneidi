@@ -489,6 +489,17 @@ void testTimelineTab()
         CHECK(!TimelineOptions::loopAtStart());
         CHECK(QSettings().allKeys().filter("timeline/").isEmpty());
     }
+    // Ctrl+T's kind: every kind but the gradient wipe (it needs a picture), cross dissolve by default
+    checkTimelineChoice("timeline_transition_type", int(std::size(kTransitionTypes)) - 1, int(TransitionType::CrossDissolve),
+                        [] { return int(TimelineOptions::transitionType()); });
+    {
+        QSettings().setValue("timeline/transitionType", "luma"); // not offered: the cross dissolve
+        CHECK(TimelineOptions::transitionType() == TransitionType::CrossDissolve);
+        CHECK(!TimelineOptions::transitionStyle());
+        TimelineOptions::setTransitionType(TransitionType::DipToColor);
+        CHECK(TimelineOptions::transitionStyle() && TimelineOptions::transitionStyle()->type == TransitionType::DipToColor);
+        QSettings().remove("timeline");
+    }
     // Track height: small, medium (default: the view's 64/52 from before), large
     checkTimelineChoice("timeline_track_height", 3, int(TimelineOptions::TrackHeight::Medium),
                         [] { return int(TimelineOptions::trackHeight()); });

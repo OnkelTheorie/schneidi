@@ -176,6 +176,29 @@ void applyEditDefaults()
     EditDefaults::setTransitionSeconds(transitionSeconds());
 }
 
+TransitionType transitionType()
+{
+    const QString v = stored("timeline/transitionType");
+    for (const auto& i : kTransitionTypes)
+        if (v == i.id && i.type != TransitionType::Luma) return i.type;
+    return TransitionType::CrossDissolve;
+}
+
+void setTransitionType(TransitionType type)
+{
+    if (type == TransitionType::Luma) type = TransitionType::CrossDissolve;
+    store("timeline/transitionType", transitionTypeInfo(type).id, type == TransitionType::CrossDissolve);
+}
+
+std::optional<TransitionStyle> transitionStyle()
+{
+    const TransitionType type = transitionType();
+    if (type == TransitionType::CrossDissolve) return std::nullopt;
+    TransitionStyle s;
+    s.type = type;
+    return s;
+}
+
 namespace {
 // "1s", "10f"
 Step readStep(const char* key, Step def)

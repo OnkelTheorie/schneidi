@@ -116,6 +116,14 @@ void MainWindow::updateStepTexts()
         {"nudge_right_multi", stepActionText(StepAction::NudgeRight, TimelineOptions::bigNudge())}};
     for (const auto& [id, text] : texts)
         if (QAction* a = InputBindings::instance().action(id)) a->setText(text);
+    if (QAction* a = InputBindings::instance().action("add_transition")) a->setText(addTransitionText());
+}
+
+QString MainWindow::addTransitionText()
+{
+    const TransitionType type = TimelineOptions::transitionType();
+    if (type == TransitionType::CrossDissolve) return T("Übergang hinzufügen (Überblendung)");
+    return T("Übergang hinzufügen (%1)").arg(T(transitionTypeInfo(type).name));
 }
 
 QAction* MainWindow::makeAction(QMenu* menu, const QString& id, const QString& text, const QKeySequence& key,
@@ -291,12 +299,13 @@ void MainWindow::buildActions()
     QMenu* timeline = menuBar()->addMenu(T("&Timeline"));
     makeAction(timeline, "split", T("Clip am Abspielkopf teilen"), QKeySequence("Ctrl+B"),
                [this, tv, notOnDirect] { if (notOnDirect()) m_editor->splitAtPlayhead(tv->playhead()); });
-    makeAction(timeline, "add_transition", T("Übergang hinzufügen (Überblendung)"), QKeySequence("Ctrl+T"),
-               [this, tv] {
-                   const bool trim = !m_editor->transitionsLackingHandles(tv->playhead()).isEmpty()
-                                     && TimelineView::confirmTrimForTransition(this);
-                   m_editor->addTransitions(tv->playhead(), {}, {}, trim);
-               });
+    // The kind as chosen in Settings › Timeline (cross dissolve by default; the text names it, updateStepTexts)
+    makeAction(timeline, "add_transition", addTransitionText(), QKeySequence("Ctrl+T"), [this, tv] {
+        const std::optional<TransitionStyle> style = TimelineOptions::transitionStyle();
+        const bool trim = !m_editor->transitionsLackingHandles(tv->playhead(), style).isEmpty()
+                          && TimelineView::confirmTrimForTransition(this);
+        m_editor->addTransitions(tv->playhead(), style, {}, trim);
+    });
     makeAction(timeline, "add_title", T("Titel einfügen"), QKeySequence(), [this, tv] { m_editor->addTitle(tv->playhead()); });
     // In the source viewer M sets a source marker (multicam sync by marker), like DaVinci
     makeAction(timeline, "add_marker", T("Marker setzen/entfernen"), QKeySequence("M"), [this, tv] {

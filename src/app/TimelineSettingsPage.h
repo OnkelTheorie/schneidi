@@ -45,6 +45,7 @@ public:
     int snapTargets() const;                        // TimelineOptions::SnapTarget flags
     double stillSeconds() const;                    // default length of new stills
     double transitionSeconds() const;               // default length of new transitions
+    TransitionType transitionType() const;          // what Ctrl+T makes on video tracks
     TimelineOptions::Step bigStep() const;          // Shift+arrow
     TimelineOptions::Step bigNudge() const;         // Shift+, / Shift+.
     TimelineOptions::SnapReach snapReach() const;
@@ -74,6 +75,7 @@ private:
     QComboBox* m_snapReach = nullptr;
     QDoubleSpinBox* m_stillSeconds = nullptr;
     QDoubleSpinBox* m_transitionSeconds = nullptr;
+    QComboBox* m_transitionType = nullptr;
     QSpinBox* m_stepCount = nullptr;
     QComboBox* m_stepUnit = nullptr;
     QSpinBox* m_nudgeCount = nullptr;

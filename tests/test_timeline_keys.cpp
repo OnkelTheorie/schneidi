@@ -446,6 +446,37 @@ void testWindow(const QString& media, const QString& shots)
     QSettings().remove("timeline");
     w.applyTimelineOptions();
     CHECK_EQ(action("nudge_right_multi")->text(), T("5 Frames nach rechts schieben"));
+
+    // Ctrl+T makes the kind chosen in Settings › Timeline on video tracks (cross dissolve by default, as before; the
+    // menu text names the kind), audio tracks crossfade; one undo step
+    {
+        CHECK_EQ(action("add_transition")->text(), T("Übergang hinzufügen (Überblendung)"));
+        TimelineOptions::setTransitionType(TransitionType::WipeLeft);
+        w.applyTimelineOptions();
+        CHECK_EQ(action("add_transition")->text(), T("Übergang hinzufügen (%1)").arg(T("Wischblende nach links")));
+        sel->clear();
+        const int cut = p->timeline().video[0].clips[0].end(); // V1's first cut (the clips have spare material)
+        CHECK_EQ(p->timeline().video[0].clips[1].start, cut);
+        tv->setPlayhead(cut);
+        engine.seek(cut);
+        QApplication::processEvents();
+        const int before = p->undoStack()->index();
+        action("add_transition")->trigger();
+        const Clip& left = p->timeline().video[0].clips[0];
+        CHECK(left.transOut > 0 && left.transOutStyle.type == TransitionType::WipeLeft);
+        CHECK(p->timeline().video[0].clips[1].transInStyle.type == TransitionType::WipeLeft);
+        CHECK_EQ(p->undoStack()->index(), before + 1);
+        p->undoStack()->undo();
+        CHECK_EQ(p->timeline().video[0].clips[0].transOut, 0);
+        TimelineOptions::setTransitionType(TransitionType::CrossDissolve);
+        CHECK(!QSettings().contains("timeline/transitionType"));
+        w.applyTimelineOptions();
+        action("add_transition")->trigger(); // the default: exactly the cross dissolve from before
+        CHECK(p->timeline().video[0].clips[0].transOut > 0);
+        CHECK(p->timeline().video[0].clips[0].transOutStyle.type == TransitionType::CrossDissolve);
+        p->undoStack()->undo();
+        CHECK_EQ(action("add_transition")->text(), T("Übergang hinzufügen (Überblendung)"));
+    }
     // In English the default texts are the old translations too
     using TimelineOptions::StepAction;
     CHECK_EQ(I18n::translate("en", "1 Sekunde zurück"), QString("Back 1 Second"));

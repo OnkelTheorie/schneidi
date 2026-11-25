@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 
+#include "core/Types.h"
+
 #include <QLine>
 #include <QRect>
 #include <QString>
+#include <optional>
 
 // The timeline's behaviour where editors differ: the user's choices in Settings › Timeline (QSettings "timeline/…",
 // app/TimelineSettingsPage). Each default is what schneidi did before the choice existed. The timelines read them when
@@ -110,6 +113,14 @@ void setStillSeconds(double seconds);
 double transitionSeconds();
 void setTransitionSeconds(double seconds);
 void applyEditDefaults();
+
+// The kind of transition "Add transition" (Ctrl+T) makes on video tracks (Settings › Timeline › New clips): a cross
+// dissolve (default, as before) or another of kTransitionTypes except the gradient wipe (it needs a picture). Audio
+// tracks always crossfade; a transition dragged from the Effects keeps its own kind; the CLI is not affected.
+TransitionType transitionType();
+void setTransitionType(TransitionType type);
+// The style handed to Editor::addTransitions: none for the cross dissolve (exactly the call from before)
+std::optional<TransitionStyle> transitionStyle();
 
 // Step sizes (Settings › Timeline › Keys): the big step of the playhead (Shift+arrow: 1 second, as before; Premiere
 // 5 frames, Final Cut and Avid 10) and the big nudge of clips/edit points (Shift+, and Shift+.: 5 frames, as before).

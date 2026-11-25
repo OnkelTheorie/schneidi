@@ -131,6 +131,13 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
     fresh->addRow(T("Standbilder"), m_stillSeconds);
     m_transitionSeconds = secondsBox("timeline_transition_seconds", 0.04, 30, TimelineOptions::transitionSeconds());
     fresh->addRow(T("Übergänge"), m_transitionSeconds);
+    {
+        QVector<QPair<QString, int>> kinds;
+        for (const auto& i : kTransitionTypes)
+            if (i.type != TransitionType::Luma) kinds.append({T(i.name), int(i.type)}); // (the gradient needs a picture)
+        m_transitionType = combo("timeline_transition_type", kinds, int(TimelineOptions::transitionType()));
+    }
+    fresh->addRow(T("Übergangsart"), m_transitionType);
     using CF = TimelineOptions::ClipFormat;
     m_clipFormat = combo("timeline_first_clip_format",
                          {{T("Fragen"), int(CF::Ask)}, {T("Projekt immer anpassen"), int(CF::Adapt)}, {T("Nie ändern"), int(CF::Keep)}},
@@ -141,6 +148,8 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
                          "Final Cut, CapCut). Feste Werte aus Startvorlage oder Projekteinstellungen bleiben immer.")));
     fresh->addRow(hint(T("So lang werden Bilder, die du ab jetzt importierst, und Übergänge ohne eigene Länge "
                          "(Strg+T, aus den Effekten gezogen). Schon importierte Bilder behalten ihre Länge.")));
+    fresh->addRow(hint(T("Übergangsart: was „Übergang hinzufügen“ (Strg+T) auf Videospuren setzt. Tonspuren blenden immer "
+                         "über, Übergänge aus den Effekten behalten ihre Art.")));
 
     // Keys: the big step of the playhead and the big nudge (read at every key press)
     QFormLayout* keys = group(lay, T("Tasten"));
@@ -339,6 +348,8 @@ bool TimelineSettingsPage::scrubAudio() const { return m_scrubAudio->currentData
 
 double TimelineSettingsPage::stillSeconds() const { return m_stillSeconds->value(); }
 
+TransitionType TimelineSettingsPage::transitionType() const { return TransitionType(m_transitionType->currentData().toInt()); }
+
 double TimelineSettingsPage::transitionSeconds() const { return m_transitionSeconds->value(); }
 
 TimelineOptions::Step TimelineSettingsPage::bigStep() const
@@ -382,6 +393,7 @@ void TimelineSettingsPage::store() const
     if (std::abs(stillSeconds() - TimelineOptions::stillSeconds()) > 1e-9) TimelineOptions::setStillSeconds(stillSeconds());
     if (std::abs(transitionSeconds() - TimelineOptions::transitionSeconds()) > 1e-9)
         TimelineOptions::setTransitionSeconds(transitionSeconds());
+    if (transitionType() != TimelineOptions::transitionType()) TimelineOptions::setTransitionType(transitionType());
     if (shuttleSteps() != TimelineOptions::shuttleSteps()) TimelineOptions::setShuttleSteps(shuttleSteps());
     if (spaceReturns() != TimelineOptions::spaceReturns()) TimelineOptions::setSpaceReturns(spaceReturns());
     if (loopWholeTimeline() != TimelineOptions::loopWholeTimeline()) TimelineOptions::setLoopWholeTimeline(loopWholeTimeline());

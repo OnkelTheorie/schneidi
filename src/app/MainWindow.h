@@ -270,8 +270,9 @@ public:
     void applyTimelineOptions();
     // The timeline's tracks at a height step (Settings › Timeline, Timeline View › Track Height): user input
     void setTrackHeightStep(TimelineOptions::TrackHeight height);
-    // Texts of the big step/nudge actions with the sizes chosen in Settings › Timeline
+    // Texts of the big step/nudge actions with the sizes chosen in Settings › Timeline (and Ctrl+T's kind)
     void updateStepTexts();
+    static QString addTransitionText(); // "Add transition (<the chosen kind>)"
     // What AIs on the live connection hear while the app cannot take their commands (Cli::Live::Server::setWaiting;
     // main.cpp hands it in): a tour runs on a practice project, nothing of an AI may land there
     void setLiveWaiting(const std::function<void(const QString& message)>& waiting) { m_liveWaiting = waiting; }
