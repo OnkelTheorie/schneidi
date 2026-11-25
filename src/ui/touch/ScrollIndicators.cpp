@@ -203,6 +203,8 @@ void ScrollIndicators::adopt(QAbstractScrollArea* area)
     if (!area || area->property("ownScrollBars").toBool()) return;
     for (const Adopted& a : std::as_const(m_adopted))
         if (a.area == area) return;
+    // A destroyed area leaves the list (QPointer is already null in destroyed(); the indicators were its children)
+    connect(area, &QObject::destroyed, this, [this] { m_adopted.removeIf([](const Adopted& a) { return !a.area; }); });
     Adopted a{area, area->horizontalScrollBarPolicy(), area->verticalScrollBarPolicy(), {}};
     if (a.h == Qt::ScrollBarAlwaysOff && a.v == Qt::ScrollBarAlwaysOff) {
         m_adopted << a; // (nothing to do; remembered so it is not looked at again)

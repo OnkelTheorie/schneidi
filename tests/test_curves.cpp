@@ -390,6 +390,15 @@ void testUi()
         CHECK(close(opacity().last().value, 80));
     }
 
+    // A selected time that is no point of the clip now (left by a trim or an undo) does not limit the drag: the point
+    // at 80 moves 10 frames to the left, not as far as the stale time 150 allows (review ui-05)
+    sel.setKeyframes(1, {80, 150}, int(AnimParam::Opacity));
+    drag(tv, {xOf(80), yOf(80)}, {xOf(70), yOf(80)}, Qt::ShiftModifier);
+    CHECK_EQ(opacity().last().frame, 70);
+    CHECK(sel.keyTimes() == QSet<int>{70});
+    project.undoStack()->undo();
+    CHECK_EQ(opacity().last().frame, 80);
+
     // Shift = one axis only; snapping to keyframe 50 of the other parameter
     drag(tv, {xOf(80), yOf(80)}, {xOf(51) + 1, yOf(80) - 3}, Qt::ShiftModifier);
     k = opacity();

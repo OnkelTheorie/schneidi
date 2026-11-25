@@ -95,7 +95,7 @@ std::optional<TimelineView::RetimeHit> TimelineView::retimeHitAt(const QPoint& p
         }
         if (hit.point >= 0) return hit;
         if (!bar.contains(pos)) continue;
-        const double mat = c.in + xToFrame(pos.x()) - c.start;
+        const double mat = c.in + xToFrame(pos.x()) - c.pos(); // (subframe place, as drawn and as the points above)
         hit.segment = int(std::count_if(points.begin(), points.end(), [mat](double x) { return x <= mat; }));
         return hit;
     }

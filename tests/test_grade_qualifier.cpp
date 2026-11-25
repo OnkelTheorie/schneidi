@@ -685,6 +685,21 @@ void testStills(const QString& dir)
         p.undoStack()->undo();
         CHECK_EQ(p.stills().size(), 1);
         if (list) CHECK_EQ(list->count(), 1);
+        // The next still after a removal gets the removed one's id (highest + 1): the list shows its own picture, not
+        // the one cached for that id (review ui-01)
+        p.undoStack()->redo();
+        QImage green(1280, 720, QImage::Format_RGB32);
+        green.fill(QColor(20, 200, 40));
+        CHECK_EQ(ed.addGradeStill(id1, green, "a.mp4 00:00:00:00"), sid);
+        if (list && CHECK_EQ(list->count(), 1)) {
+            const QImage icon = list->item(0)->icon().pixmap(32, 32).toImage();
+            const QColor mid = icon.pixelColor(icon.width() / 2, icon.height() / 2);
+            Check::report(mid.green() > 150 && mid.red() < 100, "a reused still id shows the new picture", __FILE__,
+                          __LINE__, mid.name());
+        }
+        p.undoStack()->undo();
+        p.undoStack()->undo();
+        CHECK_EQ(p.stills().size(), 1);
     }
     if (const QString shots = qEnvironmentVariable("GRADE_QUALIFIER_SHOTS"); !shots.isEmpty()) {
         for (int i = 0; i < 3; ++i) ed.addGradeStill(i % 2 ? id2 : id1, picture, QString("a.mp4 00:00:0%1:00").arg(i));

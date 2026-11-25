@@ -185,6 +185,7 @@ bool TimelineView::closeSelectedGap()
 void TimelineView::mousePressEvent(QMouseEvent* e)
 {
     m_touchPointer = Touch::isTouch(e);
+    m_pressUndo = m_editor->project()->undoStack()->index();
     if (m_reorder.on) { // the held clip of the magnetic main track follows the finger (mouseMoveEvent)
         m_reorder.fingerX = e->position().x();
         return;
@@ -277,6 +278,10 @@ void TimelineView::mousePressEvent(QMouseEvent* e)
             sel->set(QSet<int>(group.begin(), group.end()));
         }
         QSet<int> times = sel->keyClip() == k->clipId && sel->keyParam() < 0 ? sel->keyTimes() : QSet<int>{};
+        if (c) { // only keys inside the clip now: after a trim (or an undo) selected times can lie outside it
+            const QVector<int> now = Keys::keyTimes(*c);
+            times.removeIf([&](int t) { return t < 0 || t >= c->length() || !now.contains(t); });
+        }
         const bool ctrl = e->modifiers() & Qt::ControlModifier;
         if (ctrl && times.contains(k->t)) times.remove(k->t);
         else if (ctrl) times.insert(k->t);
@@ -696,7 +701,7 @@ void TimelineView::dragMove(const QPoint& pos, Qt::KeyboardModifiers mods)
         // all selected diamonds stay in the clip
         const int lo = *std::min_element(times.begin(), times.end());
         const int hi = *std::max_element(times.begin(), times.end());
-        delta = std::clamp(delta, -lo, c->length() - 1 - hi);
+        delta = std::max(-lo, std::min(delta, c->length() - 1 - hi)); // not std::clamp: lo > hi would be undefined
         if (delta != m_keyDelta) {
             m_keyDelta = delta;
             update();

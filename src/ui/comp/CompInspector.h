@@ -73,6 +73,7 @@ private:
     int m_clipId = 0, m_node = 0, m_playhead = 0;
     QString m_type;
     QStringList m_keys;
+    int m_builtClip = 0, m_builtNode = 0; // the node the rows were built for (their lambdas capture it)
     QWidget* m_body;
     QLabel* m_title;
     QLabel* m_about;

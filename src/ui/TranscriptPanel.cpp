@@ -268,6 +268,9 @@ bool TranscriptPanel::isCutKey(const QKeyEvent* e) const
 
 bool TranscriptPanel::cutSelection()
 {
+    // The text still shows the words before the last change (a second cut key before the queued rebuild): its
+    // selection would cut their old times out of the new timeline
+    if (m_dirty) return false;
     const auto [first, last] = selectedWords();
     if (first < 0) return false;
     // Contiguous runs inside the selection are one range each (a selection always is one run here)

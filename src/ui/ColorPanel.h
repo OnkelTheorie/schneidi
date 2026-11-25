@@ -202,7 +202,9 @@ private:
     QToolButton* m_stillCompare = nullptr;
     QToolButton* m_stillApply = nullptr;
     QToolButton* m_stillGrab = nullptr;
-    QHash<int, QIcon> m_stillIcons; // decoded once per still, only when the stills show (ids are per project)
+    // decoded once per still, only when the stills show (ids are per project); with the hash of the image it was
+    // decoded from: a deleted or undone still's id comes back for the next one
+    QHash<int, std::pair<size_t, QIcon>> m_stillIcons;
     QToolButton* m_stillRemove = nullptr;
     int m_compareId = 0;
 

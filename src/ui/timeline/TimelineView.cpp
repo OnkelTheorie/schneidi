@@ -985,18 +985,56 @@ QSet<int> TimelineView::withLinked(int id) const
 void TimelineView::cancelTouchDrag()
 {
     // A cancelled touch (the system took it: a call, a gesture of its own): nothing it began is applied
+    // (every kind of drag: the mouse release that follows must find nothing to apply)
     if (m_reorder.on) finishReorder(false);
-    if (m_drag == Drag::Move || m_drag == Drag::Trim || m_drag == Drag::MaybeMove) {
-        m_autoScroll->stop();
-        if (m_drag == Drag::Trim) {
-            m_trimPreview.reset();
-            endTrimFrames();
+    switch (m_drag) {
+    case Drag::None:
+    case Drag::Scrub: // only the playhead: its release still ends the move (playheadMoveFinished)
+        update();
+        return;
+    case Drag::Trim:
+    case Drag::TrimEdit:
+        m_trimPreview.reset();
+        endTrimFrames();
+        break;
+    case Drag::Fade:
+    case Drag::TransitionLength:
+    case Drag::CurvePoint:
+    case Drag::CurveHandle:
+    case Drag::SectionEdge:
+    case Drag::Marks: { // these edit while dragging (merged into one step): taken back
+        QUndoStack* undo = m_editor->project()->undoStack();
+        m_editor->project()->closeMerge();
+        while (undo->index() > m_pressUndo && undo->canUndo()) undo->undo();
+        if (m_drag == Drag::CurvePoint || m_drag == Drag::CurveHandle) curveRelease();
+        if (m_drag == Drag::Marks) {
+            m_markGrab = MarkGrab::None;
+            m_markMoved = m_markRight = false;
         }
-        m_drag = Drag::None;
-        m_dragIds.clear();
-        m_trimIds.clear();
-        m_dragFine = m_trimDelta = m_dragTrackDelta = 0;
+        m_sectionDrag = -1;
+        break;
     }
+    case Drag::Rubber:
+        m_editor->selection()->set(m_rubberBase); // as before the frame was drawn
+        m_rubberBase.clear();
+        break;
+    case Drag::NodeRange:
+        m_nodeDrag = {};
+        m_nodeFirst = m_nodeStartFirst;
+        m_nodeEnd = m_nodeStartEnd;
+        break;
+    default: // the others apply on the release only
+        break;
+    }
+    m_autoScroll->stop();
+    m_drag = Drag::None;
+    m_dragIds.clear();
+    m_trimIds.clear();
+    m_dragFine = m_trimDelta = m_dragTrackDelta = 0;
+    m_trimEditDelta = m_rampDelta = m_keyDelta = 0;
+    m_cueIds.clear();
+    m_cueDelta = m_cueTrackDelta = 0;
+    m_trackDropTo = -1;
     update();
 }
 

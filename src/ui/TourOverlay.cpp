@@ -416,8 +416,11 @@ void TourOverlay::relayout()
     if (geometry() != parentWidget()->rect()) setGeometry(parentWidget()->rect());
     QVector<QRect> holes;
     if (!m_question && m_targets)
-        for (const QRect& t : m_targets())
-            if (t.isValid()) holes << t.adjusted(-kPad, -kPad, kPad, kPad).intersected(rect());
+        for (const QRect& t : m_targets()) {
+            // (a target wholly outside the window has no part to show: an empty hole drew a stray ring top left)
+            const QRect hole = t.isValid() ? t.adjusted(-kPad, -kPad, kPad, kPad).intersected(rect()) : QRect();
+            if (!hole.isEmpty()) holes << hole;
+        }
     // Neighbours (buttons side by side: "Points" and "Pen") get one hole round both: two rings drawn over each other
     // cut into the buttons' text. The first (main) hole keeps its place in the list
     for (bool merged = true; merged;) {
