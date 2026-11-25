@@ -141,13 +141,27 @@ bool softwareDevice(const QRhiDriverInfo& info)
     return false;
 }
 
+// An OpenGL ES platform (Android, some ARM boards): Qt was built against libGLESv2, every context is an ES one
+bool glesPlatform()
+{
+    return QOpenGLContext::openGLModuleType() == QOpenGLContext::LibGLES;
+}
+
 // The OpenGL format the context asks for: 3.3 core (3D textures, texelFetch, R8/RG8; the default format asks for 2.0,
-// and QRhi then assumes its limits)
+// and QRhi then assumes its limits). On OpenGL ES 3.0 (the same features; the engine's shaders are baked for GLSL 300
+// es): an ES driver has no 3.3 and no profiles, it refused the desktop request with EGL_BAD_MATCH (3009) and the
+// picture was composed on the CPU (Galaxy A51, Mali-G72). EGL gives the newest ES version compatible with 3.0.
 QSurfaceFormat glFormat()
 {
     QSurfaceFormat format = QSurfaceFormat::defaultFormat();
-    format.setVersion(3, 3);
-    format.setProfile(QSurfaceFormat::CoreProfile);
+    if (glesPlatform()) {
+        format.setRenderableType(QSurfaceFormat::OpenGLES);
+        format.setVersion(3, 0);
+        format.setProfile(QSurfaceFormat::NoProfile);
+    } else {
+        format.setVersion(3, 3);
+        format.setProfile(QSurfaceFormat::CoreProfile);
+    }
     // A GPU reset (driver crash, hang recovery) is then reported (QRhi::isDeviceLost) instead of every later frame
     // failing silently
     format.setOption(QSurfaceFormat::ResetNotification);
@@ -182,7 +196,14 @@ QRhi* createRhi(std::unique_ptr<QOffscreenSurface>& surface, QString& api, QOffs
     QRhiGles2InitParams params;
     params.format = format;
     params.fallbackSurface = external ? external : surface.get();
-    return QRhi::create(QRhi::OpenGLES2, &params);
+    QRhi* rhi = QRhi::create(QRhi::OpenGLES2, &params);
+    // An ES driver without the robustness extension may refuse the reset strategy: the context without it (a device
+    // loss then shows as failing frames, as before the option)
+    if (!rhi && glesPlatform()) {
+        params.format.setOption(QSurfaceFormat::ResetNotification, false);
+        rhi = QRhi::create(QRhi::OpenGLES2, &params);
+    }
+    return rhi;
 #endif
 }
 

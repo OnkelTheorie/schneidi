@@ -576,6 +576,9 @@ struct Reader::Impl {
     // Decoder thread only
     AVCodecContext* dec = nullptr;
     Hardware::Device hw;
+    // Android: FFmpeg's MediaCodec decoder instead of `codec` (software pictures, NV12/P010 -> planarFormat in finish();
+    // a failure falls back to `codec` like a hardware device)
+    bool mediaCodec = false;
     bool hwRefused = false; // the decoder offered no hardware format (profile): software from now on
     AVPacket* pkt = nullptr;
     AVFrame* frame = nullptr;
@@ -692,13 +695,17 @@ struct Reader::Impl {
         avcodec_free_context(&dec);
         av_buffer_unref(&hw.context);
         hw = {};
-        dec = avcodec_alloc_context3(codec);
+        const AVCodec* use = hardware ? Hardware::mediaCodecDecoder(codec->id) : nullptr;
+        mediaCodec = use != nullptr;
+        if (!use) use = codec;
+        dec = avcodec_alloc_context3(use);
         if (!dec || avcodec_parameters_to_context(dec, stream->codecpar) < 0 || (!hardware && g_loseDecoder == 2)) {
+            if (mediaCodec) return openDecoder(false, error);
             if (error) *error = QStringLiteral("decoder context");
             return false;
         }
         dec->thread_count = opt.threads;
-        if (hardware) hw = Hardware::deviceFor(codec);
+        if (hardware && !mediaCodec) hw = Hardware::deviceFor(codec);
         if (hw.context) {
             dec->hw_device_ctx = av_buffer_ref(hw.context);
             dec->opaque = this;
@@ -706,8 +713,8 @@ struct Reader::Impl {
             dec->thread_count = 1;            // FFmpeg offers no CUDA decoding with frame threads
             dec->extra_hw_frames = kQueue + 3; // queued, being downloaded, the tail
         }
-        if (const int r = avcodec_open2(dec, codec, nullptr); r < 0) {
-            if (hw.context) return openDecoder(false, error); // driver refused this stream
+        if (const int r = avcodec_open2(dec, use, nullptr); r < 0) {
+            if (hw.context || mediaCodec) return openDecoder(false, error); // driver refused this stream
             if (error) *error = QString("cannot open decoder %1: %2").arg(codec->name, errorText(r));
             return false;
         }
@@ -976,6 +983,14 @@ struct Reader::Impl {
             av_frame_free(&sw);
             if (!out) return nullptr;
             sw = out;
+        } else if (mediaCodec && sw->format == AV_PIX_FMT_YUV420P && planarFormat == AV_PIX_FMT_YUVJ420P) {
+            sw->format = planarFormat; // the same planes (the range is the stream's)
+        } else if (mediaCodec && sw->format != planarFormat) {
+            // MediaCodec's semi-planar picture (checked in step: NV12/P010 only)
+            AVFrame* out = planar(sw, planarFormat);
+            av_frame_free(&sw);
+            if (!out) return nullptr;
+            sw = out;
         }
         if (turns) {
             // Never the picture unturned (squeezed into the upright size): what turned() cannot turn in RGBA
@@ -1051,11 +1066,23 @@ struct Reader::Impl {
                 if (!receive(out, reachedEnd, target)) break;
                 continue;
             }
-            if (!ignorable(r) && hw.context) hwFailed = true;
+            if (!ignorable(r) && (hw.context || mediaCodec)) hwFailed = true;
             break;
         }
         if (send) av_packet_unref(pkt);
         receive(out, reachedEnd, target);
+        // MediaCodec hands over the device's own layout: only what planar() turns into the stream's format (or that
+        // format itself) is taken, anything else (a vendor's tiled format, 8 bits for a 10-bit stream) decodes in software
+        if (mediaCodec)
+            for (const Decoded& d : out) {
+                const auto f = AVPixelFormat(d.frame->format);
+                const bool tenBit = planarFormat == AV_PIX_FMT_YUV420P10LE;
+                if (f != planarFormat && f != (tenBit ? AV_PIX_FMT_P010LE : AV_PIX_FMT_NV12)
+                    && !(f == AV_PIX_FMT_YUV420P && planarFormat == AV_PIX_FMT_YUVJ420P)) {
+                    if (!hwFailed) qWarning("Video: MediaCodec gave %s pictures: software decoding", av_get_pix_fmt_name(f));
+                    hwFailed = true;
+                }
+            }
         // The decoder offered no hardware format for this stream (profile): software, with threads
         if (hwRefused && hw.context) hwFailed = true;
     }
@@ -1327,7 +1354,7 @@ struct Reader::Impl {
                 }
             }
             stats.decoded += int(fresh.size());
-            stats.hardware = hardware && !hwFailed;
+            stats.hardware = (hardware || mediaCodec) && !hwFailed;
             if (hwFailed || gen != generation) {
                 for (Decoded& d : keep) av_frame_free(&d.frame);
                 av_frame_free(&before.frame);

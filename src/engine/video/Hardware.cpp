@@ -10,7 +10,14 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/buffer.h>
+#ifdef Q_OS_ANDROID
+#include <libavcodec/jni.h>
+#endif
 }
+
+#ifdef Q_OS_ANDROID
+#include <QJniEnvironment>
+#endif
 
 #include <atomic>
 #include <condition_variable>
@@ -68,6 +75,8 @@ std::vector<AVHWDeviceType> candidates()
     return {AV_HWDEVICE_TYPE_D3D11VA};
 #elif defined(__APPLE__)
     return {AV_HWDEVICE_TYPE_VIDEOTOOLBOX};
+#elif defined(Q_OS_ANDROID)
+    return {AV_HWDEVICE_TYPE_MEDIACODEC}; // only as "on": decoding goes through mediaCodecDecoder(), no device
 #else
     return {AV_HWDEVICE_TYPE_CUDA, AV_HWDEVICE_TYPE_VAAPI};
 #endif
@@ -111,9 +120,37 @@ AVBufferRef* open(AVHWDeviceType type)
 
 } // namespace
 
+const AVCodec* mediaCodecDecoder(int codecId)
+{
+#ifdef Q_OS_ANDROID
+    const std::vector<AVHWDeviceType> types = candidates();
+    if (types.size() != 1 || types.front() != AV_HWDEVICE_TYPE_MEDIACODEC) return nullptr;
+    const char* name = nullptr;
+    switch (AVCodecID(codecId)) {
+    case AV_CODEC_ID_H264: name = "h264_mediacodec"; break;
+    case AV_CODEC_ID_HEVC: name = "hevc_mediacodec"; break;
+    case AV_CODEC_ID_VP9: name = "vp9_mediacodec"; break;
+    case AV_CODEC_ID_AV1: name = "av1_mediacodec"; break;
+    default: return nullptr;
+    }
+    static std::once_flag once;
+    static bool jvm = false;
+    std::call_once(once, [] {
+        JavaVM* vm = QJniEnvironment::javaVM();
+        jvm = vm && av_jni_set_java_vm(vm, nullptr) >= 0;
+        qInfo("Video decoding: mediacodec %s", jvm ? "ready" : "not available (no Java VM)");
+    });
+    return jvm ? avcodec_find_decoder_by_name(name) : nullptr;
+#else
+    Q_UNUSED(codecId);
+    return nullptr;
+#endif
+}
+
 bool deviceReady(const AVCodec* codec)
 {
     if (!codec) return false;
+    if (mediaCodecDecoder(codec->id)) return true;
     const std::vector<AVHWDeviceType> types = candidates();
     std::lock_guard lock(g_mutex);
     for (AVHWDeviceType type : types) {
@@ -129,6 +166,7 @@ Device deviceFor(const AVCodec* codec)
     if (!codec) return {};
     const std::vector<AVHWDeviceType> types = candidates();
     for (AVHWDeviceType type : types) {
+        if (type == AV_HWDEVICE_TYPE_MEDIACODEC) continue; // a decoder of its own (mediaCodecDecoder), no device
         const AVPixelFormat fmt = hwFormat(codec, type);
         if (fmt == AV_PIX_FMT_NONE) continue;
         // The context is never freed while the program runs (g_devices keeps its reference)
@@ -146,7 +184,7 @@ void warmUp()
         // The global pool: it is waited for at exit, never a driver call cut off halfway
         QThreadPool::globalInstance()->start([types] {
             for (AVHWDeviceType type : types)
-                if (open(type)) break;
+                if (type != AV_HWDEVICE_TYPE_MEDIACODEC && open(type)) break;
         });
     });
 }

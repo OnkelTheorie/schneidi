@@ -584,6 +584,13 @@ private:
     bool m_showDurations = false;
     int m_playhead = 0;
     double m_playSpeed = 0;       // setPlaying
+    // Playing in the centre mode the whole view slides every frame: a full repaint each time. Where that is dear (a
+    // phone: ~25 ms a paint, the viewer's picture waited for it and reached 20 of 60 fps) the slides are spaced by
+    // twice the paint's cost, the picture gets the time between (updateSliding)
+    double m_paintMs = 0;          // smoothed cost of a paint
+    qint64 m_lastPaintNs = 0;      // steady clock, start of the last paint
+    bool m_slidePending = false;   // a spaced repaint is scheduled
+    void updateSliding();
     bool m_following = false;     // the view follows the playhead (until the user scrolls/zooms)
     int m_followMode = 0;         // TimelineOptions::Follow at the play start
     void followPlayhead(int frame); // turn the view along with the playing playhead (only from setPlayhead)
