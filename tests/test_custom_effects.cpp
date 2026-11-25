@@ -3,7 +3,8 @@
 // Filter: pixels change as the chain says (negate inverts, hue=s=0 is gray, fade follows the clip time), forbidden
 // filters/options and broken chains are refused at edit time with the reason, the comp node "fx" runs it too, the
 // project file keeps chain, shader code, values and keyframes. Shader: a compile error comes back with its line
-// (needs qsb; the pixels on the card are tested by test_custom_shader).
+// (needs qsb; the pixels on the card are tested by test_custom_shader). Sizes in a chain are project pixels: the
+// preview at half size shows what the export shows scaled down (pixelize, crop, drawbox), as the own scanlines and noise.
 #include "cli/Commands.h"
 #include "cli/CommandsDetail.h"
 #include "core/CodeTrust.h"
@@ -13,6 +14,7 @@
 #include "core/TimelineOps.h"
 #include "engine/picture/CompNodes.h"
 #include "engine/picture/CustomEffects.h"
+#include "engine/picture/Renderer.h"
 
 #include "check.h"
 
@@ -355,6 +357,96 @@ void filterChecks()
     }
 }
 
+// Mean absolute difference per channel (0..255)
+double difference(const QImage& a, const QImage& b)
+{
+    if (a.size() != b.size() || a.isNull()) return 255;
+    const QImage x = a.convertToFormat(QImage::Format_RGB32), y = b.convertToFormat(QImage::Format_RGB32);
+    double sum = 0;
+    for (int j = 0; j < x.height(); ++j) {
+        const auto* p = reinterpret_cast<const QRgb*>(x.constScanLine(j));
+        const auto* q = reinterpret_cast<const QRgb*>(y.constScanLine(j));
+        for (int i = 0; i < x.width(); ++i)
+            sum += std::abs(qRed(p[i]) - qRed(q[i])) + std::abs(qGreen(p[i]) - qGreen(q[i]))
+                   + std::abs(qBlue(p[i]) - qBlue(q[i]));
+    }
+    return sum / (3.0 * x.width() * x.height());
+}
+
+// A clip with one effect rendered at the project size (export) and at half size (preview): the preview must be the
+// export scaled down. Returns {preview vs export scaled down, preview vs the clip without the effect scaled down}.
+std::pair<double, double> previewVsExport(const QString& still, const QString& effect, const QVariantMap& params)
+{
+    Clip c;
+    c.id = 1;
+    c.mediaPath = still;
+    c.start = 0;
+    c.in = 0;
+    c.out = 24;
+    Timeline plain;
+    plain.video.resize(1);
+    plain.video[0].clips = {c};
+    EffectRegistry::add(c, effect);
+    for (EffectInstance& e : c.effects)
+        if (e.effectId == effect) e.params = params;
+    Timeline tl = plain;
+    tl.video[0].clips = {c};
+    ProjectFormat f;
+    f.width = 640;
+    f.height = 360;
+    f.rate = FrameRate{25, 1};
+    Picture::Options o;
+    o.format = f;
+    o.gpu = false;
+    o.mode = Picture::Mode::Export;
+    const QSize half(320, 180);
+    const QImage full = Picture::Renderer(tl, o).render(3).toImage().scaled(half, Qt::IgnoreAspectRatio,
+                                                                                Qt::SmoothTransformation);
+    const QImage none = Picture::Renderer(plain, o).render(3).toImage().scaled(half, Qt::IgnoreAspectRatio,
+                                                                                   Qt::SmoothTransformation);
+    o.mode = Picture::Mode::Preview;
+    o.output = half;
+    const QImage preview = Picture::Renderer(tl, o).render(3).toImage();
+    return {difference(preview, full), difference(preview, none)};
+}
+
+void projectScale(const QString& dir)
+{
+    // A picture with detail at every scale: a gradient with a fine checker over it, mid gray around the middle
+    QImage img(640, 360, QImage::Format_RGB32);
+    for (int y = 0; y < img.height(); ++y)
+        for (int x = 0; x < img.width(); ++x) {
+            const int checker = ((x / 8 + y / 8) & 1) ? 40 : 0;
+            img.setPixel(x, y, qRgb(60 + x * 120 / 640 + checker, 70 + y * 110 / 360 + checker, 128));
+        }
+    const QString still = dir + "/detail.png";
+    if (!CHECK(img.save(still))) return;
+    // Chains with pixel sizes: as large in the preview as in the export (crop=480:270 used to fail on the 320x180
+    // preview picture: the preview showed the clip uncropped)
+    for (const QString chain : {QStringLiteral("pixelize=w=40:h=40"), QStringLiteral("crop=480:270"),
+                                QStringLiteral("drawbox=x=100:y=60:w=200:h=100:color=red:t=fill"),
+                                QStringLiteral("gblur=sigma=12")}) {
+        CodeTrust::trust(chain);
+        const auto [same, changed] = previewVsExport(still, PC::kFilterId, {{PC::kChainKey, chain}});
+        std::printf("%s: preview vs export %.2f (vs no effect %.2f)\n", qPrintable(chain), same, changed);
+        CHECK(same < 3.5); // scaled twice (to project size and back): soft edges differ a little
+        CHECK(changed > 3 * same);
+    }
+    // Own effects with a pixel pitch: scanlines every other project line, noise with project-pixel grain
+    {
+        const auto [same, changed] = previewVsExport(still, "frei0r.scanline0r", {});
+        std::printf("scanlines: preview vs export %.2f (vs no effect %.2f)\n", same, changed);
+        CHECK(same < 1.0);
+        CHECK(changed > 3 * same);
+    }
+    {
+        const auto [same, changed] = previewVsExport(still, "frei0r.rgbnoise", {{"0", 0.3}});
+        std::printf("noise: preview vs export %.2f (vs no effect %.2f)\n", same, changed);
+        CHECK(same < 2.5);
+        CHECK(changed > 2 * same);
+    }
+}
+
 void fxNode()
 {
     Picture::Comp::Buf src(Picture::Comp::Buf::Rgba, 32, 18);
@@ -392,6 +484,7 @@ int main(int argc, char** argv)
         filterChecks();
         filterTiming();
         fxNode();
+        projectScale(dir.path());
     } else {
         std::printf("no libavfilter in this build: only the 'not available' answer is tested\n");
         CHECK(PC::checkFilter("negate").contains("not available"));

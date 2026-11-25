@@ -577,10 +577,11 @@ QString checkSegment(const AVFilterGraphSegment* seg)
     return {};
 }
 
-// One built graph: buffer -> chain -> scale back to the size -> rgba -> buffersink
+// One built graph: buffer -> (scale to the working size) -> chain -> scale back to the size -> rgba -> buffersink
 struct Graph {
     QString chain;
     int w = 0, h = 0;
+    int ww = 0, wh = 0; // the size the chain works at (applyFilter's `work`)
     std::unique_ptr<AVFilterGraph, GraphFree> graph;
     AVFilterContext* src = nullptr;
     AVFilterContext* sink = nullptr;
@@ -592,8 +593,8 @@ struct Graph {
     double lastSeconds = -1e300; // the time of the last picture it worked on
 };
 
-// Builds the graph for w x h; nullptr = error in *error
-std::unique_ptr<Graph> build(const QString& chain, int w, int h, QString* error)
+// Builds the graph for w x h, the chain working at ww x wh; nullptr = error in *error
+std::unique_ptr<Graph> build(const QString& chain, int w, int h, int ww, int wh, QString* error)
 {
     FfmpegLog::Capture log;
     auto fail = [&](const QString& what) -> std::unique_ptr<Graph> {
@@ -608,6 +609,8 @@ std::unique_ptr<Graph> build(const QString& chain, int w, int h, QString* error)
     g->chain = chain;
     g->w = w;
     g->h = h;
+    g->ww = ww;
+    g->wh = wh;
     g->graph.reset(avfilter_graph_alloc());
     if (!g->graph) return fail(QStringLiteral("out of memory"));
     g->graph->nb_threads = 1; // frames render in parallel already
@@ -651,7 +654,13 @@ std::unique_ptr<Graph> build(const QString& chain, int w, int h, QString* error)
 
     const QByteArray srcArgs =
         QStringLiteral("video_size=%1x%2:pix_fmt=rgba:time_base=1/1000000:pixel_aspect=1/1").arg(w).arg(h).toUtf8();
-    AVFilterContext *scale = nullptr, *format = nullptr;
+    AVFilterContext *scale = nullptr, *format = nullptr, *toWork = nullptr;
+    // The picture at the working size first (project pixels: a preview at half size gets the picture the export gets)
+    if ((ww != w || wh != h)
+        && (ret = avfilter_graph_create_filter(&toWork, avfilter_get_by_name("scale"), "work",
+                                               QStringLiteral("w=%1:h=%2").arg(ww).arg(wh).toUtf8().constData(),
+                                               nullptr, g->graph.get())) < 0)
+        return fail(QStringLiteral("cannot set up the filter graph: %1").arg(avError(ret)));
     if ((ret = avfilter_graph_create_filter(&g->src, avfilter_get_by_name("buffer"), "in", srcArgs.constData(), nullptr,
                                             g->graph.get())) < 0
         || (ret = avfilter_graph_create_filter(&scale, avfilter_get_by_name("scale"), "size",
@@ -662,7 +671,9 @@ std::unique_ptr<Graph> build(const QString& chain, int w, int h, QString* error)
         || (ret = avfilter_graph_create_filter(&g->sink, avfilter_get_by_name("buffersink"), "out", nullptr, nullptr,
                                                g->graph.get())) < 0)
         return fail(QStringLiteral("cannot set up the filter graph: %1").arg(avError(ret)));
-    if ((ret = avfilter_link(g->src, 0, ins->filter_ctx, unsigned(ins->pad_idx))) < 0
+    if ((toWork && ((ret = avfilter_link(g->src, 0, toWork, 0)) < 0
+                    || (ret = avfilter_link(toWork, 0, ins->filter_ctx, unsigned(ins->pad_idx))) < 0))
+        || (!toWork && (ret = avfilter_link(g->src, 0, ins->filter_ctx, unsigned(ins->pad_idx))) < 0)
         || (ret = avfilter_link(outs->filter_ctx, unsigned(outs->pad_idx), scale, 0)) < 0
         || (ret = avfilter_link(scale, 0, format, 0)) < 0 || (ret = avfilter_link(format, 0, g->sink, 0)) < 0)
         return fail(QStringLiteral("cannot link the chain: %1").arg(avError(ret)));
@@ -671,8 +682,8 @@ std::unique_ptr<Graph> build(const QString& chain, int w, int h, QString* error)
     // No picture inside the chain may be much larger than the clip's (pad=w=16000:h=16000 would take a gigabyte per
     // graph, and every render thread keeps a few): each side at most 2x the larger side (a turn still fits) and
     // 8192, the area at most 4x
-    const int side = std::min(8192, 2 * std::max(w, h));
-    const qint64 area = 4 * qint64(w) * h;
+    const int side = std::min(8192, 2 * std::max({w, h, ww, wh}));
+    const qint64 area = 4 * std::max(qint64(w) * h, qint64(ww) * wh);
     for (unsigned i = 0; i < g->graph->nb_filters; ++i) {
         const AVFilterContext* f = g->graph->filters[i];
         for (unsigned j = 0; j < f->nb_outputs; ++j) {
@@ -680,7 +691,7 @@ std::unique_ptr<Graph> build(const QString& chain, int w, int h, QString* error)
             if (l && (l->w > side || l->h > side || qint64(l->w) * l->h > area))
                 return fail(QStringLiteral("the chain makes a picture of %1x%2 from %3x%4 (at most %5 per side and 4 "
                                            "times the area)")
-                                .arg(l->w).arg(l->h).arg(w).arg(h).arg(side));
+                                .arg(l->w).arg(l->h).arg(ww).arg(wh).arg(side));
         }
     }
     return g;
@@ -751,7 +762,7 @@ QString checkFilter(const QString& chain, QSize size, int budgetMs)
                 p[0] = uint8_t(x * 255 / w), p[1] = uint8_t(y * 255 / h), p[2] = 128, p[3] = 255;
             }
         QString error;
-        if (auto g = build(chain, w, h, &error)) run(*g, px.data(), 0.0, &error);
+        if (auto g = build(chain, w, h, w, h, &error)) run(*g, px.data(), 0.0, &error);
         std::lock_guard lock(st->mutex);
         st->error = error;
         st->finished = true;
@@ -763,24 +774,29 @@ QString checkFilter(const QString& chain, QSize size, int budgetMs)
     return st->error;
 }
 
-bool applyFilter(const QString& chain, uint8_t* rgba, int width, int height, double seconds, QString* error)
+bool applyFilter(const QString& chain, uint8_t* rgba, int width, int height, double seconds, QString* error, QSize work)
 {
     if (chain.trimmed().isEmpty() || width <= 0 || height <= 0) return true;
+    // The working size: at most 8192 per side (as checkFilter's picture), the picture's own when not given
+    const int ww = work.width() > 0 && work.height() > 0 ? std::min(work.width(), 8192) : width;
+    const int wh = work.width() > 0 && work.height() > 0 ? std::min(work.height(), 8192) : height;
     ThreadCache& c = t_cache;
-    const QString failKey = QStringLiteral("%1|%2x%3").arg(chain).arg(width).arg(height);
+    const QString failKey = QStringLiteral("%1|%2x%3|%4x%5").arg(chain).arg(width).arg(height).arg(ww).arg(wh);
     if (auto f = c.failed.constFind(failKey); f != c.failed.cend()) {
         if (error) *error = *f;
         return false;
     }
     auto it = std::find_if(c.graphs.begin(), c.graphs.end(),
-                           [&](const auto& g) { return g->chain == chain && g->w == width && g->h == height; });
+                           [&](const auto& g) {
+                               return g->chain == chain && g->w == width && g->h == height && g->ww == ww && g->wh == wh;
+                           });
     if (it != c.graphs.end() && (*it)->stateful && seconds < (*it)->lastSeconds) { // back in time: a fresh state
         c.graphs.erase(it);
         it = c.graphs.end();
     }
     if (it == c.graphs.end()) {
         QString why;
-        auto g = build(chain, width, height, &why);
+        auto g = build(chain, width, height, ww, wh, &why);
         if (!g) {
             if (c.failed.size() > 32) c.failed.clear();
             c.failed.insert(failKey, why);
@@ -836,7 +852,7 @@ QString unavailable()
 
 bool filterAvailable() { return false; }
 QString checkFilter(const QString& chain, QSize, int) { return chain.trimmed().isEmpty() ? QString() : unavailable(); }
-bool applyFilter(const QString& chain, uint8_t*, int, int, double, QString* error)
+bool applyFilter(const QString& chain, uint8_t*, int, int, double, QString* error, QSize)
 {
     if (chain.trimmed().isEmpty()) return true;
     if (error) *error = unavailable();

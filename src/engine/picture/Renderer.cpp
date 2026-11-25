@@ -776,9 +776,12 @@ struct Renderer::Impl {
                 const double sigma = std::max(0.0, Keys::valueAt(c, P::FxBlur, t)) * frameHeight / 2000.0;
                 VideoEffects::gaussian(img.data(), img.w, img.h, sigma);
             } else if (Custom::isCustom(inst.effectId)) {
-                Custom::applyToClip(c, inst, t, ctx.fps, img.data(), img.w, img.h); // filter chain, shader (0.19)
+                // Filter chain, shader (0.19). A chain works on the picture at its size in project pixels (`fit`):
+                // the same pixels in the preview (output size) and the export (decode size depends on the zoom)
+                const QSize project(std::max(1, int(std::lround(fit.width()))), std::max(1, int(std::lround(fit.height()))));
+                Custom::applyToClip(c, inst, t, ctx.fps, img.data(), img.w, img.h, project);
             } else if (!VideoEffects::apply(inst.effectId, img.data(), img.w, img.h, effectParams(c, inst, *d, t),
-                                            int64_t(c.in + t))) {
+                                            int64_t(c.in + t), frameHeight / std::max(1.0, ctx.PH))) {
                 static std::once_flag warned;
                 std::call_once(warned, [&] {
                     qWarning("Picture engine: effect %s not supported yet (skipped)", qPrintable(inst.effectId));

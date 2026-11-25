@@ -31,8 +31,10 @@ bool isCustom(const QString& effectId);
 // Can this machine draw the effect now (false: why)? The filter needs libavfilter, the shader qsb and a GPU
 bool canRender(const QString& effectId, QString* why = nullptr);
 // Draws a custom effect instance of clip c at clip frame t (its values and keyframes) onto the clip's picture; false =
-// not drawn (the reason is logged once per effect and reason; the picture stays as it was)
-bool applyToClip(const Clip& c, const EffectInstance& inst, double t, double fps, uint8_t* rgba, int width, int height);
+// not drawn (the reason is logged once per effect and reason; the picture stays as it was). `project`: the picture's
+// size in project pixels (a filter chain works at it, see applyFilter; empty = its own size)
+bool applyToClip(const Clip& c, const EffectInstance& inst, double t, double fps, uint8_t* rgba, int width, int height,
+                 QSize project = {});
 
 // ---- FFmpeg filter chain ----
 bool filterAvailable();
@@ -43,8 +45,12 @@ QStringList allowedFilters();
 // (the picture the effect will get, e.g. the timeline's; empty = a small one), longer than budgetMs for that picture)
 QString checkFilter(const QString& chain, QSize size = {}, int budgetMs = 3000);
 // Runs the chain on the picture at clip time `seconds` (the filters' t, so expressions animate); false = not drawn
-// (error in *error)
-bool applyFilter(const QString& chain, uint8_t* rgba, int width, int height, double seconds, QString* error = nullptr);
+// (error in *error). `work`: the size the chain sees the picture at - the picture's size in project pixels, so pixel
+// sizes in the chain (pixelize=w=24, crop=1280:720, gblur=sigma=12, drawbox=x=100) mean the same in a preview at half
+// size, the export and an export at another render size; the picture is scaled to it before the chain and back after
+// (only when it differs: the export at project size pays nothing). Empty = the picture's own size.
+bool applyFilter(const QString& chain, uint8_t* rgba, int width, int height, double seconds, QString* error = nullptr,
+                 QSize work = {});
 
 // ---- Shader ----
 struct ShaderValues {
