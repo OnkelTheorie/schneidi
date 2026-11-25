@@ -224,7 +224,11 @@ void convert(const Picture& pic, uint8_t* buffer, int width, int height, const I
                                info.colorspace, info.fullRange)) {
         SwsContext* ctx = cachedContext(width, height, src, dst, flags);
         if (!ctx) return;
-        lumaTransfer(ctx, info.colorspace, 601, sourceRange(src, info.fullRange));
+        // RGB to RGB without an unscaled shortcut (gbrp10/12/16, rgb48, rgba64) goes through YUV inside swscale: the
+        // same matrix both ways (as convertScaled), or the colors shift (a 709 picture: up to 13 levels)
+        const AVPixFmtDescriptor* srcDesc = av_pix_fmt_desc_get(src);
+        const bool rgbSource = srcDesc && (srcDesc->flags & AV_PIX_FMT_FLAG_RGB);
+        lumaTransfer(ctx, rgbSource ? 601 : info.colorspace, 601, sourceRange(src, info.fullRange));
         sws_scale(ctx, frame->data, frame->linesize, 0, height, outData, outStride);
     }
 }

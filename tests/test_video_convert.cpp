@@ -5,6 +5,7 @@
 // fast (preview) conversions, unscaled and scaled.
 // The range: a yuvj picture is full range even when the stream is not tagged so (MJPEG in AVI), a 10-bit picture tagged
 // full range (no yuvj twin) is not read as video range.
+// High-bit RGB (no unscaled swscale shortcut to RGBA) keeps its colours at the source size as when scaled.
 #include "check.h"
 
 #include "engine/video/Convert.h"
@@ -18,6 +19,7 @@ extern "C" {
 #include <QCoreApplication>
 #include <QTemporaryDir>
 
+#include <algorithm>
 #include <cmath>
 #include <thread>
 #include <vector>
@@ -150,6 +152,40 @@ void testFieldHeights()
     }
 }
 
+// High-bit RGB (FFV1 gbrp10le, 1280x720: no stated matrix, so the Reader says 709) has no unscaled swscale shortcut to
+// RGBA and goes RGB -> YUV -> RGB inside swscale: both ways need the same matrix, at the source size as when scaled
+void testHighBitRgb(const QTemporaryDir& tmp)
+{
+    const QString path = Check::makeMedia(
+        tmp.filePath("gbrp10.mkv"),
+        {"-f", "lavfi", "-i", "color=c=0xC04020:s=640x720:r=25:d=0.4", "-f", "lavfi", "-i",
+         "color=c=0x20A0E0:s=640x720:r=25:d=0.4", "-filter_complex", "[0][1]hstack,format=gbrp10le", "-c:v", "ffv1"});
+    if (!CHECK(!path.isEmpty())) return;
+    Video::Reader::Options o;
+    o.hardware = false;
+    auto r = Video::Reader::open(path, o);
+    if (!CHECK(r)) return;
+    std::printf("gbrp10 1280x720: matrix %d\n", r->info().colorspace);
+    const int want[2][3] = {{0xC0, 0x40, 0x20}, {0x20, 0xA0, 0xE0}};
+    for (const bool fast : {false, true})
+        for (const QSize size : {QSize(1280, 720), QSize(640, 360)}) {
+            const int w = size.width(), h = size.height();
+            const auto out = convert(*r, w, h, fast);
+            if (!CHECK(!out.empty())) continue;
+            int worst = 0;
+            for (int half = 0; half < 2; ++half) {
+                const uint8_t* px = out.data() + (size_t(h / 2) * w + size_t(w / 4 + half * w / 2)) * 4;
+                for (int c = 0; c < 3; ++c) worst = std::max(worst, std::abs(int(px[c]) - want[half][c]));
+            }
+            std::printf("  %s %dx%d: %d %d %d / %d %d %d (largest error %d)\n", fast ? "fast" : "exact", w, h,
+                        out[(size_t(h / 2) * w + w / 4) * 4], out[(size_t(h / 2) * w + w / 4) * 4 + 1],
+                        out[(size_t(h / 2) * w + w / 4) * 4 + 2], out[(size_t(h / 2) * w + 3 * w / 4) * 4],
+                        out[(size_t(h / 2) * w + 3 * w / 4) * 4 + 1], out[(size_t(h / 2) * w + 3 * w / 4) * 4 + 2],
+                        worst);
+            CHECK(worst <= 2);
+        }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -184,6 +220,7 @@ int main(int argc, char** argv)
     CHECK_EQ(r2020->info().colorspace, 2020);
     CHECK_EQ(r601->info().colorspace, 601);
     CHECK_EQ(r709->info().colorspace, 709);
+    testHighBitRgb(tmp);
     for (const bool fast : {false, true})
         for (const QSize size : {QSize(640, 360), QSize(320, 180)}) {
             const int w = size.width(), h = size.height();
