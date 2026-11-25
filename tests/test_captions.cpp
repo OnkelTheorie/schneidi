@@ -139,9 +139,22 @@ void testMergeSpeakers()
     Captions::Options o;
     o.maxWords = 6;
     o.maxGapFrames = 36;
+    o.bySpeaker = true;
     QStringList cues;
     for (const SubtitleCue& c : Captions::fromWords(both, o)) cues << c.text;
     for (const QString& c : cues) CHECK(!(c.contains("Einer") && c.contains("Headshot")));
+    // Words of two audio tracks without speakers (the Transcript panel over all tracks, two recordings heard at once):
+    // phrases as before, no cue of one word each time the track changes
+    {
+        Captions::Options plain;
+        plain.maxWords = 4;
+        plain.maxGapFrames = 36;
+        QVector<TranscriptCut::Word> mixed{word(10, 20, "Eins"), word(21, 30, "zwei"), word(31, 40, "drei"), word(41, 50, "vier")};
+        mixed[1].track = mixed[3].track = 1;
+        QStringList got;
+        for (const SubtitleCue& c : Captions::fromWords(mixed, plain)) got << c.text;
+        CHECK_EQ(got.join(" | "), QString("Eins zwei drei vier"));
+    }
     // Phrases of one speaker: a sentence end or a long pause closes one
     CHECK_EQ(Captions::phrases(chat, 42), (QVector<QPair<int, int>>{{0, 1}, {2, 4}, {5, 6}}));
 }
@@ -603,6 +616,76 @@ void testResetTrackStyle()
         CHECK_EQ(st.boxOn, want.boxOn);
         CHECK_EQ(st.bold, want.bold);
     }
+}
+
+// op captions from the project's transcripts on two audio tracks, without speakers (as before 25.11.): one track,
+// named as the op says; split into speaker tracks only when the words carry speakers or speakers is given
+void testCliOpTwoTracks(const QString& dir)
+{
+    const QString path = dir + "/two-tracks.schneidi";
+    ProjectData d;
+    d.format = {1080, 1920, {25, 1}};
+    d.timeline.video.resize(1);
+    d.timeline.audio.resize(2);
+    for (int k = 0; k < 2; ++k) {
+        MediaInfo m;
+        m.path = Check::absPath(QString("/x/voice%1.wav").arg(k));
+        m.name = QFileInfo(m.path).fileName();
+        m.length = 250;
+        m.hasAudio = true;
+        m.transcripts << MediaTranscript{0, "de", {TranscriptWord{k == 0 ? 400 : 2400, k == 0 ? 800 : 2800, k == 0 ? "Hallo." : "Servus."}}};
+        d.media << m;
+        Clip c;
+        c.id = k + 1;
+        c.mediaPath = m.path;
+        c.kind = ClipKind::Media;
+        c.start = 0;
+        c.in = 0;
+        c.out = 249;
+        d.timeline.audio[k].clips << c;
+    }
+    QFile f(path);
+    if (!CHECK(f.open(QIODevice::WriteOnly))) return;
+    f.write(ProjectFile::toJson(d, path));
+    f.close();
+    const auto run = [&](const QJsonArray& ops) {
+        const Cli::Command* cmd = Cli::find("edit");
+        Cli::Context ctx;
+        try {
+            return cmd->run(Cli::normalize(*cmd, QJsonObject{{"project", path}, {"ops", ops}}), ctx);
+        } catch (const Cli::Error& e) {
+            return QJsonObject{{"error", e.code + ": " + e.message}};
+        }
+    };
+    const auto load = [&] {
+        ProjectData back;
+        QFile in(path);
+        CHECK(in.open(QIODevice::ReadOnly));
+        CHECK(ProjectFile::fromJson(in.readAll(), path, &back, nullptr));
+        return back;
+    };
+    QJsonObject o = run({QJsonObject{{"op", "captions"}, {"style", "karaoke"}, {"name", "Untertitel"}}});
+    if (!CHECK(!o.contains("error"))) std::printf("       %s\n", qPrintable(o.value("error").toString()));
+    ProjectData back = load();
+    if (CHECK_EQ(back.timeline.subtitles.size(), 1)) {
+        CHECK_EQ(back.timeline.subtitles[0].name, QString("Untertitel"));
+        CHECK_EQ(back.timeline.subtitles[0].cues.size(), 2);
+    }
+    // speakers given: a track each, named after them (op name before them)
+    o = run({QJsonObject{{"op", "captions"}, {"style", "karaoke"}, {"name", "CC"}, {"speakers", QJsonArray{"Mikrofon", "Discord"}},
+                         {"words", QJsonArray{QJsonObject{{"from", 10}, {"to", 20}, {"text", "Ja."}, {"speaker", 0}},
+                                              QJsonObject{{"from", 60}, {"to", 70}, {"text", "Nein."}, {"speaker", 1}}}}}});
+    if (!CHECK(!o.contains("error"))) std::printf("       %s\n", qPrintable(o.value("error").toString()));
+    back = load();
+    if (CHECK_EQ(back.timeline.subtitles.size(), 3)) {
+        CHECK_EQ(back.timeline.subtitles[1].name, QString("CC – Mikrofon"));
+        CHECK_EQ(back.timeline.subtitles[2].name, QString("CC – Discord"));
+    }
+    // beat with several speakers: the note that the beats ended, as with one
+    o = run({QJsonObject{{"op", "captions"}, {"style", "beat"}, {"beats", QJsonArray{5}},
+                         {"words", QJsonArray{QJsonObject{{"from", 10}, {"to", 20}, {"text", "Ja"}, {"speaker", 0}},
+                                              QJsonObject{{"from", 30}, {"to", 40}, {"text", "Nein"}, {"speaker", 1}}}}}});
+    CHECK(QJsonDocument(o["notes"].toArray()).toJson().contains("got a beat"));
 }
 
 void testCliOp(const QString& dir)
@@ -1213,6 +1296,7 @@ int main(int argc, char** argv)
     QTemporaryDir tmp;
     if (!CHECK(tmp.isValid())) return Check::result();
     testCliOp(tmp.path());
+    testCliOpTwoTracks(tmp.path());
     if (!Check::haveFfmpeg()) {
         Check::result();
         return Check::skip("ffmpeg nicht gefunden (Render-Teil)");
