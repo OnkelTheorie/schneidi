@@ -2144,6 +2144,17 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         int feedKills = 0;
         for (const QJsonValue& c : run("highlights", feedArgs)["candidates"].toArray()) feedKills += c["kills"].toInt();
         CHECK_EQ(feedKills, 2);
+        // top: 'keep' holds only the best N too (it held every candidate: keep put all moments on the timeline)
+        {
+            QJsonObject topArgs = feedArgs;
+            topArgs["top"] = 1;
+            const QJsonObject all = run("highlights", feedArgs), one = run("highlights", topArgs);
+            CHECK(all["keep"].toArray().size() >= 2);
+            if (CHECK_EQ(one["candidates"].toArray().size(), 1) && CHECK_EQ(one["keep"].toArray().size(), 1)) {
+                CHECK_EQ(one["keep"][0][0].toInt(), one["candidates"][0]["from"].toInt());
+                CHECK_EQ(one["keep"][0][1].toInt(), one["candidates"][0]["to"].toInt());
+            }
+        }
         // highlights (0.10): the mark as a kill with lead-in/out; without a kill feed the two tone bursts
         const QJsonObject hl = run("highlights", {{"file", marks}, {"region", "0.5,0,0.5,0.8"}, {"color", "#e7e371"}});
         if (CHECK_EQ(hl["candidates"].toArray().size(), 1)) {

@@ -1568,7 +1568,8 @@ const QVector<Command>& commands()
           {"threshold_db", T::Number, "loud moments: sample peak in dBFS (default 12 dB above the file's median)"},
           {"audio_stream", T::Integer, "which audio stream, 0 = first (loud moments and the shots behind hit_s; a "
                                        "recording whose first stream is silent: the stream with the game sound)"},
-          {"top", T::Integer, "only the best N candidates ('best' with several files)"},
+          {"top", T::Integer, "only the best N candidates, and 'keep' / 'keep_clean' made of only those (several "
+                               "files: each file its best N, 'best' the N best of all)"},
           {"project", T::Path, "count frames in this project's frame rate (recommended before 'keep')"}},
          cmdHighlights},
         {"transcribe", "Speech to text with whisper or Parakeet (offline; install them with `extensions`). Returns subtitle-sized "
