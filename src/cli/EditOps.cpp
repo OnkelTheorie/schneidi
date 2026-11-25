@@ -531,8 +531,13 @@ void opKeep(Session& s, const QJsonObject& op)
     for (const QJsonValue& r : ranges) {
         QJsonObject sub;
         const QJsonObject o = r.toObject();
+        // "2s-5s", ["5s"] or {from} without to had no in/out: the whole file was placed, silently
+        if (!(r.isArray() && r.toArray().size() == 2) && !(o.contains("start") && o.contains("end"))
+            && !(o.contains("from") && o.contains("to")))
+            fail("BAD_ARGUMENT", QString("keep: %1 is no range - ranges are [from, to] pairs (or {from, to})")
+                                     .arg(jsonSnippet(r)));
         if (r.isArray()) sub = {{"in", r.toArray().at(0)}, {"out", r.toArray().at(1)}};
-        else if (o.contains("start")) sub = {{"in", o.value("start")}, {"out", o.value("end")}}; // as answers name ranges
+        else if (o.contains("start") && o.contains("end")) sub = {{"in", o.value("start")}, {"out", o.value("end")}}; // as answers name ranges
         else sub = {{"in", o.value("from")}, {"out", o.value("to")}};
         int in = 0, out = 0;
         sourceRange(s, sub, m, &in, &out);

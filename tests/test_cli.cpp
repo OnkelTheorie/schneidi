@@ -588,6 +588,13 @@ int runTests(int argc, char** argv)
                        {"dry_run", true}})["changes"]["added"].toArray().size() == 2);
     CHECK(messageOf("edit", {{"project", g_path}, {"ops", R"([{"op":"keep","media":"/x/a.mp4"}])"}})
               .contains(R"("ranges":[["2s","5.5s"],["10s","12s"]])"));
+    // A range that is no pair ("2s-5s", ["5s"], {from} without to) placed the whole file, silently: refused
+    for (const char* ranges : {R"(["0-10","20-30","40-45"])", R"([["5"]])", R"([{"from":5}])", R"([{"start":5}])",
+                               R"([[0,10],[20,30,40]])"}) {
+        const QString msg = messageOf(
+            "edit", {{"project", g_path}, {"ops", QString(R"([{"op":"keep","media":"/x/a.mp4","ranges":%1}])").arg(ranges)}});
+        Check::report(msg.startsWith("BAD_ARGUMENT") && msg.contains("is no range"), qPrintable(msg), __FILE__, __LINE__);
+    }
     const QJsonObject info = run("info", {{"project", g_path}});
     const int secondId = info["timeline"]["tracks"][0]["clips"][1]["id"].toInt();
     edit(QString(R"([{"op":"delete","clips":[%1],"ripple":true}])").arg(secondId).toUtf8().constData());
