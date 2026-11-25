@@ -582,6 +582,11 @@ void opAlign(Session& s, const QJsonObject& op)
         first = secs("first") * fps;
         every = secs("every") * fps;
         if (every < 1) fail("BAD_ARGUMENT", "to.every must be at least one frame");
+        // Unchecked seconds (every:1e12) made the casts to int below undefined
+        if (!std::isfinite(first) || first < 0 || first > double(kMaxFrame))
+            fail("BAD_ARGUMENT", "to.first must be a time from 0 up to the project's limit");
+        if (!std::isfinite(every) || every > double(kMaxFrame))
+            fail("BAD_ARGUMENT", "to.every must be a time up to the project's limit");
     } else {
         fail("BAD_ARGUMENT", "'to' is a list of times or a grid {first:<s>, every:<s>}: `beats` on the project (its "
                              "music track) gives beat_phase.s/beat_period.s, or downbeats.s/every_s for bar ones");

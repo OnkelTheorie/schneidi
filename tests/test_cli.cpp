@@ -604,6 +604,10 @@ int runTests(int argc, char** argv)
         CHECK_EQ(gap["changes"]["added"][0]["start"].toInt(), 45);
         CHECK_EQ(saved(), before);
     }
+    // align with a huge grid (every:1e12 seconds): refused, the casts to int were undefined
+    for (const char* grid : {R"({"first":0,"every":1e12})", R"({"first":1e15,"every":1})", R"({"first":-1,"every":1})"})
+        CHECK(messageOf("edit", {{"project", g_path}, {"ops", QString(R"([{"op":"align","events":[{"media":"/x/a.mp4","source":10}],"to":%1}])").arg(grid)}})
+                  .contains("(align): to."));
     // keep with one range written another way (small models): taken with a note; no range at all: a whole example
     for (const char* op : {R"({"op":"keep","media":"/x/a.mp4","ranges":[0,10]})", R"({"op":"keep","media":"/x/a.mp4","range":[0,10]})",
                             R"({"op":"keep","media":"/x/a.mp4","from":0,"to":10})"}) {
