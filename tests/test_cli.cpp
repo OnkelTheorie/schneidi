@@ -670,6 +670,16 @@ int runTests(int argc, char** argv)
     CHECK_EQ(tl["tracks"][0]["clips"][0]["effects"][0]["params"]["strength"].toDouble(), 100.0); // clamped
     CHECK_EQ(tl["subtitles"][0]["cues"].toArray().size(), 2);
     CHECK_EQ(tl["subtitles"][0]["cues"][0]["text"].toString(), QString("Two!"));
+    // move takes subtitle ids too (its comment said so, it answered "no clip with id"); 'to' places the first id given
+    {
+        const int cue = tl["subtitles"][0]["cues"].toArray().last()["id"].toInt();
+        const QJsonObject moved = run("edit", {{"project", g_path}, {"dry_run", true},
+                                               {"ops", QString(R"([{"op":"move","clips":[%1],"to":5000}])").arg(cue)}});
+        int start = -1;
+        for (const QJsonValue& c : moved["timeline"]["subtitles"][0]["cues"].toArray())
+            if (c["id"].toInt() == cue) start = c["start"].toInt();
+        CHECK_EQ(start, 5000);
+    }
 
     // Restore = undo of the last edit (and restore again = redo)
     run("restore", {{"project", g_path}});

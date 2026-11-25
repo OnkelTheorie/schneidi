@@ -718,11 +718,20 @@ void opMove(Session& s, const QJsonObject& op)
 {
     const QJsonValue by = op.value("by");
     int delta = parseSignedTime(by, s.format(), "by");
-    const QVector<int> ids = clipIds(s, op);
-    if (op.contains("to")) delta = timeOf(s, op, "to") - clipOf(s, {{"clip", ids.first()}}).start;
+    // Subtitle ids too: Editor::moveClips moves them along in time (clipIds puts them behind the clips)
+    const QVector<int> ids = clipIds(s, op, true);
+    const Timeline& tl = s.project.timeline();
+    if (op.contains("to")) {
+        // 'to' places the first id given, a clip or a subtitle
+        const QJsonValue v = op.value("clips");
+        const int given = (v.isArray() ? v.toArray().first() : v.isDouble() ? v : op.value("clip")).toVariant().toInt();
+        const SubtitleCue* cue = Subtitles::find(tl, given);
+        delta = timeOf(s, op, "to") - (cue ? cue->start : clipOf(s, {{"clip", given}}).start);
+    }
     qint64 lastEnd = 0;
     for (int id : ids)
-        if (const Clip* c = TimelineOps::findClip(s.project.timeline(), id)) lastEnd = std::max<qint64>(lastEnd, c->end());
+        if (const Clip* c = TimelineOps::findClip(tl, id)) lastEnd = std::max<qint64>(lastEnd, c->end());
+        else if (const SubtitleCue* q = Subtitles::find(tl, id)) lastEnd = std::max<qint64>(lastEnd, q->end);
     checkFrameLimit(lastEnd + delta, "move: the last clip");
     const int trackDelta = op.value("track_delta").toInt();
     TrackRef from;
@@ -1165,7 +1174,8 @@ QVector<OpDef> makeOps()
              const bool ripple = op.value("ripple").toBool(true);
              s.editor.deleteRanges(ranges, ripple, ripple ? "Delete ranges with ripple" : "Delete ranges");
          }},
-        {"move", "{op:'move', clips, by|to, track_delta?}", {}, {}, opMove, kClipKeys},
+        {"move", "{op:'move', clips, by|to, track_delta?}", "clips may hold subtitle ids too (they move in time only); "
+         "'to' places the first id given", {}, opMove, kClipKeys},
         {"fade", "{op:'fade', clips, in?, out?, linked?}", "fade handles (video: to the track below/black, audio: volume); "
          "a video clip's sound fades along unless linked:false; sound alone fades without its picture unless linked:true",
          {}, opFade, kClipKeys},
