@@ -374,6 +374,25 @@ void testIdForName()
     CHECK_EQ(error, T("„%1“ bekäme denselben Dateinamen wie die Vorlage „%2“.").arg("Shorts 9_16", "Shorts 9:16"));
     CHECK(!StartTemplates::rename(other.id, "Shorts 9:16", &error));
     CHECK_EQ(error, T("Eine Vorlage „%1“ gibt es schon.").arg("Shorts 9:16"));
+    // Only the case changes: refused where another file has that exact name (a case-sensitive folder keeps "show"
+    // and "Show" apart; the new name was written into "show" before the rename failed), fine for a single file
+    StartTemplate lower = StartTemplates::fromProject(StartTemplates::apply(builtIn("podcast")), "show");
+    CHECK(StartTemplates::save(lower, &error));
+    const auto names = [] {
+        QStringList n;
+        for (const StartTemplate& t : StartTemplates::own()) n << t.name;
+        return n;
+    };
+    if (!QFileInfo::exists(QDir(StartTemplates::dir()).filePath("SHOW.json"))) { // a case-sensitive file system
+        StartTemplate upper = StartTemplates::fromProject(StartTemplates::apply(builtIn("podcast")), "Show");
+        CHECK(StartTemplates::save(upper, &error));
+        CHECK(!StartTemplates::rename("show", "Show", &error));
+        CHECK_EQ(error, T("Eine Vorlage „%1“ gibt es schon.").arg("Show"));
+        CHECK(names().contains("show") && names().count("Show") == 1);
+        CHECK(StartTemplates::remove("Show"));
+    }
+    CHECK(StartTemplates::rename("show", "Show", &error));
+    CHECK(names().contains("Show") && !names().contains("show"));
     clean();
 }
 

@@ -285,8 +285,11 @@ bool rename(const QString& id, const QString& name, QString* error)
     }
     const QString newId = idForName(clean);
     const QString newPath = QDir(dir()).filePath(newId + ".json");
-    // Another file of that name (only the case changes: the same file on Windows and macOS)
-    if (newId.compare(id, Qt::CaseInsensitive) != 0 && QFileInfo::exists(newPath)) {
+    // Another file of that name. Only the case changes: the same file on Windows and macOS, another one only where the
+    // folder lists that exact name (Linux keeps "show.json" and "Show.json" apart)
+    const bool caseOnly = newId.compare(id, Qt::CaseInsensitive) == 0;
+    if (caseOnly ? newId != id && QDir(dir()).entryList(QDir::Files).contains(newId + ".json")
+                 : QFileInfo::exists(newPath)) {
         // Named after the one there ("Shorts 9_16" is taken by "Shorts 9:16": the same file)
         const std::optional<StartTemplate> other = sameFile(clean);
         const QString existing = other ? other->name : clean;
