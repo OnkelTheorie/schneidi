@@ -11,6 +11,7 @@
 #include "app/MainWindow.h"
 #include "app/SettingsDialog.h"
 #include "core/Editor.h"
+#include "core/I18n.h"
 #include "core/Keyframes.h"
 #include "core/Project.h"
 #include "core/Selection.h"
@@ -396,7 +397,14 @@ void testWindow(Engine& engine, const QSize& size)
     // Item 7: the selected text title has its box on the picture (move, size)
     if (auto* ov = w.findChild<ShapeOverlay*>(); CHECK(ov)) CHECK(ov->textTitles());
     CHECK(shell->toolButton("split")->isVisible());
-    // Every clip tool can be reached: inside the bar's scrolled box (the bar scrolls, nothing lies past its end)
+    // Every clip tool can be reached. Portrait: in the bar (five at most) or behind "Mehr"; the rail: inside its box
+    if (shell->barLimited()) {
+        const QStringList bar = shell->barToolIds(), more = shell->moreToolIds();
+        for (const char* id : {"split", "volume", "speed", "clipEffects", "clipColor", "delete"})
+            Check::report(bar.contains(id) || more.contains(id), "clip tool in the bar or behind Mehr", __FILE__,
+                          __LINE__, QString("%1: bar %2, more %3").arg(id, bar.join(','), more.join(',')));
+        CHECK(bar.size() <= PhoneShell::kBarSlots && bar.last() == "more");
+    } else
     for (const char* id : {"split", "volume", "speed", "clipEffects", "clipColor", "delete"}) {
         QToolButton* b = shell->toolButton(id);
         QWidget* box = b ? b->parentWidget()->parentWidget() : nullptr; // clip tools -> the bar's box
@@ -601,6 +609,9 @@ void testSilentRestore(Engine& engine)
 // sideways, and no swipe opens a tool
 void testToolBarSwipe(Engine& engine)
 {
+    // Phone portrait (the tester: "the scrolling is not good, nobody notices one has to scroll"): the bar never
+    // scrolls sideways, a swipe over it opens nothing, every label whole; the clip tools have no back arrow (the back
+    // key and "Mehr" > "Fertig" leave them)
     QPointingDevice* finger = QTest::createTouchDevice();
     MainWindow w(&engine);
     w.disableAutosave();
@@ -613,8 +624,8 @@ void testToolBarSwipe(Engine& engine)
     auto* area = qobject_cast<QAbstractScrollArea*>(vp->parentWidget());
     if (!CHECK(area)) return;
     QScrollBar* h = area->horizontalScrollBar();
-    QScrollBar* v = area->verticalScrollBar();
-    CHECK(h->maximum() > 0);
+    Check::report(h->maximum() == 0, "tool bar: nothing to scroll sideways", __FILE__, __LINE__,
+                  QString("maximum %1").arg(h->maximum()));
     const int y = vp->height() / 2;
     const auto swipe = [&](QPoint a, QPoint b, int steps) {
         QTest::touchEvent(vp, finger).press(0, a, vp);
@@ -624,57 +635,128 @@ void testToolBarSwipe(Engine& engine)
         }
         QTest::touchEvent(vp, finger).release(0, b, vp);
     };
-    // Past the left end: stays at 0 (no jump to the right), nothing opens
-    int most = 0;
-    QObject::connect(h, &QScrollBar::valueChanged, h, [&](int value) { most = std::max(most, value); });
-    swipe({100, y}, {300, y}, 10);
-    QTest::qWait(400);
-    Check::report(h->value() == 0 && most == 0, "tool bar: stays at its left end", __FILE__, __LINE__,
-                  QString("value %1, at most %2").arg(h->value()).arg(most));
-    CHECK(shell->sheet().isEmpty());
-    // Slanted: only sideways, the way the finger went (about 150 px), nothing opens
+    swipe({300, y}, {60, y - 20}, 10);
     QTest::qWait(500);
-    swipe({300, y}, {150, y - 40}, 10);
-    QTest::qWait(600);
-    Check::report(h->value() >= 100 && v->value() == 0, "tool bar: slanted swipe scrolls sideways", __FILE__, __LINE__,
-                  QString("h %1, v %2").arg(h->value()).arg(v->value()));
-    CHECK(shell->sheet().isEmpty());
-    // Back to the start and further: 0 again
-    QTest::qWait(500);
-    swipe({100, y}, {400, y + 30}, 12);
-    QTest::qWait(800);
-    Check::report(h->value() == 0, "tool bar: back at 0", __FILE__, __LINE__, QString("value %1").arg(h->value()));
-    CHECK(shell->sheet().isEmpty());
-    // Every label whole (items as wide as their labels), no frames
+    CHECK_EQ(h->value(), 0);
+    CHECK(shell->sheet().isEmpty() && !shell->moreOpen());
     for (QToolButton* b : vp->findChildren<QToolButton*>())
         if (b->isVisibleTo(vp))
             Check::report(b->width() >= b->sizeHint().width(), "tool bar: label whole", __FILE__, __LINE__,
                           QString("%1: %2 < %3").arg(b->text()).arg(b->width()).arg(b->sizeHint().width()));
-    // A flick, then a finger on the gliding bar: it stops, no tool opens
-    QTest::qWait(500);
-    h->setValue(0);
-    QTest::touchEvent(vp, finger).press(0, {300, y}, vp);
-    for (int i = 1; i <= 4; ++i) {
-        QTest::touchEvent(vp, finger).move(0, QPoint(300 - 20 * i, y), vp);
-        QTest::qWait(10);
-    }
-    QTest::touchEvent(vp, finger).release(0, {220, y}, vp);
-    QTest::qWait(30);
-    QTest::touchEvent(vp, finger).press(0, {200, y}, vp);
-    QTest::touchEvent(vp, finger).release(0, {200, y}, vp);
-    QTest::qWait(300);
-    CHECK(shell->sheet().isEmpty());
-    // The clip bar's back arrow is outside the scrolling part: it stays where it is
     w.editor()->addTitle(0, -1, 50, TitleKind::Text);
     settle();
+    CHECK(shell->clipToolsShown());
     QToolButton* back = shell->toolButton("back");
-    if (CHECK(back && back->isVisible())) {
-        CHECK(!vp->isAncestorOf(back));
-        const QPoint before = back->mapTo(&w, QPoint(0, 0));
-        swipe({300, y}, {60, y}, 8);
-        QTest::qWait(600);
-        CHECK(back->mapTo(&w, QPoint(0, 0)) == before);
+    CHECK(back && !back->isVisible());
+    // "Mehr" > "Fertig": the clip tools end (the selection is cleared)
+    shell->openMore();
+    settle();
+    if (auto* done = shell->moreSheet()->findChild<QToolButton*>("phoneMore_done"); CHECK(done)) {
+        QTest::mouseClick(done, Qt::LeftButton);
+        settle();
+        CHECK(!shell->clipToolsShown() && w.liveSelection()->isEmpty() && !shell->moreOpen());
     }
+}
+
+// The tester's findings (25.11.): fewer and bigger buttons, at most five at once, no hidden sideways scrolling, three
+// lines for the menu. At the phone widths 360 and 412, in German and Russian: the bottom bar and the timeline's tool
+// row hold five controls at most, a finger high, no label cut; nothing scrolls sideways; every tool of the old bar is
+// in the bar or behind "Mehr" (a sheet of tiles that closes with the back key, a tap beside it or a tool used)
+void testFiveTools(Engine& engine, int width, const QString& lang)
+{
+    std::printf("--- five tools %d %s\n", width, qPrintable(lang));
+    const QString before = I18n::installedLanguage();
+    I18n::switchTo(lang);
+    MainWindow w(&engine);
+    w.disableAutosave();
+    w.enablePhoneLayout();
+    PhoneShell* shell = w.phoneShell();
+    if (!CHECK(shell)) return;
+    w.resize(width, 590);
+    w.show();
+    settle();
+    if (auto* menu = shell->findChild<QToolButton*>("phoneMenu"); CHECK(menu)) CHECK(menu->text() == QStringLiteral("☰"));
+    const QString where = QString(" (%1, %2)").arg(width).arg(lang);
+    const auto barOk = [&](const char* what) {
+        const QStringList ids = shell->barToolIds();
+        Check::report(ids.size() <= PhoneShell::kBarSlots && ids.contains("more"), qPrintable(QString("bar: five at most, Mehr ") + what),
+                      __FILE__, __LINE__, ids.join(',') + where);
+        for (const QString& id : ids) {
+            QToolButton* b = shell->toolButton(id);
+            if (!CHECK(b && b->isVisible())) continue;
+            Check::report(b->width() >= b->sizeHint().width() && b->height() >= 48, qPrintable(QString("bar: whole and a finger high ") + what),
+                          __FILE__, __LINE__, QString("%1: %2x%3, needs %4").arg(b->text()).arg(b->width()).arg(b->height())
+                                                  .arg(b->sizeHint().width()) + where);
+        }
+        auto* area = qobject_cast<QAbstractScrollArea*>(shell->findChild<QWidget*>("PhoneTools"));
+        CHECK(area && area->horizontalScrollBar()->maximum() == 0);
+        return ids;
+    };
+    const auto reachable = [&](const QStringList& tools, const char* what) {
+        const QStringList bar = shell->barToolIds(), more = shell->moreToolIds();
+        for (const QString& id : tools)
+            Check::report(bar.contains(id) || more.contains(id), qPrintable(QString("reachable ") + what), __FILE__, __LINE__,
+                          id + where);
+    };
+    // Nothing selected: the adding tools and Mehr; everything of the old bar there or behind Mehr
+    QStringList main = barOk("(nothing selected)");
+    CHECK(main.mid(0, 2) == (QStringList{"media", "text"}));
+    reachable({"media", "effects", "text", "mixer", "color", "inspector", "transcript", "ai", "export", "voiceover"},
+              "(main)");
+    // The timeline's tool row: five at most, none cut
+    if (auto* panel = w.findChild<TimelinePanel*>(); CHECK(panel)) {
+        const QList<QWidget*> row = panel->rowControls();
+        Check::report(row.size() <= TimelinePanel::kPhoneRowMax, "timeline row: five at most", __FILE__, __LINE__,
+                      QString::number(row.size()) + where);
+        for (QWidget* c : row)
+            if (auto* b = qobject_cast<QToolButton*>(c))
+                Check::report(b->toolButtonStyle() == Qt::ToolButtonIconOnly || b->icon().isNull() == false,
+                              "timeline row: a symbol, not a cut text", __FILE__, __LINE__, b->text() + where);
+        if (auto* scroll = panel->findChild<QScrollArea*>("timelineBarScroll"))
+            Check::report(scroll->horizontalScrollBar()->maximum() == 0, "timeline row: nothing to scroll sideways",
+                          __FILE__, __LINE__, QString::number(scroll->horizontalScrollBar()->maximum()) + where);
+    }
+    if (auto* zoom = w.findChild<QToolButton*>("viewer_zoom"); CHECK(zoom)) CHECK(zoom->text() == QStringLiteral("⤢"));
+    // "Mehr": tiles of the rest, only up and down; a tile runs its tool, the back key closes it
+    shell->openMore();
+    settle();
+    CHECK(shell->moreOpen());
+    QWidget* more = shell->moreSheet();
+    CHECK(inside(more, &w));
+    if (auto* scroll = more->findChild<QScrollArea*>("phoneMoreScroll"); CHECK(scroll))
+        CHECK(scroll->horizontalScrollBar()->maximum() == 0);
+    for (const QString& id : shell->moreToolIds())
+        if (auto* tile = more->findChild<QToolButton*>("phoneMore_" + id); CHECK(tile))
+            Check::report(tile->width() >= tile->sizeHint().width() && tile->height() >= 64, "tile whole and large",
+                          __FILE__, __LINE__, QString("%1: %2x%3").arg(tile->text()).arg(tile->width()).arg(tile->height()) + where);
+    if (const QString dir = qEnvironmentVariable("SCHNEIDI_TEST_SHOTS"); !dir.isEmpty())
+        w.grab().save(QString("%1/more-%2-%3.png").arg(dir).arg(width).arg(lang));
+    CHECK(shell->back() && !shell->moreOpen());
+    shell->openMore();
+    settle();
+    if (auto* tile = more->findChild<QToolButton*>("phoneMore_mixer"); CHECK(tile)) {
+        QTest::mouseClick(tile, Qt::LeftButton);
+        settle();
+        CHECK(!shell->moreOpen() && shell->sheet() == "mixer");
+    }
+    shell->closeSheet();
+    // A clip, a title: their four and Mehr
+    w.editor()->addTitle(0, -1, 50, TitleKind::Text);
+    settle();
+    CHECK(shell->toolContext() == "title");
+    QStringList title = barOk("(title)");
+    CHECK(!title.isEmpty() && title.first() == "titleEdit");
+    reachable({"split", "volume", "speed", "clipEffects", "clipColor", "delete", "titleEdit"}, "(title)");
+    if (const QString dir = qEnvironmentVariable("SCHNEIDI_TEST_SHOTS"); !dir.isEmpty())
+        w.grab().save(QString("%1/title-%2-%3.png").arg(dir).arg(width).arg(lang));
+    shell->setToolContext("clip"); // (as a selected video clip: the context comes from the selection)
+    settle();
+    QStringList clip = barOk("(clip)");
+    CHECK(clip.mid(0, 2) == (QStringList{"split", "delete"}));
+    reachable({"split", "volume", "speed", "clipEffects", "clipColor", "delete"}, "(clip)");
+    if (const QString dir = qEnvironmentVariable("SCHNEIDI_TEST_SHOTS"); !dir.isEmpty())
+        w.grab().save(QString("%1/clip-%2-%3.png").arg(dir).arg(width).arg(lang));
+    I18n::switchTo(before); // (the language the other tests run in)
 }
 
 // A second-long WAV of `seconds` (silence) for the gallery's files
@@ -1272,5 +1354,8 @@ int main(int argc, char** argv)
     testSettingsFit({360, 740});
     testWindow(engine, {360, 740}); // a small phone (turned: 740x360)
     testWindow(engine, {914, 380}); // landscape below the status bar
+    // (last: the languages switch the fonts' fallbacks for the rest of the run)
+    for (const int width : {360, 412})
+        for (const char* lang : {"de", "ru"}) testFiveTools(engine, width, lang);
     return Check::result();
 }

@@ -586,6 +586,8 @@ void MainWindow::enableShell(bool tablet)
         m_chatPanel->setCompact(true); // (no own title or docking; the setup starts with a button, not a key field)
         return shellHome(m_chatPanel);
     });
+    // Voice-over from the bar (in the timeline's tool row on the desktop): records at the playhead, a tap again ends
+    m_phone->addActionTool("voiceover", QStringLiteral("●"), T("Aufnahme"), [] { trigger("voiceover_record"); }, false);
     m_phone->addPanelTool("export", QStringLiteral("⇪"), T("Export"), [this]() -> QWidget* {
         // The settings and, below them, the render queue (on the desktop it stands beside them): "Add to Render
         // Queue" alone rendered nothing on the phone, the queue's "Render all" was not on the screen
@@ -640,14 +642,39 @@ void MainWindow::enableShell(bool tablet)
         // The Audio tab, its Volume section at the top; a video without sound keeps the tab it shows
         if (!m_inspector->showAudio()) m_viewer->showNotice(T("Der ausgewählte Clip hat keinen Ton."), 2500);
     });
-    m_phone->addActionTool("speed", QStringLiteral("≫"), T("Geschwindigkeit"), [] { trigger("clip_speed"); });
+    // (short: five tools share the bar's width; the dialog it opens says "Geschwindigkeit")
+    m_phone->addActionTool("speed", QStringLiteral("≫"), T("Tempo ändern"), [] { trigger("clip_speed"); });
     m_phone->addActionTool("delete", QStringLiteral("⌫"), T("Löschen"), [] { trigger("ripple_delete"); });
     m_phone->addClipPanelTool("clipEffects", QStringLiteral("✦"), T("Effekte"), "effects");
     m_phone->addClipPanelTool("clipColor", QStringLiteral("◐"), T("Farbe"), "color");
+    // A title: its text and look are in the Inspector's Title tab
+    m_phone->addClipPanelTool("titleEdit", QStringLiteral("T"), T("Bearbeiten"), "inspector");
 
-    connect(m_selection, &Selection::changed, m_phone, [this] { m_phone->setClipToolsShown(!m_selection->isEmpty()); });
+    // What the phone's bar shows (portrait: four and "Mehr"; the rest as tiles behind "Mehr"), by what is selected.
+    // Nothing: adding things and the way out; a clip: the cuts used most (Teilen, Löschen - the tours' first steps),
+    // then its sound and speed; a title: its text first; a sound clip: like a clip
+    m_phone->setBarTools("main", {"media", "text", "voiceover", "export"});
+    m_phone->setBarTools("clip", {"split", "delete", "volume", "speed"});
+    m_phone->setBarTools("title", {"titleEdit", "split", "delete", "clipEffects"});
+    m_phone->setBarTools("audio", {"split", "delete", "volume", "speed"});
+
+    // The context: nothing selected, titles only, sound only (audio tracks), else clips
+    const auto context = [this] {
+        if (m_selection->isEmpty()) return QStringLiteral("main");
+        bool titles = true, sound = true;
+        const Timeline& tl = m_project->timeline();
+        for (const int id : m_selection->ids()) {
+            TrackRef where;
+            const Clip* c = TimelineOps::findClip(tl, id, &where);
+            if (!c) continue;
+            titles = titles && c->isTitle();
+            sound = sound && where.kind == TrackKind::Audio;
+        }
+        return titles ? QStringLiteral("title") : sound ? QStringLiteral("audio") : QStringLiteral("clip");
+    };
+    connect(m_selection, &Selection::changed, m_phone, [this, context] { m_phone->setToolContext(context()); });
     connect(m_phone, &PhoneShell::clipToolsLeft, this, [this] { m_selection->clear(); });
-    m_phone->setClipToolsShown(!m_selection->isEmpty());
+    m_phone->setToolContext(context());
     // The desktop's panel toggles follow the sheet (menus and keys show the open one), without saving anything
     const auto syncToggles = [this](const QString& open) {
         const QPair<QToolButton*, const char*> toggles[] = {

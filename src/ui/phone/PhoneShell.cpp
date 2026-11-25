@@ -7,6 +7,7 @@
 #include <QApplication>
 #include <QBoxLayout>
 #include <QEvent>
+#include <QGridLayout>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
@@ -27,6 +28,7 @@
 namespace {
 
 constexpr int kIconPx = 22;
+constexpr int kBarHeight = 56; // phone portrait: the bar's buttons at least this high (a finger: 48 dp and more)
 constexpr double kMinShare = 0.3, kMaxShare = 0.95, kDefaultShare = 0.55;
 
 // A symbol of the UI font (the same ones the desktop's bars use) as an icon, in the colors the page bar gives its
@@ -126,6 +128,34 @@ PhoneShell::PhoneShell(QWidget* parent) : QWidget(parent)
     connect(m_back, &QToolButton::clicked, this, [this] { emit clipToolsLeft(); });
     m_barLay->addWidget(m_back);
     m_barLay->addWidget(m_toolScroll, 1);
+    // "Mehr": the bar's last slot in portrait (barLimited), the tools that do not fit as tiles in a sheet over the rest
+    m_moreButton = makeToolButton(QStringLiteral("⊞"), T("Mehr"));
+    m_moreButton->setObjectName("phoneTool_more");
+    m_moreButton->setCheckable(true);
+    m_moreButton->hide();
+    connect(m_moreButton, &QToolButton::clicked, this, [this] {
+        if (moreOpen()) closeMore();
+        else openMore();
+    });
+    m_toolLay->addWidget(m_moreButton);
+    m_shade = new QWidget(this);
+    m_shade->setObjectName("PhoneMoreShade");
+    m_shade->setAttribute(Qt::WA_StyledBackground);
+    m_shade->setStyleSheet("QWidget#PhoneMoreShade { background: rgba(0, 0, 0, 110); }");
+    m_shade->installEventFilter(this); // a tap beside the sheet closes it
+    m_shade->hide();
+    m_more = new QWidget(this);
+    m_more->setObjectName("PhoneMore");
+    m_more->setAttribute(Qt::WA_StyledBackground);
+    m_more->setStyleSheet(
+        QString("QWidget#PhoneMore { background: %1; border-top: 1px solid %2; border-top-left-radius: 12px;"
+                " border-top-right-radius: 12px; }"
+                "QToolButton { color: %3; background: %4; border: none; border-radius: 10px; padding: 8px 4px;"
+                " font-size: 13px; }"
+                "QToolButton:pressed { background: %5; }")
+            .arg(Theme::panel.name(), Theme::border.name(), Theme::text.name(), Theme::control.name(),
+                 Theme::controlLight.name()));
+    m_more->hide();
 
     // The sheet: a header (drag handle, the panel's name, close) above the open panel
     m_sheet = new QWidget(this);
@@ -184,6 +214,8 @@ QToolButton* PhoneShell::makeToolButton(const QString& symbol, const QString& la
     if (label.contains(' ') && QFontMetrics(b->font()).horizontalAdvance(label) > 72) b->setText(QString(label).replace(' ', '\n'));
     // A tool half out of the bar comes in whole when tapped (its checked state stays in sight)
     connect(b, &QToolButton::clicked, this, [this, b] { m_toolScroll->ensureWidgetVisible(b, 0, 0); });
+    if (m_moreButton) // (every tool but "Mehr" itself: a tool used closes the tiles)
+        connect(b, &QToolButton::clicked, this, [this] { closeMore(); });
     return b;
 }
 
@@ -226,6 +258,7 @@ void PhoneShell::addPanelTool(const QString& id, const QString& symbol, const QS
     t.id = id;
     t.label = label;
     t.make = std::move(make);
+    t.symbol = symbol;
     t.button = makeToolButton(symbol, label);
     t.button->setObjectName("phoneTool_" + id);
     t.button->setCheckable(true);
@@ -235,6 +268,7 @@ void PhoneShell::addPanelTool(const QString& id, const QString& symbol, const QS
     });
     m_mainLay->addWidget(t.button);
     m_tools << t;
+    arrangeBar();
     updateButtons();
 }
 
@@ -246,6 +280,7 @@ void PhoneShell::addActionTool(const QString& id, const QString& symbol, const Q
     t.label = label;
     t.run = std::move(run);
     t.clip = clipBar;
+    t.symbol = symbol;
     t.button = makeToolButton(symbol, label);
     t.button->setObjectName("phoneTool_" + id);
     connect(t.button, &QToolButton::clicked, this, [this, id] {
@@ -253,6 +288,8 @@ void PhoneShell::addActionTool(const QString& id, const QString& symbol, const Q
     });
     (clipBar ? m_clipLay : m_mainLay)->addWidget(t.button);
     m_tools << t;
+    arrangeBar();
+    updateButtons();
 }
 
 void PhoneShell::addClipPanelTool(const QString& id, const QString& symbol, const QString& label, const QString& panelId,
@@ -264,6 +301,7 @@ void PhoneShell::addClipPanelTool(const QString& id, const QString& symbol, cons
     t.panelId = panelId;
     t.run = std::move(opened);
     t.clip = true;
+    t.symbol = symbol;
     t.button = makeToolButton(symbol, label);
     t.button->setObjectName("phoneTool_" + id);
     t.button->setCheckable(true);
@@ -281,12 +319,14 @@ void PhoneShell::addClipPanelTool(const QString& id, const QString& symbol, cons
     });
     m_clipLay->addWidget(t.button);
     m_tools << t;
+    arrangeBar();
     updateButtons();
 }
 
 QToolButton* PhoneShell::toolButton(const QString& id) const
 {
     if (id == "back") return m_back;
+    if (id == "more") return m_moreButton;
     for (const Tool& t : m_tools)
         if (t.id == id) return t.button;
     return nullptr;
@@ -394,18 +434,182 @@ void PhoneShell::setSheetShare(double share)
 
 void PhoneShell::setClipToolsShown(bool on)
 {
-    if (m_clipMode == on) return;
-    m_clipMode = on;
-    m_mainTools->setVisible(!on);
-    m_clipTools->setVisible(on);
-    m_back->setVisible(on);
-    m_toolScroll->horizontalScrollBar()->setValue(0);
-    m_toolScroll->verticalScrollBar()->setValue(0);
+    if (on && m_context == QLatin1String("main")) setToolContext(QStringLiteral("clip"));
+    else if (!on && m_context != QLatin1String("main")) setToolContext(QStringLiteral("main"));
+}
+
+void PhoneShell::setToolContext(const QString& context)
+{
+    const bool on = context != QLatin1String("main");
+    if (m_context == context && m_clipMode == on) return;
+    m_context = context;
+    closeMore();
+    if (m_clipMode != on) {
+        m_clipMode = on;
+        m_mainTools->setVisible(!on);
+        m_clipTools->setVisible(on);
+        m_toolScroll->horizontalScrollBar()->setValue(0);
+        m_toolScroll->verticalScrollBar()->setValue(0);
+    }
+    arrangeBar();
     updateButtons();
+}
+
+void PhoneShell::setBarTools(const QString& context, const QStringList& ids)
+{
+    m_barTools[context] = ids.mid(0, kBarSlots - 1); // (the last slot is "Mehr")
+    arrangeBar();
+    updateButtons();
+}
+
+QStringList PhoneShell::contextIds() const
+{
+    QStringList out;
+    QBoxLayout* lay = m_clipMode ? m_clipLay : m_mainLay;
+    for (int i = 0; i < lay->count(); ++i)
+        for (const Tool& t : m_tools)
+            if (lay->itemAt(i)->widget() == t.button) out << t.id;
+    return out;
+}
+
+void PhoneShell::arrangeBar()
+{
+    if (!m_moreButton) return;
+    const QStringList all = contextIds();
+    if (!barLimited()) { // every tool of the context, the back arrow with the clip tools (as before)
+        for (Tool& t : m_tools) t.button->setVisible(t.clip == m_clipMode);
+        m_moreButton->hide();
+        m_back->setVisible(m_clipMode);
+        closeMore();
+        return;
+    }
+    // The context's row in its order, then "Mehr"; the back arrow goes (Android's back key, an empty spot of the
+    // timeline or the sheet's "Fertig" tile end the clip tools)
+    const QStringList row = m_barTools.value(m_context, m_barTools.value(m_clipMode ? QStringLiteral("clip") : QStringLiteral("main")));
+    QStringList shown;
+    for (const QString& id : row)
+        if (all.contains(id) && shown.size() < kBarSlots - 1) shown << id;
+    if (row.isEmpty()) shown = all.mid(0, kBarSlots - 1);
+    QBoxLayout* lay = m_clipMode ? m_clipLay : m_mainLay;
+    for (int i = 0; i < shown.size(); ++i) // (the bar in the table's order)
+        if (Tool* t = tool(shown[i])) {
+            lay->removeWidget(t->button);
+            lay->insertWidget(i, t->button);
+        }
+    for (Tool& t : m_tools) t.button->setVisible(t.clip == m_clipMode && shown.contains(t.id));
+    m_moreButton->setVisible(true);
+    m_back->hide();
+}
+
+QStringList PhoneShell::barToolIds() const
+{
+    QStringList out;
+    for (const QString& id : contextIds())
+        for (const Tool& t : m_tools)
+            if (t.id == id && !t.button->isHidden()) out << id;
+    if (!m_moreButton->isHidden()) out << QStringLiteral("more");
+    return out;
+}
+
+QStringList PhoneShell::moreToolIds() const
+{
+    QStringList out;
+    const QStringList bar = barToolIds();
+    for (const QString& id : contextIds())
+        if (!bar.contains(id)) out << id;
+    if (m_clipMode) out << QStringLiteral("done");
+    return out;
+}
+
+bool PhoneShell::moreOpen() const { return m_more && m_more->isVisible(); }
+
+void PhoneShell::openMore()
+{
+    // The tiles anew (the context decides what is in them): three in a row, symbol over name, as large as a finger
+    // wants them; more rows than room scroll up and down (never sideways)
+    delete m_more->layout();
+    qDeleteAll(m_more->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly));
+    auto* outer = new QVBoxLayout(m_more);
+    outer->setContentsMargins(12, 8, 12, 12);
+    outer->setSpacing(8);
+    auto* grip = new QWidget;
+    grip->setAttribute(Qt::WA_StyledBackground);
+    grip->setFixedSize(40, 4);
+    grip->setStyleSheet(QString("background: %1; border-radius: 2px;").arg(Theme::controlLight.name()));
+    outer->addWidget(grip, 0, Qt::AlignHCenter);
+    auto* scroll = new QScrollArea;
+    scroll->setObjectName("phoneMoreScroll");
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidgetResizable(true);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setStyleSheet("QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; }");
+    auto* grid = new QWidget;
+    auto* gl = new QGridLayout(grid);
+    gl->setContentsMargins(0, 0, 0, 0);
+    gl->setSpacing(8);
+    constexpr int kColumns = 3;
+    int n = 0;
+    for (const QString& id : moreToolIds()) {
+        const Tool* t = tool(id);
+        auto* tile = new QToolButton;
+        tile->setObjectName("phoneMore_" + id);
+        tile->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+        tile->setIcon(glyphIcon(t ? t->symbol : QStringLiteral("✓"), 30));
+        tile->setIconSize(QSize(30, 30));
+        tile->setText(t ? t->label : T("Fertig"));
+        tile->setFocusPolicy(Qt::NoFocus);
+        tile->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        tile->setMinimumHeight(84);
+        connect(tile, &QToolButton::clicked, this, [this, id] {
+            closeMore();
+            if (id == QLatin1String("done")) {
+                emit clipToolsLeft(); // MainWindow clears the selection, which switches the bar back
+                if (m_clipMode) setClipToolsShown(false);
+            } else if (Tool* t = tool(id)) {
+                t->button->click(); // what the bar's button does (a hidden button clicks as well)
+            }
+        });
+        gl->addWidget(tile, n / kColumns, n % kColumns);
+        ++n;
+    }
+    for (int c = 0; c < kColumns; ++c) gl->setColumnStretch(c, 1);
+    scroll->setWidget(grid);
+    outer->addWidget(scroll, 1);
+    m_moreButton->setChecked(true);
+    m_shade->show();
+    m_more->show();
+    placeMore();
+}
+
+void PhoneShell::closeMore()
+{
+    if (!m_more || !m_more->isVisible()) return;
+    m_more->hide();
+    m_shade->hide();
+    m_moreButton->setChecked(false);
+}
+
+void PhoneShell::placeMore()
+{
+    if (!moreOpen()) return;
+    const int bottom = m_bar->geometry().top();
+    const int top = m_top ? m_top->geometry().bottom() + 1 : 0;
+    const int room = std::max(0, bottom - top);
+    m_more->layout()->activate();
+    const int h = std::min(room, m_more->sizeHint().height());
+    m_shade->setGeometry(0, 0, width(), bottom);
+    m_more->setGeometry(0, bottom - h, width(), h);
+    m_shade->raise();
+    m_more->raise();
 }
 
 bool PhoneShell::back()
 {
+    if (moreOpen()) {
+        closeMore();
+        return true;
+    }
     if (!m_open.isEmpty()) {
         closeSheet();
         return true;
@@ -432,14 +636,17 @@ void PhoneShell::updateButtons()
     for (QToolButton* b : m_toolBox->findChildren<QToolButton*>()) hint = hint.expandedTo(b->sizeHint());
     // Upright: each item as wide as its label (at least 60 px), the bar scrolls sideways; the one at the edge shows
     // cut, which says there is more. On its side (rail): the rail's width
+    // Limited (phone portrait): at most five, sharing the width alike, each a finger's height
     for (QToolButton* b : m_toolBox->findChildren<QToolButton*>()) {
-        if (m_landscape) {
+        if (m_landscape || barLimited()) {
             b->setMinimumWidth(0);
             b->setMaximumWidth(QWIDGETSIZE_MAX);
         } else {
             b->setFixedWidth(std::max(60, b->sizeHint().width() + 8));
         }
+        b->setMinimumHeight(barLimited() ? kBarHeight : 0);
     }
+    if (barLimited()) hint.setHeight(std::max(hint.height(), kBarHeight));
     const QMargins m = m_toolLay->contentsMargins();
     hint += QSize(m.left() + m.right(), m.top() + m.bottom());
     if (m_landscape) {
@@ -539,6 +746,7 @@ void PhoneShell::relayout()
     m_toolScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_toolScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_sheet->setVisible(!m_open.isEmpty());
+    arrangeBar();
     updateButtons();
     layout()->activate();
     placeSheet();
@@ -626,6 +834,7 @@ void PhoneShell::resizeEvent(QResizeEvent* event)
     QWidget::resizeEvent(event);
     relayout();
     refreshTimelineHeight();
+    placeMore();
     if (!m_scrollTuned && m_toolScroll->isVisible()) QTimer::singleShot(0, this, [this] { tuneScroller(); });
 }
 
@@ -655,6 +864,10 @@ void PhoneShell::tuneScroller()
 
 bool PhoneShell::eventFilter(QObject* obj, QEvent* event)
 {
+    if (obj == m_shade && (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::TouchBegin)) {
+        closeMore();
+        return true;
+    }
     // Dragging the sheet's header (portrait): taller or lower; let go low enough, it closes
     if (obj == m_sheetHeader && !m_landscape) {
         const int room = std::max(1, m_bar->geometry().top() - (m_top ? m_top->geometry().bottom() : 0));

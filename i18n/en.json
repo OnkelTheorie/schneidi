@@ -3948,5 +3948,7 @@
  "Für Shorts: eine Zeile kommt nur in die Untertitel, wenn Whisper large und turbo dasselbe hören (beide müssen installiert sein). Lieber keine Zeile als eine falsche. Ohne Grafikkarte nur bei kurzem Ton.": "For shorts: a line goes into the captions only when whisper large and turbo hear the same (both must be installed). Rather no line than a wrong one. Without a graphics card only for short sound.",
  "Untertitel: Zeilen weggelassen, die zwei Spracherkennungen verschieden gehört haben.": "Captions: lines left out that two speech recognitions heard differently.",
  "Untertitel nicht gegengeprüft: nur ein Whisper-Modell ist installiert.": "Captions not cross-checked: only one whisper model is installed.",
- "Untertitel nicht gegengeprüft: ohne Grafikkarte dauert die zweite Erkennung zu lange.": "Captions not cross-checked: without a graphics card the second recognition takes too long."
+ "Untertitel nicht gegengeprüft: ohne Grafikkarte dauert die zweite Erkennung zu lange.": "Captions not cross-checked: without a graphics card the second recognition takes too long.",
+ "Tempo ändern": "Speed",
+ "Klingen-Werkzeug an/aus: an = ein Tipp auf einen Clip schneidet ihn": "Blade tool on/off: on = a tap on a clip cuts it"
 }
