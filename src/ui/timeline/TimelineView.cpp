@@ -28,6 +28,8 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QUrl>
+
+#include <chrono>
 #include <QContextMenuEvent>
 #include <QCursor>
 #include <QHash>
@@ -1093,12 +1095,40 @@ void TimelineView::setPlayhead(int frame)
     if (m_center) { // the timeline slides under the fixed line (playback too: every frame, no paging)
         m_view.leftFrame = centreLeft();
         emit viewChanged();
+        updateSliding();
+        emit playheadChanged(frame);
+        return;
     } else if (m_following && m_playSpeed != 0 && m_drag == Drag::None) {
         // No automatic scrolling along, except by the user's choice while it plays (not while dragging in the ruler)
         followPlayhead(frame);
     }
     update();
     emit playheadChanged(frame);
+}
+
+void TimelineView::updateSliding()
+{
+    // A paint this cheap goes along with every frame (a computer: a few ms)
+    constexpr double kCheapMs = 8;
+    if (m_playSpeed == 0 || m_paintMs < kCheapMs) {
+        update();
+        return;
+    }
+    if (m_slidePending) return; // the scheduled repaint shows the newest position
+    const qint64 now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                           std::chrono::steady_clock::now().time_since_epoch()).count();
+    const int every = int(std::min(2 * m_paintMs, 100.0));
+    const int since = int((now - m_lastPaintNs) / 1000000);
+    if (since >= every) {
+        update();
+        return;
+    }
+    m_slidePending = true;
+    QTimer::singleShot(every - since, this, [this] {
+        m_slidePending = false;
+        if (m_center) m_view.leftFrame = centreLeft();
+        update();
+    });
 }
 
 void TimelineView::setPlaying(double speed)
@@ -1110,6 +1140,7 @@ void TimelineView::setPlaying(double speed)
         m_following = m_followMode != int(TimelineOptions::Follow::Off);
     } else if (speed == 0) {
         m_following = false;
+        if (m_center) update(); // a spaced slide may have left the view a few frames behind
     }
 }
 

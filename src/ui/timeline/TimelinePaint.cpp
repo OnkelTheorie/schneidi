@@ -39,6 +39,8 @@
 #include <QInputDialog>
 #include <QMenu>
 #include <QPainter>
+
+#include <chrono>
 #include <QPainterPath>
 #include <QDateTime>
 #include <QTimer>
@@ -57,6 +59,18 @@ QString TimelineView::timeText(int frames) const
 
 void TimelineView::paintEvent(QPaintEvent*)
 {
+    // The paint's cost (updateSliding spaces the slides of a playing centre-mode view by it)
+    struct Cost {
+        TimelineView* v;
+        std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+        ~Cost()
+        {
+            v->m_lastPaintNs =
+                std::chrono::duration_cast<std::chrono::nanoseconds>(start.time_since_epoch()).count();
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+            v->m_paintMs = v->m_paintMs == 0 ? ms : 0.8 * v->m_paintMs + 0.2 * ms;
+        }
+    } cost{this};
     m_timeFormat = TimelineOptions::timeFormat(); // once per paint (timeText)
     m_thumbnails = TimelineOptions::thumbnails();
     m_waveShape = TimelineOptions::waveShape();
