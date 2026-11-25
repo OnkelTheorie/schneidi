@@ -809,7 +809,10 @@ QJsonObject Server::runCommand(const QJsonObject& msg, bool ownChat, bool byUser
         magnetHold.reset();
         if (p->magnetActive() && p->currentSequence() == sequenceBefore && !(name == "edit" && syncsMain(args))
             && MainTrack::touched(mainBefore, p->timeline(), MainTrack::kMain))
-            p->edit(T("Hauptspur schließen"), [](Timeline& tl) { MainTrack::pack(tl, MainTrack::kMain); });
+            // (only the gaps the step itself opened close: the ones that were on V1 before stay, as for the user's edits)
+            p->edit(T("Hauptspur schließen"), [&mainBefore](Timeline& tl) {
+                MainTrack::pack(tl, MainTrack::kMain, {}, nullptr, MainTrack::keptGaps(mainBefore, tl, MainTrack::kMain));
+            });
         guard.keep(*p, stepName); // nothing pushed (an import of media only, a no-op): no step
         p->closeMerge();
     }
