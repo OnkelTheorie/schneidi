@@ -48,6 +48,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPointingDevice>
+#include <QPushButton>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QScroller>
@@ -58,6 +59,8 @@
 #include <QUndoStack>
 #include <QVBoxLayout>
 #include <cmath>
+#include <cstdio>
+#include <vector>
 
 namespace {
 
@@ -1442,6 +1445,48 @@ void testCancelOutsideTimeline()
     }
 }
 
+// A tap in a scrolling panel reaches a button as a made-up mouse click: it carries the finger's time. With 0 the
+// render button's double-click guard (RenderQueuePanel: clicks older than the end of the last start are dropped)
+// took every tap after the first render as old - on the phone "Render" answered once per run.
+void testTapTimestamps()
+{
+    QScrollArea area;
+    auto* inner = new QWidget;
+    auto* lay = new QVBoxLayout(inner);
+    auto* button = new QPushButton("Render");
+    lay->addWidget(button);
+    lay->addSpacing(2000);
+    area.setWidget(inner);
+    area.resize(400, 300);
+    area.show();
+    QApplication::processEvents();
+    CHECK(Touch::hasKineticScroll(&area));
+    std::vector<quint64> releases;
+    struct Watch : QObject {
+        std::vector<quint64>* out;
+        bool eventFilter(QObject*, QEvent* e) override
+        {
+            if (e->type() == QEvent::MouseButtonRelease) out->push_back(static_cast<QInputEvent*>(e)->timestamp());
+            return false;
+        }
+    } watch;
+    watch.out = &releases;
+    button->installEventFilter(&watch);
+    int clicks = 0;
+    QObject::connect(button, &QPushButton::clicked, [&clicks] { ++clicks; });
+    const QPoint at = button->mapTo(area.viewport(), button->rect().center());
+    pauseTaps();
+    tap(area.viewport(), at);
+    pauseTaps();
+    tap(area.viewport(), at);
+    CHECK_EQ(clicks, 2);
+    if (CHECK_EQ(int(releases.size()), 2)) {
+        std::printf("Tipp-Zeiten: %llu, %llu ms\n", (unsigned long long)releases[0], (unsigned long long)releases[1]);
+        CHECK(releases[0] > 0);
+        CHECK(releases[1] > releases[0]);
+    }
+}
+
 int main(int argc, char** argv)
 {
     Check::initEnv();
@@ -1458,6 +1503,7 @@ int main(int argc, char** argv)
     testViewer();
     testLists();
     testSliderInPanel();
+    testTapTimestamps();
     Touch::installInputPanel(qApp);
     testFocusAndKeyboard();
     testBackKey();

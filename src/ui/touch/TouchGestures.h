@@ -74,6 +74,7 @@ private:
     State m_state = State::Idle;
     QPointer<const QPointingDevice> m_device;
     int m_mods = 0;
+    quint64 m_time = 0; // the last touch event's timestamp (sendMouse)
     QPointF m_pressPos, m_lastPos, m_lastGlobal;
     QPointF m_pinchCentre;
     double m_pinchDist = 0;

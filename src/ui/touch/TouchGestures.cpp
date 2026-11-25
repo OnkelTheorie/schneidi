@@ -132,11 +132,13 @@ void TouchGestures::sendMouse(int type, const QPointF& pos, bool down)
     const QPointF scene = m_target->window() ? m_target->mapTo(m_target->window(), pos) : pos;
     QMouseEvent me(t, pos, scene, global, button, down ? Qt::LeftButton : Qt::NoButton,
                    Qt::KeyboardModifiers(m_mods), m_device ? m_device.data() : QPointingDevice::primaryPointingDevice());
+    me.setTimestamp(m_time); // (the finger's: a made-up event carries 0, Touch.cpp sendMouse)
     QApplication::sendEvent(m_target, &me);
 }
 
 bool TouchGestures::touch(QTouchEvent* e)
 {
+    m_time = e->timestamp();
     const auto& pts = e->points();
     const QPointer<TouchGestures> alive(this);
     if (e->type() == QEvent::TouchBegin) {
