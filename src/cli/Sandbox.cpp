@@ -160,7 +160,13 @@ QString resolve(const QString& given)
         const QFileInfo fi(probe);
         if (fi.isSymLink() && !fi.exists()) outside(given, " (a link that points to a missing file)");
         if (fi.exists()) {
-            if (!under(fi.canonicalFilePath(), s.canonical)) outside(given, " (through a link)");
+            const QString real = fi.canonicalFilePath();
+            if (!under(real, s.canonical)) outside(given, " (through a link)");
+            // A link into a hidden folder ("keys" -> .ssh) or a Windows short name (SSH~1) hides the name: the real
+            // path counts too
+            if (hidden(QDir::cleanPath(real + abs.mid(probe.size()))))
+                fail("HIDDEN", QString("'%1' leads into a hidden file or folder of the work folder: not readable or "
+                                       "writable here").arg(given));
             break;
         }
         const QString parent = fi.path();
