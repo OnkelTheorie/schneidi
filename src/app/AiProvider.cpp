@@ -9,6 +9,7 @@
 #include <QRegularExpression>
 
 #include <algorithm>
+#include <atomic>
 
 namespace Ai {
 
@@ -50,14 +51,17 @@ QJsonObject readArguments(const QString& text, QString* error)
 
 QString compact(const QJsonObject& o) { return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact)); }
 
-// Ids the providers accept (Anthropic: letters, digits, _ and -)
+// Ids the providers accept (Anthropic: letters, digits, _ and -). A call without one gets an id unique in the process:
+// "call_<index>" repeated every round (the chat matches results by id over the whole history; Anthropic refuses
+// duplicate tool_use ids after a provider switch)
 QString safeId(const QString& id, int n)
 {
     QString out;
     for (const QChar c : id)
         if (c.isLetterOrNumber() && c.unicode() < 128) out += c;
         else if (c == '_' || c == '-') out += c;
-    return out.isEmpty() ? QString("call_%1").arg(n) : out;
+    static std::atomic<int> s_reply{0};
+    return out.isEmpty() ? QString("call_%1_%2").arg(++s_reply).arg(n) : out;
 }
 
 } // namespace
