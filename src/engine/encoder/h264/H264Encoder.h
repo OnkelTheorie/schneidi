@@ -230,6 +230,9 @@ struct EncoderConfig {
     // the rest.
     int hintBackgroundQp = 0;
     double hintBackgroundEnergy = 10.0;
+    // Tests only: every other macroblock (checkerboard) is planned this much coarser, so neighbouring QPs jump by
+    // more than mb_qp_delta's range (-26..+25) and the wrapped form is written.
+    int testQpChecker = 0;
 };
 
 // level_idc (Table A-1) for this configuration: the lowest level whose macroblock rate, frame
@@ -364,7 +367,7 @@ struct EncoderAlt {
     struct State {
         bool sceneCut = false;
         int displayIndex = -1, weightedPictures = 0, qp = 0, vbvUnderflows = 0, vbvFramesSinceBp = 0;
-        int64_t hintRepeats = 0, hintStillMbs = 0, hintBackgroundMbs = 0;
+        int64_t hintRepeats = 0, hintStillMbs = 0, hintBackgroundMbs = 0, qpDeltaWraps = 0;
         char type = 'I';
         double vbvMinFill = 0;
     };
@@ -448,6 +451,9 @@ public:
         int64_t repeats = 0, stillMbs = 0, backgroundMbs = 0;
     };
     HintStats hintStats() const { return hintStats_; }
+    // Macroblocks so far whose QP lay more than mb_qp_delta's range (-26..+25) from its predictor: their delta
+    // went out wrapped by 52 (the decoder computes modulo 52). With CAVLC trial encodes count as well.
+    int64_t qpDeltaWraps() const { return qpDeltaWraps_; }
     // Exceptions (also those on the encoder's own threads, e.g. std::bad_alloc) come out of
     // encode()/flush(); the encoder is then finished: every later call throws the same again.
     // After the last picture: the remaining access units, one per call, empty when done.
@@ -609,6 +615,7 @@ private:
     std::vector<int32_t> stillFrom_; // per macroblock: display index of the first picture of its run of equal ones
     bool hintsSeen_ = false;
     HintStats hintStats_;
+    int64_t qpDeltaWraps_ = 0;
     std::vector<uint8_t> flushImpl();
     // Rate control state.
     double rcQp_ = 0;               // QP for P frames (I frames use 3 less)
@@ -656,6 +663,7 @@ private:
     int rcBin(double cost) const;
     double kPOfBin(int kind, int bin, double kP) const;
     double twoPassQp(double kI, double kP, double kB, double planQp = -1) const;
+    std::deque<std::pair<int, double>> tpFlight_; // two-pass: started pictures whose bits are not in rcBits_ yet (index, predicted bits)
     double tpGap_ = 0; // two-pass: the gap between the QP that spends what is left and the plan QP, averaged (gTpLag)
     // Two-pass, the clip's end (tpTreeTail): the macroblock tree's level over the reference pictures coded with the
     // whole lookahead behind them (per unit of tree strength) and, per picture, the QPs the tree falls short of that

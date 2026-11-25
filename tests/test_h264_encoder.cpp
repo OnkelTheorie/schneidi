@@ -9,6 +9,7 @@
 
 #include "engine/encoder/h264/Cavlc.h"
 #include "engine/encoder/h264/Deblock.h"
+#include "engine/encoder/h264/FrameCoder.h"
 #include "engine/encoder/h264/Satd.h"
 #include "engine/encoder/h264/Transform.h"
 #include "engine/encoder/h264/H264Encoder.h"
@@ -129,6 +130,7 @@ struct StreamInfo {
 // EncodeHints for picture t of the next roundTrip calls (nullptr = none), and what the encoder counted in the last one.
 std::function<const EncodeHints*(int)> gHints;
 Encoder::HintStats gHintStats;
+int64_t gQpDeltaWraps = 0; // Encoder::qpDeltaWraps() of the last roundTrip
 
 bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr, int keyframeAt = -1,
                const ChunkPlan* plan = nullptr, StreamInfo* info = nullptr)
@@ -267,6 +269,7 @@ bool roundTrip(const EncoderConfig& cfg, int frames, size_t* bytesOut = nullptr,
     avcodec_send_packet(ctx, nullptr);
     receive();
     gHintStats = encPtr->hintStats();
+    gQpDeltaWraps = encPtr->qpDeltaWraps();
     ok = ok && decoded == size_t(frames);
     av_frame_free(&frame);
     av_packet_free(&pkt);
@@ -752,6 +755,71 @@ void testVbv()
             CHECK(sliceA != au.end() && au.end() - sliceA == joined.end() - sliceJ && std::equal(sliceA, au.end(), sliceJ));
             for (au = enc.flush(); !au.empty(); au = enc.flush()) {
             }
+        }
+        {
+            // The control inside the picture (CABAC: FrameCoder::vbvRowAdjust) reads only what the wavefront has
+            // finished for certain: the same stream on 1, 2, 4 and 8 threads, with and without frame threading, and
+            // again when run once more. A fine constant QP without lookahead under a tight buffer, so the rows'
+            // rise works in every picture (the picture-level control knows little), in pictures with 17 and 30
+            // rows. (Until 25.11.2026 it read row r - j at column mbx + 2j where only mbx + j + 1 is certain - sums
+            // another thread was still writing: 5 to 7 of these 8 runs per case gave another stream.)
+            struct RowCase {
+                int w, h, rateDiv, bufDiv;
+                bool holds; // the buffer never runs empty (the other case asks too much of a constant QP 14: 1 of 24)
+            };
+            for (const RowCase& rc : {RowCase{480, 272, 4, 8, false}, RowCase{320, 480, 4, 2, true}}) {
+                EncoderConfig big = config(rc.w, rc.h, IntraMode::Auto, 60, 1);
+                big.fps = 30;
+                big.qp = 14;
+                big.lookahead = 0;
+                big.mbtree = false;
+                size_t bigFree = 0;
+                CHECK(roundTrip(big, 24, &bigFree, 12));
+                big.vbvMaxrateKbps = std::max(64, int(double(bigFree) * 8.0 / (24.0 / 30.0) / 1000.0 / rc.rateDiv) / 64 * 64);
+                big.vbvBufsizeKbits = big.vbvMaxrateKbps / rc.bufDiv;
+                StreamInfo one;
+                CHECK(roundTrip(big, 24, nullptr, 12, nullptr, &one));
+                if (rc.holds)
+                    CHECK(cpbUnderflows(one.sizes, big.fps, big.vbvMaxrateKbps, big.vbvBufsizeKbits, big.vbvInit) == 0);
+                CHECK(*std::max_element(one.qps.begin(), one.qps.end()) > 14); // the buffer is felt
+                for (const int threads : {2, 4, 8, 8})
+                    for (const bool frameThreads : {true, false}) {
+                        EncoderConfig t = big;
+                        t.threads = threads;
+                        t.frameThreads = frameThreads;
+                        StreamInfo many;
+                        CHECK(roundTrip(t, 24, nullptr, 12, nullptr, &many));
+                        if (many.hash != one.hash)
+                            std::fprintf(stderr, "vbv rows %dx%d: %d threads (frame threading %d) give another stream than one thread\n",
+                                         rc.w, rc.h, threads, int(frameThreads));
+                        CHECK(many.hash == one.hash);
+                    }
+            }
+        }
+        {
+            // mb_qp_delta stays in -26..+25 (7.4.5): a QP further from its predictor goes out wrapped by 52 (the
+            // decoder computes modulo 52) - for every pair of QPs, and in streams whose neighbouring macroblocks
+            // are forced 36 apart (testQpChecker), with both entropy coders, in I, P and B pictures. (The VBV rows'
+            // rise did not get that far in any case tried here: the picture's own QP rises first.)
+            for (int pred = 0; pred <= 51; ++pred)
+                for (int qp = 0; qp <= 51; ++qp) {
+                    const int d = FrameCoder::wrapQpDelta(qp - pred);
+                    CHECK(d >= -26 && d <= 25 && (pred + d + 52) % 52 == qp);
+                }
+            for (const bool cabac : {true, false})
+                for (const int bframes : {0, 2}) {
+                    EncoderConfig j = config(320, 192, IntraMode::Auto, 30, 3);
+                    j.cabac = cabac;
+                    j.qp = 12;
+                    j.bframes = bframes;
+                    j.bAdaptive = false;
+                    j.testQpChecker = 36;
+                    CHECK(roundTrip(j, 12));
+                    CHECK(gQpDeltaWraps > 0);
+                    j.testQpChecker = 0;
+                    CHECK(roundTrip(j, 12));
+                    CHECK(gQpDeltaWraps == 0);
+                }
         }
         gCabac = false;
         check(config(320, 192, IntraMode::Auto, 60, 2), "CAVLC, constant QP"); // (qp 28: just a smoke test)
