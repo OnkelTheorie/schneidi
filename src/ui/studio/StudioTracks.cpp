@@ -66,6 +66,7 @@ StudioTracks::StudioTracks(Editor* editor, MediaCache* cache, QWidget* parent)
     // The scrollbars are user input: they move the view (and only they, the wheel and Fit)
     connect(m_hbar, &QScrollBar::valueChanged, this, [this](int v) {
         if (m_syncing) return;
+        stopFollowing();
         m_view.leftFrame = std::max(0.0, v / m_view.pxPerFrame);
         syncScrollBars();
         update();
@@ -118,13 +119,45 @@ void StudioTracks::updateChangedLanes()
 void StudioTracks::setPlayhead(int frame)
 {
     if (frame == m_playhead) return;
-    // The view stays where it is (no follow while playing: core rule). Only the old and the new playhead column and
-    // the timecode corner are drawn anew (playing moves it every frame; the lanes under it stay as they are)
+    // The view stays where it is (core rule), except by the user's choice while it plays (not while scrubbing in the
+    // ruler): then a turned view is drawn anew whole. Otherwise only the old and the new playhead column and the
+    // timecode corner are drawn anew (playing moves it every frame; the lanes under it stay as they are)
     const int old = m_playhead;
     m_playhead = frame;
+    if (m_following && m_playSpeed != 0 && m_drag != Drag::Scrub) {
+        const double left = m_view.leftFrame;
+        followPlayhead(frame);
+        if (m_view.leftFrame != left) {
+            syncScrollBars();
+            return update();
+        }
+    }
     update(playheadRect(old));
     update(playheadRect(frame));
     update(QRect(0, 0, kHeaderW, kRulerH));
+}
+
+void StudioTracks::setPlaying(double speed)
+{
+    const bool started = m_playSpeed == 0 && speed != 0;
+    m_playSpeed = speed;
+    if (started) {
+        m_followMode = int(TimelineOptions::follow());
+        m_following = m_followMode != int(TimelineOptions::Follow::Off);
+    } else if (speed == 0) {
+        m_following = false;
+    }
+}
+
+void StudioTracks::followPlayhead(int frame)
+{
+    // As TimelineView::followPlayhead: a page (the playhead at the edge it comes from) or the playhead in the middle
+    const double vis = std::max(1.0, clipArea().width() / m_view.pxPerFrame);
+    double left = m_view.leftFrame;
+    if (TimelineOptions::Follow(m_followMode) == TimelineOptions::Follow::Center) left = frame - vis / 2;
+    else if (frame < left || frame >= left + vis)
+        left = m_playSpeed > 0 ? frame : frame - vis + 1;
+    m_view.leftFrame = std::max(0.0, left);
 }
 
 QRect StudioTracks::playheadRect(int frame) const
@@ -184,6 +217,7 @@ void StudioTracks::setTool(Tool tool)
 
 void StudioTracks::setView(double pxPerFrame, double leftFrame)
 {
+    stopFollowing(); // the Fit button, a tour's end: the user's view
     m_fitPending = false;
     m_view.pxPerFrame = std::clamp(pxPerFrame, ViewState::kMinPxPerFrame, ViewState::kMaxPxPerFrame);
     m_view.leftFrame = std::max(0.0, leftFrame);
@@ -217,6 +251,7 @@ void StudioTracks::showEvent(QShowEvent* e)
 
 void StudioTracks::zoomBy(double factor)
 {
+    stopFollowing();
     const QRect area = clipArea();
     double x = xOf(m_playhead);
     if (x < area.left() || x > area.right()) x = area.left() + area.width() / 2.0;
@@ -1154,6 +1189,7 @@ void StudioTracks::pinchView(const QPointF& from, const QPointF& to, double scal
         syncScrollBars();
         return;
     }
+    stopFollowing();
     const double ax = std::max<double>(kHeaderW, from.x()), bx = std::max<double>(kHeaderW, to.x());
     m_view.setZoomAround(m_view.pxPerFrame * scale, frameAt(ax), bx - kHeaderW);
     if (m_vbar->isVisible())
@@ -1172,6 +1208,7 @@ void StudioTracks::wheelEvent(QWheelEvent* e)
     if (steps == 0) return;
     WheelAction action = move.action;
     if (action == WheelAction::ScrollVertical && !m_vbar->isVisible()) action = WheelAction::ScrollHorizontal;
+    if (action == WheelAction::Zoom || action == WheelAction::ScrollHorizontal) stopFollowing();
     switch (action) {
     case WheelAction::Zoom: {
         // At the mouse or, by the user's choice, at the playhead while it is visible (ZoomAnchor, like the timeline)

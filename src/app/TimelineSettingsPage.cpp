@@ -226,7 +226,8 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
     play->addRow(T("Beim Abspielen mitscrollen"), m_follow);
     play->addRow(hint(T("Aus: die Timeline bleibt, wo du sie hinscrollst. Seitenweise: läuft die Abspielmarke aus dem "
                         "Bild, blättert die Timeline um. Mittig: die Timeline läuft unter der Abspielmarke durch. "
-                        "Scrollst oder zoomst du beim Abspielen, bleibt sie bis zum nächsten Start stehen.")));
+                        "Scrollst oder zoomst du beim Abspielen, bleibt sie bis zum nächsten Start stehen. Gilt auch "
+                        "für die Spuren im Studio.")));
     m_space = combo("timeline_space_stops",
                     {{T("An der Stelle"), 0}, {T("Zurück zur Startposition"), 1}}, TimelineOptions::spaceReturns() ? 1 : 0);
     play->addRow(T("Leertaste hält an"), m_space);
