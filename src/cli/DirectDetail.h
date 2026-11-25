@@ -38,6 +38,9 @@ struct DirectMoment {
 // The player's deaths in samples of the middle of a CS2 picture (mean R, G, B each, `rate` per second): the red
 // tint over everything that fades into a black screen -> [{s: the tint begins, end_s: where a moment ends}]
 QJsonArray deathScreensOf(const std::vector<std::array<double, 3>>& rgb, int rate);
+// How far each moment of a game recording may grow in a short (lo_s/hi_s: around its hits, never into a death screen,
+// nothing past `usable`, the end of the game picture); a moment that begins at or after `usable` is left out
+void boundMoments(QJsonArray& moments, const QJsonArray& deaths, double usable);
 
 // Where the game picture ends at the end of a recording (the recorder stopped from the task bar: its last seconds
 // show the desktop): pictures `rate` per second from `firstS` on; the end is a hard change of the whole picture after

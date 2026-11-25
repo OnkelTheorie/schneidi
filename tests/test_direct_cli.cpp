@@ -565,6 +565,11 @@ int main(int argc, char** argv)
         }
         rgb.resize(150); // without the tint at the end: only the first
         CHECK_EQ(Cli::detail::deathScreensOf(rgb, 10).size(), 1);
+        // A kill read off the desktop after the game picture ended (usable end 50 s): left out, not a moment at 50 s
+        QJsonArray tail{QJsonObject{{"from_s", 30.0}, {"to_s", 34.0}, {"first_s", 31.0}},
+                        QJsonObject{{"from_s", 52.0}, {"to_s", 55.0}, {"first_s", 53.0}}};
+        Cli::detail::boundMoments(tail, {}, 50);
+        if (CHECK_EQ(tail.size(), 1)) CHECK(tail[0].toObject()["hi_s"].toDouble() <= 50);
     }
 
     // ---- Where the game picture ends (the recorder stopped from the task bar: the desktop in the last seconds), in
