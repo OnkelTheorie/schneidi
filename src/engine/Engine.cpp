@@ -441,6 +441,7 @@ QImage Engine::ownStill(const Timeline& tl, int position, bool transparent)
     o.transparent = transparent;
     Timeline picture = pictureOnly(tl);
     picture.audio.clear();
+    o.timelineEnd = std::make_shared<std::atomic<int>>(TimelineOps::endFrame(tl)); // as the export's progress bars
     Picture::Renderer renderer(picture, o);
     return renderer.render(position).toImage();
 }
@@ -562,6 +563,7 @@ Picture::Options Engine::previewOptions(const QSize& output) const
     o.renderCache = [resolved](const Clip& c) { return resolved->cached(c); };
     o.gradeBypass = m_gradeBypass;
     o.qualifierMask = m_qualifierMask;
+    o.timelineEnd = m_timelineEnd;
     o.parallelFrames = m_pump ? m_pump->workers() : 1;
     // From a rendering thread: the signal is queued to the receivers (the window names the file)
     o.sourceLost = [self = QPointer<Engine>(const_cast<Engine*>(this))](const QString& path) {
@@ -635,6 +637,7 @@ void Engine::applyTimeline(const Timeline& tl)
         Stabilizer::instance()->sync(Stabilizer::missing(tl, m_format));
     }
     m_built = tl;
+    m_timelineEnd->store(TimelineOps::endFrame(tl)); // before the renderer draws the new timeline
     const QSize output = m_previewSize;
     if (!m_renderer) {
         m_renderer = std::make_shared<Picture::Renderer>(pictureOnly(tl), previewOptions(output));

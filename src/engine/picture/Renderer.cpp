@@ -3224,6 +3224,7 @@ Frame Renderer::renderFrame(int64_t frame, const RenderHints& hints)
     ctx.PH = d->options.format.height;
     ctx.fps = d->options.format.rate.fps();
     ctx.end = ctx.root ? TimelineOps::endFrame(*ctx.root) : 0;
+    if (d->options.timelineEnd) ctx.end = std::max(ctx.end, d->options.timelineEnd->load());
     if (d->options.rangeEnd >= 0) { // export of a range: the bar fills over the exported video
         ctx.begin = int(d->options.rangeStart);
         ctx.end = int(d->options.rangeEnd) + 1;
@@ -3343,6 +3344,7 @@ void Renderer::prepare(int64_t frame)
     ctx.root = tl;
     ctx.fps = fps;
     ctx.end = tl ? TimelineOps::endFrame(*tl) : 0;
+    if (d->options.timelineEnd) ctx.end = std::max(ctx.end, d->options.timelineEnd->load());
     if (d->options.rangeEnd >= 0) {
         ctx.begin = int(d->options.rangeStart);
         ctx.end = int(d->options.rangeEnd) + 1;
