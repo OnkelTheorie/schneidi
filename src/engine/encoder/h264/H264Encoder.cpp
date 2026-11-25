@@ -1791,8 +1791,14 @@ S264_DEV(bool, gTpBinB, !devEnv("H264_TPBINB") || std::atoi(devEnv("H264_TPBINB"
 // its last seconds (H264_TPDEV, <= 0 = no limit).
 S264_DEV(double, gTpDev, devEnv("H264_TPDEV") ? std::atof(devEnv("H264_TPDEV")) : 2.0);
 // ... and this much further times the share of the clip's bits (the model's, at the plan QP) that is still to be
-// coded (H264_TPDEVWIDE; 0 = the same limit everywhere): a debt found while most of the clip is still to come is
-// spread over much, so paying it starves nothing.
+// coded (H264_TPDEVWIDE; 0 = the same limit everywhere, the default): a debt found while most of the clip is still to
+// come is spread over much, so paying it starves nothing. Measured 25.11.2026 with 12 and H264_TPLAG=1 (miss of the
+// target, without -> with): 14 s of game clips and stills, where the second clip costs more per need than the first
+// taught the model, at 6 / 12 Mbit/s +3.1 -> +0.5 %, +9.2 -> +4.9 %; 2 s cuts +13.8 -> +10.9 %, +11.9 -> +10.6 %, +4.6 -> +3.8 %,
+// +1.6 -> +0.2 %; highlights at 1.5 to 12 Mbit/s +0.6 .. +1.0 -> +0.1 .. +0.6 %; but the clip with stills at 3 / 4 Mbit/s
+// -2.4 -> -2.7 %, -1.0 -> -1.4 %, and its two-pass BD-rate (1.5 to 12 Mbit/s) +0.6 % PSNR-Y / +1.3 % SSIM-Y: a debt paid
+// late is paid by the pictures that are left. Not the default for that; the model knowing such a clip before it is
+// coded would be the fix. (A plain H264_TPDEV=4 is worse: 12 Mbit/s +5.1 % for 0.44 dB less, the wide limit 0.07 dB.)
 S264_DEV(double, gTpDevWide, devEnv("H264_TPDEVWIDE") ? std::atof(devEnv("H264_TPDEVWIDE")) : 0.0);
 // How much of the way from that plan QP to the QP that spends exactly what is left the picture's QP
 // goes (H264_TPFOLLOW; 1 = all the way, as before 15.11.2026; default a quarter). The plan QP moves only as the model
