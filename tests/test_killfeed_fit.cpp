@@ -313,6 +313,10 @@ void testFallback()
     CHECK(Reframe::feedUse(empty(19, true)) == Reframe::FeedUse::None);
     CHECK(Reframe::feedUse(empty(20, true)) == Reframe::FeedUse::Whole);
     CHECK(Reframe::feedUse(empty(25, false)) == Reframe::FeedUse::Whole);
+    // Without file times the span counts from the first sample, not from frame 0 (4 s measured late in the clip)
+    Reframe::Feed late = empty(4, false);
+    for (Reframe::FeedSample& s : late.samples) s.frame += 600;
+    CHECK(Reframe::feedUse(late) == Reframe::FeedUse::None);
     CHECK(Reframe::feedLineless(empty(25, true)));
     // The copy of the long one: the whole region, no keys, shown as the base is
     Clip base;

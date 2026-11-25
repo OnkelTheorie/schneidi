@@ -560,7 +560,7 @@ FeedUse feedUse(const Feed& f)
 {
     if (!f.measured) return FeedUse::Whole;
     // A line in a stretch after the blips and gaps are filtered (a single sample is none)
-    double first = 0, last = -1;
+    double first = f.samples.isEmpty() ? 0 : f.samples.first().frame, last = -1; // (from the first sample, not 0)
     for (const FeedSample& s : f.samples) {
         first = std::min(first, s.frame);
         last = std::max(last, s.frame);
