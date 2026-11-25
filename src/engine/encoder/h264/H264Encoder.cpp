@@ -1836,10 +1836,6 @@ S264_DEV(double, gTpLagShare, devEnv("H264_TPLAGSHARE") ? std::atof(devEnv("H264
 // I pictures take a third of the bits that is more than its other pictures ever need, so an
 // overdrawn clip coded its last pictures finer than planned).
 S264_DEV(double, gTpRestFloor, devEnv("H264_TPRESTFLOOR") ? std::atof(devEnv("H264_TPRESTFLOOR")) : 0.5);
-// The budget left counts the pictures in flight: started pictures are out of the table of pictures left at once,
-// their bits reach rcBits_ two or three pictures later (applyRc) - between the two they counted as spendable.
-// H264_TPFLIGHT: weight of their predicted bits in the budget (0 = not counted; measuring).
-S264_DEV(double, gTpFlight, devEnv("H264_TPFLIGHT") ? std::atof(devEnv("H264_TPFLIGHT")) : 0.0);
 
 // Two-pass complexity compression (EncoderConfig::qcomp): smoothing window in seconds and the
 // largest QP offset (H264_QCBLUR, H264_QCMAX: experiment knobs).
@@ -2186,10 +2182,14 @@ double Encoder::twoPassQp(double kI, double kP, double kB, double planQp) const
     const double left = double(st.size()) - frameIndex_;
     const double least = planQp >= 0 && gTpRestFloor > 0 ? gTpRestFloor * tpBits(tpRemTab_, planQp, kI, kP, kB)
                                                          : 0.5 * left * perFrame;
-    double flight = 0;
-    for (const auto& f : tpFlight_)
-        flight += f.second;
-    const double budget = std::max(double(st.size()) * perFrame - rcBits_ - gTpFlight * flight, least);
+    // rcBits_ lags: the two or three pictures in flight are out of tpRemTab_ (dropped at their start) and not yet in
+    // rcBits_ (applyRc), so their bits count as still to spend. Left so on purpose - subtracting their predicted bits
+    // (measured 25.11.2026, miss of the target without -> with) brings the clips that end over their size down
+    // (2 s cuts of game footage +1.4 -> +1.0, +1.6 -> 0.0, +13.8 -> +11.8, +11.9 -> +10.3, +4.6 -> +3.0 %; 14 s with stills at
+    // 12 Mbit/s +9.2 -> +8.8 %) and pushes those that end under it further under (2 s cuts -1.9 -> -2.6, +0.5 -> -0.6 %; 14 s
+    // with stills -3.3 -> -3.4, -2.4 -> -2.6 %; the synthetic clip with a standing start 592 -> 586 of 600 kbit/s): a
+    // shift of 0.3 to 2 points downwards, not a better aim.
+    const double budget = std::max(double(st.size()) * perFrame - rcBits_, least);
     const double qp = tpSolve(tpRemTab_, budget, kI, kP, kB);
     static const bool trace = devEnv("H264_RC_TRACE") != nullptr;
     if (trace)
@@ -4384,8 +4384,6 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
     const int baseQp = cfg_.qp;
     float qpFrac = 0; // constant quality: the picture's QP is cfg_.qp + qpFrac
     applyRc(frameIndex_ - inFlightAt(frameIndex_));
-    while (!tpFlight_.empty() && tpFlight_.front().first <= frameIndex_ - inFlightAt(frameIndex_))
-        tpFlight_.pop_front();
     const bool lookahead = lookaheadFrame;
     double costUsed = 0; // lookahead cost of this picture, for the bit model afterwards
     if (lookahead) {
@@ -4846,12 +4844,6 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             qp = std::clamp(qp, rcQp_ - 3.0, rcQp_ + 3.0);
         }
         rcQp_ = std::clamp(qp, 10.0, 51.0);
-        if (twoPass && gTpFlight > 0) { // this picture's bits as the model sees them, until its real ones are in rcBits_
-            std::vector<double> one(size_t(kTpClasses) * kTpQSteps, 0.0);
-            const size_t i = std::min(size_t(frame.index), cfg_.firstPass->size() - 1);
-            tpRow(i, one.data() + size_t(tpClass_[i]) * kTpQSteps);
-            tpFlight_.emplace_back(frameIndex_, tpBits(one, rcQp_, kOf(true), kOf(false), kB()));
-        }
         if (twoPass && size_t(frame.index) < tpOff_.size())
             qp += tpOff_[size_t(frame.index)];
         cfg_.qp = std::clamp(int(std::lround(idr ? qp - 3 : type == 2 ? qp + (bRef ? bRefQp : bQp) : qp)), 10, 51);

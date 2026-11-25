@@ -663,7 +663,6 @@ private:
     int rcBin(double cost) const;
     double kPOfBin(int kind, int bin, double kP) const;
     double twoPassQp(double kI, double kP, double kB, double planQp = -1) const;
-    std::deque<std::pair<int, double>> tpFlight_; // two-pass: started pictures whose bits are not in rcBits_ yet (index, predicted bits)
     double tpGap_ = 0; // two-pass: the gap between the QP that spends what is left and the plan QP, averaged (gTpLag)
     // Two-pass, the clip's end (tpTreeTail): the macroblock tree's level over the reference pictures coded with the
     // whole lookahead behind them (per unit of tree strength) and, per picture, the QPs the tree falls short of that
