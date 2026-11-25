@@ -649,6 +649,32 @@ void sandboxLibraryKeys(const QString& base)
                           {"ops", QJsonArray{QJsonObject{{"op", "comp"}, {"clips", QJsonArray{1}},
                                                          {"recipe", outside + "/r/recipe.json"}}}}}),
              QString("OUTSIDE_ROOT"));
+    // The server user's own libraries and global brand kit are read-only for clients of a work folder
+    CHECK_EQ(run("templates", {{"save", "tpl/template.schneidi"}, {"name", "Mine"}}), QString("READ_ONLY"));
+    CHECK_EQ(run("templates", {{"import", "t.zip"}}), QString("READ_ONLY"));
+    CHECK_EQ(run("templates", {{"remove", "intro-outro"}}), QString("READ_ONLY"));
+    CHECK_EQ(run("templates", {{"rename", "intro-outro"}, {"name", "Gone"}}), QString("READ_ONLY"));
+    CHECK_EQ(run("effects", {{"kind", "recipes"}, {"import", "t.zip"}}), QString("READ_ONLY"));
+    CHECK_EQ(run("effects", {{"kind", "recipes"}, {"remove", "anything"}}), QString("READ_ONLY"));
+    CHECK_EQ(run("edit", {{"project", "c.schneidi"},
+                          {"ops", QJsonArray{QJsonObject{{"op", "comp"}, {"clips", QJsonArray{1}}, {"save_recipe", "Mine"}}}}}),
+             QString("READ_ONLY"));
+    const BrandKit before = Brand::global();
+    CHECK_EQ(run("brand", {{"action", "set"}, {"colors", "#00ff00"}}), QString("READ_ONLY"));
+    CHECK_EQ(run("brand", {{"action", "set"}, {"global", true}, {"project", "c.schneidi"}, {"colors", "#00ff00"}}),
+             QString("READ_ONLY"));
+    // ... a project's set changes its own kit then
+    CHECK_EQ(run("brand", {{"action", "set"}, {"project", "c.schneidi"}, {"colors", "#00ff00"}}), QString("none"));
+    CHECK(Brand::global().colors == before.colors);
+    {
+        ProjectData d;
+        QString err;
+        if (CHECK(ProjectFile::load(root + "/c.schneidi", &d, &err)) && CHECK(d.brand.has_value()))
+            CHECK_EQ(d.brand->colors.size(), qsizetype(1));
+    }
+    // The server's owner can allow it (--allow-library-writes)
+    Cli::Sandbox::configure({root, {}, false, true});
+    CHECK_EQ(run("templates", {{"remove", "no-such-template"}}), QString("NOT_FOUND"));
     Cli::Sandbox::configure({});
     QDir::setCurrent(cwd);
 }

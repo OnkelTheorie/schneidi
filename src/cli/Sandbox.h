@@ -22,6 +22,8 @@ struct Settings {
     QStringList maps;  // "client prefix=server prefix"
     bool app = true;   // live connection to the desktop app ("@app", `app`); off with a root (the app does not
                        // know the work folder)
+    bool libraryWrites = false; // --allow-library-writes: with a root, clients may change the server user's own
+                                // template/recipe libraries and global brand kit
 };
 
 // Throws Error (BAD_ARGUMENT) for a root that is not a folder or a map without '='. With a root, trust in custom code
@@ -30,6 +32,11 @@ void configure(const Settings& s);
 bool active();       // a root is set
 QString root();      // absolute, clean
 bool appAllowed();
+// The server user's own libraries (content templates, compositing recipes) and global brand kit are theirs, not the
+// work folder's: with a root they are read-only unless allowed (Settings::libraryWrites). Throws READ_ONLY, `what`
+// names the change ("templates remove")
+void checkLibraryWrite(const QString& what);
+bool libraryWritesAllowed();
 
 // A path from a client -> absolute path on this computer: mapped, relative ones in the root (or the working
 // directory). Throws OUTSIDE_ROOT if it leaves the root, also through a symlink, HIDDEN for a hidden file or folder in

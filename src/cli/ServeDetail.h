@@ -47,6 +47,7 @@ struct Options {
     QStringList origins;
     bool verbose = false;
     bool privateUrls = false; // --allow-private-urls: upload by URL may fetch from private networks
+    bool libraryWrites = false; // --allow-library-writes: clients may change the user's own libraries, global brand
 };
 
 QByteArray json(const QJsonObject& o);

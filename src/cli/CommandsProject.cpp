@@ -1440,12 +1440,14 @@ QJsonObject cmdEffects(const QJsonObject& a, Context&)
             return {{"exported", a["export"].toString()}, {"zip", QDir::toNativeSeparators(a["to"].toString())}, {"files", files}};
         }
         if (a.contains("import")) {
+            Sandbox::checkLibraryWrite("recipes import");
             const std::optional<CompRecipe> r = CompRecipes::importZip(a["import"].toString(), a["replace"].toBool(), &err, &code);
             if (!r) fail(code, err);
             return {{"imported", r->id}, {"name", r->name}, {"folder", QDir::toNativeSeparators(r->dir)},
                     {"slots", recipeSlotsJson(*r)}};
         }
         if (a.contains("remove")) {
+            Sandbox::checkLibraryWrite("recipes remove");
             if (!CompRecipes::remove(a["remove"].toString(), &err, &code)) fail(code, err);
             return {{"removed", a["remove"].toString()}};
         }

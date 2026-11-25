@@ -138,6 +138,7 @@ Server::Server(const Options& opt) : m_opt(opt), m_tcp(new QTcpServer(this)), m_
     // the arguments come mapped already, and withLinks maps the answers back (twice would map a path again)
     QStringList args{"mcp", "--root", Sandbox::root()};
     if (!opt.extensions) args << "--no-extensions";
+    if (opt.libraryWrites) args << "--allow-library-writes";
     if (opt.verbose) args << "--verbose";
     m_jobs = new Jobs(args, Sandbox::root(), opt.workers, this);
     m_jobs->setResultFilter([this](const Job& j, const QJsonObject& r) { return withLinks(j, r); });
@@ -660,7 +661,7 @@ Options parse(const QStringList& args)
     const auto o = parseOptions(args,
                                 {"listen", "port", "root", "map", "token", "token-file", "workers", "job-wait",
                                  "max-upload", "public-url", "allow-origin"},
-                                {"allow-extensions", "allow-private-urls"});
+                                {"allow-extensions", "allow-private-urls", "allow-library-writes"});
     const auto one = [&o](const char* name) { return o.value(name).isEmpty() ? QString() : o.value(name).last(); };
     const auto number = [&](const char* name, int lo, int hi, int fallback) {
         if (!o.contains(name)) return fallback;
@@ -690,6 +691,7 @@ Options parse(const QStringList& args)
     opt.maxUpload = qint64(number("max-upload", 1, 100 * 1024 * 1024, 50 * 1024)) << 20;
     opt.extensions = o.contains("allow-extensions");
     opt.privateUrls = o.contains("allow-private-urls");
+    opt.libraryWrites = o.contains("allow-library-writes");
     opt.publicUrl = one("public-url");
     while (opt.publicUrl.endsWith('/')) opt.publicUrl.chop(1);
     if (!opt.publicUrl.isEmpty() && !QUrl(opt.publicUrl).isValid()) fail("USAGE", "--public-url is not a URL");
@@ -782,14 +784,17 @@ QJsonObject help()
 {
     return {
         {"mcp",
-         QJsonObject{{"usage", "schneidi-cli mcp [--root <folder>] [--map '<their path>=<path here>']… [--no-extensions]"},
+         QJsonObject{{"usage", "schneidi-cli mcp [--root <folder>] [--map '<their path>=<path here>']… [--no-extensions] "
+                                "[--allow-library-writes]"},
                      {"summary", "MCP server on stdin/stdout (Claude Desktop, Claude Code, …): every command is a tool."},
                      {"options",
                       QJsonObject{{"root", "work folder: relative paths start there, nothing outside it can be used "
                                            "(also no live connection to the app)"},
                                   {"map", "path of another computer = path here, e.g. 'Z:\\Clips=/data/clips' "
                                           "(repeatable); answers show the other computer's paths"},
-                                  {"no-extensions", "no `extensions` tool (downloads programs)"}}}}},
+                                  {"no-extensions", "no `extensions` tool (downloads programs)"},
+                                  {"allow-library-writes", "with --root: the AI may change your own templates, recipes "
+                                                           "and global brand kit (default: read-only)"}}}}},
         {"serve",
          QJsonObject{
              {"usage", "schneidi-cli serve [--listen 127.0.0.1] [--port 8642] [--root <folder>] [--token-file <file>] …"},
@@ -817,7 +822,9 @@ QJsonObject help()
                   {"allow-extensions", "offer the `extensions` tool (downloads programs onto the server)"},
                   {"allow-private-urls", "let upload by URL fetch from private networks (10.x, 192.168.x, …) also "
                                          "when the server is reachable from elsewhere (off: clients from outside "
-                                         "could read the router, NAS or internal services through it)"}}}}},
+                                         "could read the router, NAS or internal services through it)"},
+                  {"allow-library-writes", "let clients change your own content templates, recipes and global brand "
+                                           "kit (save, import, rename, remove; default: read-only for them)"}}}}},
     };
 }
 
@@ -831,7 +838,7 @@ int run(const QStringList& args)
     Options opt;
     try {
         opt = parse(args);
-        Sandbox::configure({opt.root, opt.maps, false});
+        Sandbox::configure({opt.root, opt.maps, false, opt.libraryWrites});
     } catch (const Error& e) {
         print(errorJson(e.code, e.message));
         return 2;

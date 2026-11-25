@@ -45,6 +45,7 @@ struct State {
     QString canonical; // with symlinks resolved
     QVector<Map> maps;
     bool app = true;
+    bool libraryWrites = false;
 };
 
 State& state()
@@ -110,6 +111,7 @@ void configure(const Settings& in)
 {
     State s;
     s.app = in.app && in.root.isEmpty();
+    s.libraryWrites = in.libraryWrites;
     if (!in.root.isEmpty()) {
         const QFileInfo fi(in.root);
         if (!fi.isDir()) fail("BAD_ARGUMENT", "work folder not found: " + in.root);
@@ -142,6 +144,18 @@ bool active() { return !state().root.isEmpty(); }
 QString mapPath(const QString& path) { return applyMaps(path); }
 QString root() { return state().root; }
 bool appAllowed() { return state().app; }
+
+bool libraryWritesAllowed() { return state().root.isEmpty() || state().libraryWrites; }
+
+void checkLibraryWrite(const QString& what)
+{
+    if (libraryWritesAllowed()) return;
+    fail("READ_ONLY", QString("%1: the own templates, recipes and the global brand kit belong to the server's user and "
+                              "are read-only here (work folder); keep a template as a project in the work folder "
+                              "(`templates fill` takes its path) or a brand kit in the project (brand set global:false). "
+                              "The server's owner can allow changes with --allow-library-writes")
+                         .arg(what));
+}
 
 QString resolve(const QString& given)
 {

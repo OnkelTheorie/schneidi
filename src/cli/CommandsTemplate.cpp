@@ -493,6 +493,7 @@ QJsonObject fillInPlace(const QJsonObject& a0, Context& ctx)
 
 QJsonObject saveTemplate(const QJsonObject& a)
 {
+    Sandbox::checkLibraryWrite("templates save");
     const QString name = a["name"].toString().trimmed();
     if (name.isEmpty()) fail("BAD_ARGUMENT", "save needs a name");
     Session s(a["save"].toString());
@@ -535,6 +536,7 @@ QJsonObject exportTemplate(const QJsonObject& a)
 
 QJsonObject importTemplate(const QJsonObject& a)
 {
+    Sandbox::checkLibraryWrite("templates import");
     QString err, code;
     const std::optional<ContentTemplate> t = TemplateLibrary::importZip(
         a["import"].toString(), a["replace"].toBool() ? TemplateLibrary::ZipClash::Replace : TemplateLibrary::ZipClash::KeepBoth,
@@ -1092,11 +1094,13 @@ QJsonObject cmdTemplates(const QJsonObject& a, Context& ctx)
     if (action == "export") return exportTemplate(a);
     if (action == "import") return importTemplate(a);
     if (action == "remove") {
+        Sandbox::checkLibraryWrite("templates remove");
         QString err, code;
         if (!TemplateLibrary::remove(a["remove"].toString().trimmed(), &err, &code)) fail(code, err);
         return {{"removed", a["remove"].toString().trimmed()}};
     }
     if (action == "rename") {
+        Sandbox::checkLibraryWrite("templates rename");
         QString err, code;
         if (a["name"].toString().trimmed().isEmpty()) fail("BAD_ARGUMENT", "rename needs name");
         if (!TemplateLibrary::rename(a["rename"].toString().trimmed(), a["name"].toString(), &err, &code)) fail(code, err);

@@ -313,6 +313,7 @@ Parsed recipeGraph(Session& s, const QJsonObject& op)
 // {op:'comp', clips:[one], save_recipe:'name', description?, replace?}: the clip's graph into the own recipes
 void saveRecipe(Session& s, const QJsonObject& op)
 {
+    Sandbox::checkLibraryWrite("save_recipe");
     const QVector<int> ids = clipsOn(s, op, TrackKind::Video, "a compositing graph");
     if (ids.size() != 1) fail("BAD_ARGUMENT", "save_recipe: give one clip");
     const Clip* c = TimelineOps::findClip(s.project.timeline(), ids.first());
