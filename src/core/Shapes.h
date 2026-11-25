@@ -65,6 +65,11 @@ Masks::Geometry geometry(const QVector<QPointF>& points, double soft);
 // Copies of clips got new ids (old -> new, paste, decompose): a copied shape following a clip copied with it follows
 // the copy (a drawing too: it follows with the same fields). Only the clips with a new id are looked at
 void remapFollow(Timeline& tl, const QHash<int, int>& ids);
+// After an edit (`before` -> `after`): a shape or drawing following a clip that is gone while a piece of the same take
+// with the tracker stays (a blade gives the right piece a new id, then the left piece was deleted) follows that piece -
+// on the tracked clip's track, the same file and playback, the piece nearest to the gone clip in the file. Called by
+// Project::edit.
+void keepFollowing(const Timeline& before, Timeline& after);
 
 // ---- Clip in a shape (effect "clip_shape"): the clip's own picture cut to a shape, with stroke and shadow ----
 inline constexpr const char* kClipShapeEffect = "clip_shape";

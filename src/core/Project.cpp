@@ -4,6 +4,7 @@
 #include "core/CompGraph.h"
 #include "core/I18n.h"
 #include "core/MainTrack.h"
+#include "core/Shapes.h"
 #include "core/TimelineOps.h"
 
 #include <QDateTime>
@@ -482,6 +483,7 @@ void Project::edit(const QString& text, const std::function<void(Timeline&)>& fn
     // A clip overwritten in place: its kill feed copy is cut the same way (every overwrite path at once)
     TimelineOps::cutCopiesLikeBases(timeline(), after, [this] { return newClipId(); });
     TimelineOps::resolvePendingLinks(after, [this] { return newLinkId(); }); // leftover pieces from clearRange
+    Shapes::keepFollowing(timeline(), after); // a shape following a cut clip whose left piece went: the right piece
     // The magnetic main track closes what the edit opened on V1 (the same undo step); gaps that were there stay
     const QString gapKept = magnetActive() ? magnetize(after) : QString();
     TimelineOps::unpairBrokenDissolves(timeline(), after);
@@ -734,16 +736,19 @@ int Project::duplicateSequence(int id)
     copy.id = newSequenceId();
     copy.name = T("%1 Kopie").arg(src->name);
     // own clip/link ids (selection, keyframe track etc. depend on the id)
-    QHash<int, int> links;
+    QHash<int, int> links, ids;
     for (auto* tracks : {&copy.timeline.video, &copy.timeline.audio})
         for (Track& t : *tracks)
             for (Clip& c : t.clips) {
+                const int was = c.id;
                 c.id = newClipId();
+                ids.insert(was, c.id);
                 if (c.linkId) {
                     if (!links.contains(c.linkId)) links.insert(c.linkId, newLinkId());
                     c.linkId = links.value(c.linkId);
                 }
             }
+    Shapes::remapFollow(copy.timeline, ids); // a shape following a tracked clip follows its copy
     for (SubtitleTrack& t : copy.timeline.subtitles)
         for (SubtitleCue& c : t.cues) c.id = newClipId();
     editSequences(src->compound ? T("Verbundclip duplizieren") : T("Timeline duplizieren"),
