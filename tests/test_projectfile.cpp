@@ -547,15 +547,24 @@ int main(int argc, char** argv)
         BrandKit kit;
         kit.logo = "/weg/logo.png";
         d.brand = kit;
+        // ... and a Color page still's LUT (only its grade is kept)
+        d.media << d.media[2];
+        d.media[6].path = "/weg/look.cube";
+        GradeStill still;
+        CHECK(EffectRegistry::add(still.grade, "grade"));
+        EffectRegistry::instance(still.grade, "grade")->params["lut"] = "/weg/look.cube";
+        d.stills << still;
         CHECK_EQ(ProjectFile::unusedMedia(d), QStringList({"/weg/c.mp4"}));
-        // ... and relink finds the wipe picture again (it pointed at the old path before)
+        // ... and relink finds the wipe picture and the LUT again (they pointed at the old paths before)
         const QString found = tmp.filePath("wischen");
         QDir().mkpath(found);
-        QFile wipe(found + "/wipe.png");
-        CHECK(wipe.open(QIODevice::WriteOnly));
-        wipe.close();
-        CHECK_EQ(ProjectFile::relink(&d, found), 1);
+        for (const char* name : {"/wipe.png", "/look.cube"}) {
+            QFile f(found + name);
+            CHECK(f.open(QIODevice::WriteOnly));
+        }
+        CHECK_EQ(ProjectFile::relink(&d, found), 2);
         CHECK_EQ(d.timeline.video[0].clips[0].transOutStyle.luma, found + "/wipe.png");
+        CHECK_EQ(EffectRegistry::instance(d.stills[0].grade, "grade")->params.value("lut").toString(), found + "/look.cube");
     }
 
     // --- Older file: freeze frame without freezeFrame shows `in` - also after splitting (shifts `in` of the right part)
