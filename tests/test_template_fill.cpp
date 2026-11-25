@@ -1300,8 +1300,12 @@ void testLibrary()
     TemplateLibrary::SaveOptions again;
     again.replace = true;
     again.copyMedia = false;
+    // An old folder a replace could not remove (Windows: a file inside was open) goes with the next replace
+    const QString stale = QDir(TemplateLibrary::dir()).filePath(".my-short.0badc0de.saving.old");
+    CHECK(QDir().mkpath(stale + "/media"));
     t = TemplateLibrary::save(d, "My Short", again, &err);
     CHECK(t.has_value());
+    CHECK(!QFileInfo::exists(stale));
     if (t) {
         CHECK(t->preview.endsWith("preview.png"));
         CHECK(!QDir(t->dir).exists("media"));

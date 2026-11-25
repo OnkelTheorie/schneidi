@@ -354,6 +354,12 @@ std::optional<ContentTemplate> save(const ProjectData& project, const QString& n
     }
     tmp.clear();
     QDir(aside).removeRecursively();
+    // Old folders a replace could not remove (Windows: a file inside still open) go with the next replace, under the
+    // same lock
+    if (o.replace)
+        for (const QFileInfo& stale : base.entryInfoList({QStringLiteral(".*.saving.old")},
+                                                         QDir::Dirs | QDir::Hidden | QDir::NoDotAndDotDot))
+            QDir(stale.absoluteFilePath()).removeRecursively();
     // Once more from its place: the absolute media paths point into the final folder (relative ones did already)
     ProjectData placed;
     const QString file = QDir(final).filePath(ProjectFileName);
