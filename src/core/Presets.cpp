@@ -478,7 +478,7 @@ QString animationText(const Clip& c, AnimParam p)
     }
     if (k.first().frame - c.in < 0 && (inside.isEmpty() || inside.first().frame != 0))
         inside.prepend(Keyframe{0, Keys::valueAt(c, p, 0), KeyEase::Linear});
-    if (k.last().frame - c.in > len - 1 && inside.last().frame != len - 1)
+    if (k.last().frame - c.in > len - 1 && (inside.isEmpty() || inside.last().frame != len - 1))
         inside << Keyframe{len - 1, Keys::valueAt(c, p, len - 1), KeyEase::Linear};
     QStringList items;
     for (int i = 0; i < inside.size(); ++i) {

@@ -600,6 +600,14 @@ int main(int argc, char** argv)
         EffectRegistry::instance(c, "frei0r.glow")->enabled = false;
         const Presets::Mapped off = Presets::map(Presets::parse(Presets::toXml(c, "x"), "x.xml"));
         if (const EffectInstance* e = effect(off, "frei0r.glow"); CHECK(e)) CHECK(!e->enabled);
+        // Every key after the out point (the end trimmed off): one key at the last frame with the edge value
+        // (indexed an empty list before)
+        EffectRegistry::instance(c, "frei0r.glow")->enabled = true;
+        c.keys[glow].clear();
+        Keys::setKey(c, glow, 200, 0.1);
+        Keys::setKey(c, glow, 300, 0.9);
+        const QByteArray late = Presets::toXml(c, "Spaet");
+        CHECK(late.contains(R"(value="49=0.1")"));
     }
     // Plugins whose Kdenlive file uses indexes keep them, named ones get Kdenlive's names; a plugin Kdenlive hides is
     // written like schneidi's own effects
