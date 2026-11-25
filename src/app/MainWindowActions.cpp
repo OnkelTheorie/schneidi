@@ -116,6 +116,14 @@ void MainWindow::updateStepTexts()
         {"nudge_right_multi", stepActionText(StepAction::NudgeRight, TimelineOptions::bigNudge())}};
     for (const auto& [id, text] : texts)
         if (QAction* a = InputBindings::instance().action(id)) a->setText(text);
+    if (QAction* a = InputBindings::instance().action("add_transition")) a->setText(addTransitionText());
+}
+
+QString MainWindow::addTransitionText()
+{
+    const TransitionType type = TimelineOptions::transitionType();
+    if (type == TransitionType::CrossDissolve) return T("Übergang hinzufügen (Überblendung)");
+    return T("Übergang hinzufügen (%1)").arg(T(transitionTypeInfo(type).name));
 }
 
 QAction* MainWindow::makeAction(QMenu* menu, const QString& id, const QString& text, const QKeySequence& key,
@@ -291,12 +299,13 @@ void MainWindow::buildActions()
     QMenu* timeline = menuBar()->addMenu(T("&Timeline"));
     makeAction(timeline, "split", T("Clip am Abspielkopf teilen"), QKeySequence("Ctrl+B"),
                [this, tv, notOnDirect] { if (notOnDirect()) m_editor->splitAtPlayhead(tv->playhead()); });
-    makeAction(timeline, "add_transition", T("Übergang hinzufügen (Überblendung)"), QKeySequence("Ctrl+T"),
-               [this, tv] {
-                   const bool trim = !m_editor->transitionsLackingHandles(tv->playhead()).isEmpty()
-                                     && TimelineView::confirmTrimForTransition(this);
-                   m_editor->addTransitions(tv->playhead(), {}, {}, trim);
-               });
+    // The kind as chosen in Settings › Timeline (cross dissolve by default; the text names it, updateStepTexts)
+    makeAction(timeline, "add_transition", addTransitionText(), QKeySequence("Ctrl+T"), [this, tv] {
+        const std::optional<TransitionStyle> style = TimelineOptions::transitionStyle();
+        const bool trim = !m_editor->transitionsLackingHandles(tv->playhead(), style).isEmpty()
+                          && TimelineView::confirmTrimForTransition(this);
+        m_editor->addTransitions(tv->playhead(), style, {}, trim);
+    });
     makeAction(timeline, "add_title", T("Titel einfügen"), QKeySequence(), [this, tv] { m_editor->addTitle(tv->playhead()); });
     // In the source viewer M sets a source marker (multicam sync by marker), like DaVinci
     makeAction(timeline, "add_marker", T("Marker setzen/entfernen"), QKeySequence("M"), [this, tv] {
@@ -622,6 +631,12 @@ void MainWindow::buildActions()
     m_timeline->setOverviewOnPage(m_page == Page::Edit);
     connect(m_pages, &QStackedWidget::currentChanged, m_timeline,
             [this] { m_timeline->setOverviewOnPage(m_page == Page::Edit); });
+    // Track height in three steps (the wheel changes it freely from there; the start height: Settings › Timeline)
+    QMenu* heightMenu = viewOpts->addMenu(T("Spurhöhe"));
+    for (const auto& [id, text, step] : {std::tuple{"track_height_small", T("Klein"), TimelineOptions::TrackHeight::Small},
+                                         std::tuple{"track_height_medium", T("Mittel"), TimelineOptions::TrackHeight::Medium},
+                                         std::tuple{"track_height_large", T("Groß"), TimelineOptions::TrackHeight::Large}})
+        makeAction(heightMenu, id, text, QKeySequence(), [this, step] { setTrackHeightStep(step); });
     viewOpts->addSeparator();
     // On the Studio page the keys zoom its tracks (their own view), elsewhere the timeline
     const auto zoom = [this, tv](double factor) {
@@ -685,25 +700,45 @@ void MainWindow::buildActions()
         PlayheadMove::jump(m_engine, PlayheadMove::Source::Key,
                            [this] { m_engine->seek(TimelineOps::endFrame(m_project->timeline())); });
     });
-    // Loop playback in the In/Out range (per session, off at every start; export unaffected): only while a range
-    // exists, removing it switches the loop off (nothing loops by accident). No default key.
+    // Loop playback in the In/Out range (export unaffected): only while a range exists, removing it switches the loop
+    // off (nothing loops by accident) - unless the user chose the whole timeline for no range (Settings › Timeline).
+    // Off at every start, unless the user chose to remember it: then the last switch by hand comes back once the
+    // loop is possible. No default key.
     auto* loop = makeAction(play, "loop_inout", T("Im Bereich wiederholen"), QKeySequence(), [] {});
     loop->setCheckable(true);
     loop->setChecked(m_engine->looping()); // (built again, rebuildUi: the loop stays as it was)
-    auto applyLoop = [this, tv, loop] {
+    auto restore = std::make_shared<bool>(!m_loopRestored && TimelineOptions::loopAtStart()); // only at the start
+    m_loopRestored = true;
+    m_applyLoop = [this, tv, loop, restore] {
         const Timeline& tl = m_project->timeline();
         const bool range = tl.markIn >= 0 || tl.markOut >= 0;
-        if (!range && loop->isChecked()) loop->setChecked(false); // comes back here through toggled
-        loop->setEnabled(range);
-        const bool on = loop->isChecked() && range;
-        tv->setLoopInOut(on);
-        if (on) m_engine->setLoopRange(std::max(0, tl.markIn), tl.markOut >= 0 ? tl.markOut : INT_MAX);
+        const bool possible = range || TimelineOptions::loopWholeTimeline();
+        if (possible && *restore) {
+            *restore = false;
+            if (!loop->isChecked()) loop->setChecked(true); // comes back here through toggled
+        }
+        if (!possible && loop->isChecked()) loop->setChecked(false);
+        loop->setEnabled(possible);
+        loop->setText(range || !possible ? T("Im Bereich wiederholen") : T("Ganze Timeline wiederholen"));
+        const bool on = loop->isChecked() && possible;
+        tv->setLoopInOut(on && range);
+        tv->setLoopWhole(on && !range);
+        if (on && range) m_engine->setLoopRange(std::max(0, tl.markIn), tl.markOut >= 0 ? tl.markOut : INT_MAX);
+        else if (on) m_engine->setLoopRange(0, INT_MAX); // the whole timeline: wraps at its end
         else m_engine->setLoopRange(-1, -1);
     };
-    connect(loop, &QAction::toggled, this, applyLoop);
-    connect(tv, &TimelineView::loopInOutRequested, loop, &QAction::setChecked);
-    connect(m_project, &Project::timelineChanged, m_ui, applyLoop);
-    applyLoop();
+    connect(loop, &QAction::toggled, this, [this] { m_applyLoop(); });
+    // A switch by hand (menu, key, the ruler's menu) is the wish a remembered loop keeps (test runs: not stored)
+    const auto wish = [this](bool on) {
+        if (!m_autosaveDisabled) TimelineOptions::setLoopWish(on);
+    };
+    connect(loop, &QAction::triggered, this, wish);
+    connect(tv, &TimelineView::loopInOutRequested, loop, [loop, wish](bool on) {
+        loop->setChecked(on);
+        wish(on);
+    });
+    connect(m_project, &Project::timelineChanged, m_ui, [this] { m_applyLoop(); });
+    m_applyLoop();
     // Sound while scrubbing (Settings › Timeline): Shift+S like DaVinci and Final Cut
     m_scrubAudioAction = makeAction(play, "scrub_audio", T("Ton beim Scrubben"), QKeySequence("Shift+S"), [] {});
     m_scrubAudioAction->setCheckable(true);

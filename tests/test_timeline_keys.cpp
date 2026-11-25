@@ -32,6 +32,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QSettings>
+#include <climits>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QListWidget>
@@ -197,6 +198,53 @@ void testWindow(const QString& media, const QString& shots)
     action("lock_tracks")->trigger();
     CHECK(!p->timeline().video[0].locked && !p->timeline().audio[0].locked);
     CHECK_EQ(p->undoStack()->count(), steps + 2);
+
+    // Track height steps (Timeline View › Track Height): the start = medium (64/52, as before); each step at once,
+    // no undo step (a view, not the project)
+    CHECK_EQ(tv->view().videoTrackHeight, 64);
+    CHECK_EQ(tv->view().audioTrackHeight, 52);
+    action("track_height_large")->trigger();
+    CHECK_EQ(tv->view().videoTrackHeight, 96);
+    CHECK_EQ(tv->view().audioTrackHeight, 78);
+    action("track_height_small")->trigger();
+    CHECK_EQ(tv->view().videoTrackHeight, 44);
+    CHECK_EQ(tv->view().audioTrackHeight, 36);
+    action("track_height_medium")->trigger();
+    CHECK_EQ(tv->view().videoTrackHeight, 64);
+    CHECK_EQ(p->undoStack()->count(), steps + 2);
+
+    // Loop playback without an In/Out range: not possible by default (as before); with the whole timeline chosen
+    // (Settings › Timeline) it loops from 0 to the end, a range set meanwhile loops in the range, removing the range
+    // goes back to the whole timeline
+    {
+        QAction* loop = action("loop_inout");
+        CHECK(!loop->isEnabled() && !loop->isChecked() && !engine.looping());
+        TimelineOptions::setLoopWholeTimeline(true);
+        w.applyTimelineOptions();
+        CHECK(loop->isEnabled());
+        CHECK_EQ(loop->text(), T("Ganze Timeline wiederholen"));
+        loop->trigger();
+        CHECK(loop->isChecked() && engine.looping());
+        CHECK_EQ(engine.loopIn(), 0);
+        CHECK_EQ(engine.loopOut(), INT_MAX);
+        CHECK(!tv->loopInOut()); // nothing to draw in the ruler: no range
+        p->edit("marks", [](Timeline& tl) {
+            tl.markIn = 10;
+            tl.markOut = 40;
+        });
+        CHECK(engine.looping() && tv->loopInOut());
+        CHECK_EQ(engine.loopIn(), 10);
+        CHECK_EQ(engine.loopOut(), 40);
+        CHECK_EQ(loop->text(), T("Im Bereich wiederholen"));
+        p->edit("marks", [](Timeline& tl) { tl.markIn = tl.markOut = -1; });
+        CHECK(loop->isChecked() && engine.looping());
+        CHECK_EQ(engine.loopOut(), INT_MAX);
+        // Back to the default: without a range the loop goes off, as before
+        TimelineOptions::setLoopWholeTimeline(false);
+        w.applyTimelineOptions();
+        CHECK(!loop->isChecked() && !loop->isEnabled() && !engine.looping());
+        CHECK(QSettings().allKeys().filter("timeline/").isEmpty()); // a test run stores no wish
+    }
 
     if (media.isEmpty()) return;
     // V1/A1: three pieces of the clip with spare material on both sides (frames 25-74, 100-149, 175-224 of 250)
@@ -398,6 +446,37 @@ void testWindow(const QString& media, const QString& shots)
     QSettings().remove("timeline");
     w.applyTimelineOptions();
     CHECK_EQ(action("nudge_right_multi")->text(), T("5 Frames nach rechts schieben"));
+
+    // Ctrl+T makes the kind chosen in Settings › Timeline on video tracks (cross dissolve by default, as before; the
+    // menu text names the kind), audio tracks crossfade; one undo step
+    {
+        CHECK_EQ(action("add_transition")->text(), T("Übergang hinzufügen (Überblendung)"));
+        TimelineOptions::setTransitionType(TransitionType::WipeLeft);
+        w.applyTimelineOptions();
+        CHECK_EQ(action("add_transition")->text(), T("Übergang hinzufügen (%1)").arg(T("Wischblende nach links")));
+        sel->clear();
+        const int cut = p->timeline().video[0].clips[0].end(); // V1's first cut (the clips have spare material)
+        CHECK_EQ(p->timeline().video[0].clips[1].start, cut);
+        tv->setPlayhead(cut);
+        engine.seek(cut);
+        QApplication::processEvents();
+        const int before = p->undoStack()->index();
+        action("add_transition")->trigger();
+        const Clip& left = p->timeline().video[0].clips[0];
+        CHECK(left.transOut > 0 && left.transOutStyle.type == TransitionType::WipeLeft);
+        CHECK(p->timeline().video[0].clips[1].transInStyle.type == TransitionType::WipeLeft);
+        CHECK_EQ(p->undoStack()->index(), before + 1);
+        p->undoStack()->undo();
+        CHECK_EQ(p->timeline().video[0].clips[0].transOut, 0);
+        TimelineOptions::setTransitionType(TransitionType::CrossDissolve);
+        CHECK(!QSettings().contains("timeline/transitionType"));
+        w.applyTimelineOptions();
+        action("add_transition")->trigger(); // the default: exactly the cross dissolve from before
+        CHECK(p->timeline().video[0].clips[0].transOut > 0);
+        CHECK(p->timeline().video[0].clips[0].transOutStyle.type == TransitionType::CrossDissolve);
+        p->undoStack()->undo();
+        CHECK_EQ(action("add_transition")->text(), T("Übergang hinzufügen (Überblendung)"));
+    }
     // In English the default texts are the old translations too
     using TimelineOptions::StepAction;
     CHECK_EQ(I18n::translate("en", "1 Sekunde zurück"), QString("Back 1 Second"));

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+#include "ui/timeline/TimelineOptions.h"
 #include "ui/ColorPanel.h"
 #include "ui/touch/Touch.h"
 
@@ -15,7 +16,6 @@
 #include "core/Project.h"
 #include "core/Selection.h"
 #include "core/TimelineOps.h"
-#include "core/Timecode.h"
 #include "engine/ColorGrade.h"
 #include "engine/Tracker.h"
 #include "ui/CurveEditor.h"
@@ -1334,11 +1334,11 @@ void ColorPanel::startTracking(bool forward)
             const int last = result->points.isEmpty() ? from : result->points.last().frame;
             if (result->lost)
                 text = T("Ab %1 nicht mehr gefunden – Fenster dort neu setzen und weiter verfolgen")
-                           .arg(Timecode::format(start + result->lostAt, fmt.rate.timebase()));
+                           .arg(TimelineOptions::formatTime(start + result->lostAt, fmt.rate.fps()));
             else if (result->canceled)
-                text = T("Angehalten bei %1").arg(Timecode::format(start + last, fmt.rate.timebase()));
+                text = T("Angehalten bei %1").arg(TimelineOptions::formatTime(start + last, fmt.rate.fps()));
             else
-                text = T("Verfolgt bis %1").arg(Timecode::format(start + last, fmt.rate.timebase()));
+                text = T("Verfolgt bis %1").arg(TimelineOptions::formatTime(start + last, fmt.rate.fps()));
         }
         m_trackStatus->setText(text);
         refresh();

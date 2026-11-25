@@ -2,7 +2,7 @@
 #include "app/TranscribeDialog.h"
 
 #include "core/I18n.h"
-#include "core/Timecode.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "engine/Extensions.h"
 
 #include <QCheckBox>
@@ -50,8 +50,8 @@ TranscribeDialog::TranscribeDialog(const Timeline& timeline, const ProjectFormat
     setWindowTitle(T("Untertitel aus Audio erzeugen"));
     QSettings settings;
     auto* form = new QFormLayout;
-    form->addRow(T("Bereich"), new QLabel(QString("%1 – %2").arg(Timecode::format(from, format.rate.timebase()),
-                                                                 Timecode::format(to, format.rate.timebase()))));
+    form->addRow(T("Bereich"), new QLabel(QString("%1 – %2").arg(TimelineOptions::formatTime(from, format.rate.fps()),
+                                                                 TimelineOptions::formatTime(to, format.rate.fps()))));
     // Audio tracks: like the timeline sounds by default; unticking music/game sound helps whisper a lot
     QVector<int> used;
     for (int i = 0; i < timeline.audio.size() && i < trackLabels.size(); ++i)

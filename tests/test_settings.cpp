@@ -258,6 +258,25 @@ void testProjectFolder()
     CHECK_EQ(SettingsDialog::storedFolder(), QDir::fromNativeSeparators(QDir::toNativeSeparators("/tmp/meine-projekte")));
     CHECK(SettingsDialog(AiSettings{}).findChild<QCheckBox*>("project_own_folder")->isChecked());
     QSettings().remove("project");
+    // The backup copy: every minute by default (as before, not stored), each choice stored and shown again
+    {
+        CHECK_EQ(SettingsDialog::storedAutosaveSeconds(), 60);
+        SettingsDialog dlg(AiSettings{});
+        auto* box = dlg.findChild<QComboBox*>("project_autosave");
+        if (CHECK(box)) {
+            CHECK_EQ(box->currentData().toInt(), 60);
+            CHECK_EQ(box->count(), 5);
+            box->setCurrentIndex(box->findData(300));
+            SettingsDialog::setStoredAutosaveSeconds(dlg.autosaveSeconds());
+            CHECK_EQ(SettingsDialog::storedAutosaveSeconds(), 300);
+            CHECK_EQ(SettingsDialog(AiSettings{}).findChild<QComboBox*>("project_autosave")->currentData().toInt(), 300);
+            SettingsDialog::setStoredAutosaveSeconds(60);
+            CHECK(!QSettings().contains("project/autosaveSeconds"));
+            QSettings().setValue("project/autosaveSeconds", 2); // nonsense in the file: the default
+            CHECK_EQ(SettingsDialog::storedAutosaveSeconds(), 60);
+        }
+    }
+    QSettings().remove("project");
     // Compositing: new nodes linked at once, on by default
     QSettings().remove("comp");
     SettingsDialog dlg(AiSettings{});
@@ -450,6 +469,47 @@ void testTimelineTab()
     // Pictures on video clips: filmstrip (default), first, first and last, none
     checkTimelineChoice("timeline_thumbnails", 4, int(TimelineOptions::Thumbnails::Filmstrip),
                         [] { return int(TimelineOptions::thumbnails()); });
+    // Loop without a range: not possible (default) or the whole timeline; remembered: off at every start (default)
+    // or as last switched by hand - the wish is kept only while remembering, switching that off forgets it
+    checkTimelineChoice("timeline_loop_without_range", 2, 0, [] { return int(TimelineOptions::loopWholeTimeline()); });
+    checkTimelineChoice("timeline_remember_loop", 2, 0, [] { return int(TimelineOptions::rememberLoop()); });
+    {
+        QSettings().remove("timeline");
+        TimelineOptions::setLoopWish(true); // not remembering: not stored
+        CHECK(!TimelineOptions::loopAtStart());
+        CHECK(QSettings().allKeys().filter("timeline/").isEmpty());
+        TimelineOptions::setRememberLoop(true);
+        CHECK(!TimelineOptions::loopAtStart());
+        TimelineOptions::setLoopWish(true);
+        CHECK(TimelineOptions::loopAtStart());
+        TimelineOptions::setLoopWish(false);
+        CHECK(!TimelineOptions::loopAtStart());
+        TimelineOptions::setLoopWish(true);
+        TimelineOptions::setRememberLoop(false);
+        CHECK(!TimelineOptions::loopAtStart());
+        CHECK(QSettings().allKeys().filter("timeline/").isEmpty());
+    }
+    // Ctrl+T's kind: every kind but the gradient wipe (it needs a picture), cross dissolve by default
+    checkTimelineChoice("timeline_transition_type", int(std::size(kTransitionTypes)) - 1, int(TransitionType::CrossDissolve),
+                        [] { return int(TimelineOptions::transitionType()); });
+    {
+        QSettings().setValue("timeline/transitionType", "luma"); // not offered: the cross dissolve
+        CHECK(TimelineOptions::transitionType() == TransitionType::CrossDissolve);
+        CHECK(!TimelineOptions::transitionStyle());
+        TimelineOptions::setTransitionType(TransitionType::DipToColor);
+        CHECK(TimelineOptions::transitionStyle() && TimelineOptions::transitionStyle()->type == TransitionType::DipToColor);
+        QSettings().remove("timeline");
+    }
+    // Track height: small, medium (default: the view's 64/52 from before), large
+    checkTimelineChoice("timeline_track_height", 3, int(TimelineOptions::TrackHeight::Medium),
+                        [] { return int(TimelineOptions::trackHeight()); });
+    {
+        using TH = TimelineOptions::TrackHeight;
+        CHECK_EQ(TimelineOptions::videoTrackHeight(TH::Medium), ViewState{}.videoTrackHeight);
+        CHECK_EQ(TimelineOptions::audioTrackHeight(TH::Medium), ViewState{}.audioTrackHeight);
+        CHECK(TimelineOptions::videoTrackHeight(TH::Small) < 64 && TimelineOptions::videoTrackHeight(TH::Large) > 64);
+        CHECK(TimelineOptions::audioTrackHeight(TH::Small) >= 28 && TimelineOptions::videoTrackHeight(TH::Large) <= 220);
+    }
     // Waveforms: mirrored (default) or from the bottom, dB (default) or linear
     checkTimelineChoice("timeline_wave_shape", 2, int(TimelineOptions::WaveShape::Mirrored),
                         [] { return int(TimelineOptions::waveShape()); });
@@ -474,7 +534,10 @@ void testMainWindow()
     QString err;
     if (!CHECK(engine.init(&err))) return;
     std::setlocale(LC_NUMERIC, "C");
+    QSettings().setValue("project/autosaveSeconds", 120); // the backup's interval reaches the timer at the start
     MainWindow w(&engine);
+    QSettings().remove("project/autosaveSeconds");
+    CHECK_EQ(w.autosaveIntervalMs(), 120 * 1000);
     w.disableAutosave(); // a test run: settings apply, but are not saved
     QStringList calls;
     QList<int> limits;

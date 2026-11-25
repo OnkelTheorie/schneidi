@@ -67,7 +67,7 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
                              int(TimelineOptions::timeFormat()));
     }
     display->addRow(T("Zeit anzeigen als"), m_timeFormat);
-    display->addRow(hint(T("In Timeline, Vorschau, Studio, Trim-Ansicht und Media Pool. Eingabefelder verstehen jede "
+    display->addRow(hint(T("In Timeline, Vorschau, Studio, Trim-Ansicht, Media Pool und Export. Eingabefelder verstehen jede "
                            "Schreibweise, „4,5s“ sind immer Sekunden und „112f“ immer Frames. Dateien (EDL, FCPXML) "
                            "behalten den Timecode.")));
 
@@ -94,6 +94,15 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
     display->addRow(hint(T("Von unten (wie Premiere, Final Cut) ist auf flachen Spuren doppelt so hoch. dB zeigt "
                            "auch leise Sprache deutlich, linear die echte Lautstärke-Kurve (laute Stellen stechen "
                            "heraus).")));
+
+    using TrH = TimelineOptions::TrackHeight;
+    m_trackHeight = combo("timeline_track_height",
+                          {{T("Klein"), int(TrH::Small)}, {T("Mittel"), int(TrH::Medium)}, {T("Groß"), int(TrH::Large)}},
+                          int(TimelineOptions::trackHeight()));
+    display->addRow(T("Spurhöhe"), m_trackHeight);
+    display->addRow(hint(T("So hoch sind die Spuren nach dem Start und gleich nach OK. Danach änderst du sie wie gewohnt "
+                           "mit Shift+Mausrad über Video- oder Tonspuren oder unter Timeline › Timeline-Ansicht › "
+                           "Spurhöhe.")));
 
     // Zoom and scroll: where wheel zoom stays put (ZoomAnchor; Edit timeline and Studio lanes, read live)
     QFormLayout* view = group(lay, T("Zoom und Scrollen"));
@@ -122,6 +131,13 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
     fresh->addRow(T("Standbilder"), m_stillSeconds);
     m_transitionSeconds = secondsBox("timeline_transition_seconds", 0.04, 30, TimelineOptions::transitionSeconds());
     fresh->addRow(T("Übergänge"), m_transitionSeconds);
+    {
+        QVector<QPair<QString, int>> kinds;
+        for (const auto& i : kTransitionTypes)
+            if (i.type != TransitionType::Luma) kinds.append({T(i.name), int(i.type)}); // (the gradient needs a picture)
+        m_transitionType = combo("timeline_transition_type", kinds, int(TimelineOptions::transitionType()));
+    }
+    fresh->addRow(T("Übergangsart"), m_transitionType);
     using CF = TimelineOptions::ClipFormat;
     m_clipFormat = combo("timeline_first_clip_format",
                          {{T("Fragen"), int(CF::Ask)}, {T("Projekt immer anpassen"), int(CF::Adapt)}, {T("Nie ändern"), int(CF::Keep)}},
@@ -132,6 +148,8 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
                          "Final Cut, CapCut). Feste Werte aus Startvorlage oder Projekteinstellungen bleiben immer.")));
     fresh->addRow(hint(T("So lang werden Bilder, die du ab jetzt importierst, und Übergänge ohne eigene Länge "
                          "(Strg+T, aus den Effekten gezogen). Schon importierte Bilder behalten ihre Länge.")));
+    fresh->addRow(hint(T("Übergangsart: was „Übergang hinzufügen“ (Strg+T) auf Videospuren setzt. Tonspuren blenden immer "
+                         "über, Übergänge aus den Effekten behalten ihre Art.")));
 
     // Keys: the big step of the playhead and the big nudge (read at every key press)
     QFormLayout* keys = group(lay, T("Tasten"));
@@ -208,13 +226,23 @@ TimelineSettingsPage::TimelineSettingsPage(QWidget* parent) : QWidget(parent)
     play->addRow(T("Beim Abspielen mitscrollen"), m_follow);
     play->addRow(hint(T("Aus: die Timeline bleibt, wo du sie hinscrollst. Seitenweise: läuft die Abspielmarke aus dem "
                         "Bild, blättert die Timeline um. Mittig: die Timeline läuft unter der Abspielmarke durch. "
-                        "Scrollst oder zoomst du beim Abspielen, bleibt sie bis zum nächsten Start stehen.")));
+                        "Scrollst oder zoomst du beim Abspielen, bleibt sie bis zum nächsten Start stehen. Gilt auch "
+                        "für die Spuren im Studio.")));
     m_space = combo("timeline_space_stops",
                     {{T("An der Stelle"), 0}, {T("Zurück zur Startposition"), 1}}, TimelineOptions::spaceReturns() ? 1 : 0);
     play->addRow(T("Leertaste hält an"), m_space);
     play->addRow(hint(T("Zurück zur Startposition: die Abspielmarke springt dorthin, wo du das Abspielen gestartet hast "
                         "(wie in Vegas), gut zum wiederholten Anhören eines Schnitts. K hält immer an der Stelle an; "
                         "„Stopp und zurück zur Startposition“ gibt es auch als eigene Taste (Tastenbelegung).")));
+    m_loopWhole = combo("timeline_loop_without_range", {{T("Nicht möglich"), 0}, {T("Ganze Timeline"), 1}},
+                        TimelineOptions::loopWholeTimeline() ? 1 : 0);
+    play->addRow(T("Wiederholen ohne In/Out"), m_loopWhole);
+    m_loopRemember = combo("timeline_remember_loop", {{T("Aus bei jedem Start"), 0}, {T("Wie zuletzt eingestellt"), 1}},
+                           TimelineOptions::rememberLoop() ? 1 : 0);
+    play->addRow(T("Wiederholen nach dem Start"), m_loopRemember);
+    play->addRow(hint(T("Wiederholen schaltest du unter Wiedergabe › Im Bereich wiederholen oder im Lineal-Menü. Ganze "
+                        "Timeline: ohne In- und Out-Punkt läuft die ganze Timeline immer wieder. Wie zuletzt eingestellt: "
+                        "war Wiederholen beim Beenden an, ist es nach dem Start wieder an.")));
     m_scrubAudio = combo("timeline_scrub_audio", {{T("An"), 1}, {T("Aus"), 0}}, TimelineOptions::scrubAudio() ? 1 : 0);
     play->addRow(T("Ton beim Scrubben"), m_scrubAudio);
     play->addRow(hint(T("An: ziehst du die Abspielmarke oder gehst Einzelbilder, hörst du kurz den Ton an der Stelle "
@@ -313,9 +341,15 @@ TimelineOptions::ShuttleSteps TimelineSettingsPage::shuttleSteps() const
 
 bool TimelineSettingsPage::spaceReturns() const { return m_space->currentData().toInt() == 1; }
 
+bool TimelineSettingsPage::loopWholeTimeline() const { return m_loopWhole->currentData().toInt() == 1; }
+
+bool TimelineSettingsPage::rememberLoop() const { return m_loopRemember->currentData().toInt() == 1; }
+
 bool TimelineSettingsPage::scrubAudio() const { return m_scrubAudio->currentData().toInt() == 1; }
 
 double TimelineSettingsPage::stillSeconds() const { return m_stillSeconds->value(); }
+
+TransitionType TimelineSettingsPage::transitionType() const { return TransitionType(m_transitionType->currentData().toInt()); }
 
 double TimelineSettingsPage::transitionSeconds() const { return m_transitionSeconds->value(); }
 
@@ -339,6 +373,11 @@ TimelineOptions::WaveShape TimelineSettingsPage::waveShape() const
     return TimelineOptions::WaveShape(m_waveShape->currentData().toInt());
 }
 
+TimelineOptions::TrackHeight TimelineSettingsPage::trackHeight() const
+{
+    return TimelineOptions::TrackHeight(m_trackHeight->currentData().toInt());
+}
+
 TimelineOptions::WaveScale TimelineSettingsPage::waveScale() const
 {
     return TimelineOptions::WaveScale(m_waveScale->currentData().toInt());
@@ -348,14 +387,18 @@ void TimelineSettingsPage::store() const
 {
     if (waveShape() != TimelineOptions::waveShape()) TimelineOptions::setWaveShape(waveShape());
     if (waveScale() != TimelineOptions::waveScale()) TimelineOptions::setWaveScale(waveScale());
+    if (trackHeight() != TimelineOptions::trackHeight()) TimelineOptions::setTrackHeight(trackHeight());
     if (thumbnails() != TimelineOptions::thumbnails()) TimelineOptions::setThumbnails(thumbnails());
     if (!(bigStep() == TimelineOptions::bigStep())) TimelineOptions::setBigStep(bigStep());
     if (!(bigNudge() == TimelineOptions::bigNudge())) TimelineOptions::setBigNudge(bigNudge());
     if (std::abs(stillSeconds() - TimelineOptions::stillSeconds()) > 1e-9) TimelineOptions::setStillSeconds(stillSeconds());
     if (std::abs(transitionSeconds() - TimelineOptions::transitionSeconds()) > 1e-9)
         TimelineOptions::setTransitionSeconds(transitionSeconds());
+    if (transitionType() != TimelineOptions::transitionType()) TimelineOptions::setTransitionType(transitionType());
     if (shuttleSteps() != TimelineOptions::shuttleSteps()) TimelineOptions::setShuttleSteps(shuttleSteps());
     if (spaceReturns() != TimelineOptions::spaceReturns()) TimelineOptions::setSpaceReturns(spaceReturns());
+    if (loopWholeTimeline() != TimelineOptions::loopWholeTimeline()) TimelineOptions::setLoopWholeTimeline(loopWholeTimeline());
+    if (rememberLoop() != TimelineOptions::rememberLoop()) TimelineOptions::setRememberLoop(rememberLoop());
     if (scrubAudio() != TimelineOptions::scrubAudio()) TimelineOptions::setScrubAudio(scrubAudio());
     if (snapTargets() != TimelineOptions::snapTargets()) TimelineOptions::setSnapTargets(snapTargets());
     if (snapReach() != TimelineOptions::snapReach()) TimelineOptions::setSnapReach(snapReach());

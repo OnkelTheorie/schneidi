@@ -13,6 +13,9 @@
 #include "engine/Exporter.h"
 #include "engine/HardwareEncoders.h"
 #include "engine/RenderQueue.h"
+#include "core/Timecode.h"
+#include "ui/timeline/TimelineOptions.h"
+#include "ui/ElidedLabel.h"
 #include "ui/DeliverPanel.h"
 #include "ui/RenderQueuePanel.h"
 
@@ -290,6 +293,41 @@ int main(int argc, char** argv)
         CHECK(press(Qt::Key_D, Qt::ControlModifier));
         CHECK_EQ(ids(p.renderQueue()), (QVector<int>{4, 3}));
         CHECK(!press(Qt::Key_A)); // other keys stay the list's
+    }
+
+    // --- Times as the user shows them (Settings › Timeline): a job card's In/Out and the Deliver range's tip, timecode
+    // by default, frames when chosen (refreshTimes after the settings changed)
+    {
+        QSettings().remove("timeline");
+        Project p;
+        RenderQueue queue(&p);
+        RenderQueuePanel panel(&p, &queue);
+        RenderJob j;
+        j.id = 1;
+        j.inOut = true;
+        j.from = 30;
+        j.to = 119;
+        j.path = "/x/a.mp4";
+        p.setRenderQueue({j});
+        const auto cardRange = [&] {
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete); // the cards before a rebuild
+            auto* l = dynamic_cast<ElidedLabel*>(panel.findChild<QWidget*>("jobRange")); // (no Q_OBJECT)
+            return l ? l->fullText() : QString();
+        };
+        CHECK_EQ(cardRange(), T("In/Out: %1 – %2").arg(Timecode::format(30, p.fps()), Timecode::format(119, p.fps())));
+        DeliverPanel deliver(&p);
+        p.edit("marks", [](Timeline& tl) {
+            tl.markIn = 30;
+            tl.markOut = 119;
+        });
+        auto* range = deliver.findChild<QComboBox*>("renderRange");
+        if (CHECK(range)) CHECK_EQ(range->toolTip(), Timecode::format(30, p.fps()) + " – " + Timecode::format(119, p.fps()));
+        TimelineOptions::setTimeFormat(TimelineOptions::TimeFormat::Frames);
+        panel.refreshTimes();
+        deliver.refreshTimes();
+        CHECK_EQ(cardRange(), T("In/Out: %1 – %2").arg("30", "119"));
+        if (range) CHECK_EQ(range->toolTip(), QString("30 – 119"));
+        QSettings().remove("timeline");
     }
 
     // --- Dropping dragged jobs (JobList::dropEvent): in front of the card under the mouse (its upper half), behind it

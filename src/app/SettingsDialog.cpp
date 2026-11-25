@@ -292,6 +292,19 @@ QWidget* SettingsDialog::buildGeneral()
     connect(m_ownFolder, &QCheckBox::toggled, this, enable);
     prform->addRow(hint(T("Aus: „Speichern unter“ schlägt den Ordner des ersten Clips vor. An: dieser Ordner, so landen "
                           "keine Projektdateien zwischen deinen Aufnahmen.")));
+    // Backup copy of the open project (MainWindow::autosave, only when something changed): every minute by default
+    m_autosave = new QComboBox;
+    m_autosave->setObjectName("project_autosave");
+    m_autosave->addItem(T("Alle 30 Sekunden"), 30);
+    m_autosave->addItem(T("Jede Minute"), 60);
+    m_autosave->addItem(T("Alle 2 Minuten"), 120);
+    m_autosave->addItem(T("Alle 5 Minuten"), 300);
+    m_autosave->addItem(T("Alle 10 Minuten"), 600);
+    m_autosave->setCurrentIndex(std::max(0, m_autosave->findData(storedAutosaveSeconds())));
+    prform->addRow(T("Sicherungskopie"), m_autosave);
+    prform->addRow(hint(T("Bei Änderungen sichert schneidi eine Kopie des Projekts (deine Datei bleibt unberührt) und "
+                          "bietet sie nach einem Absturz an. Seltener: weniger Schreiben auf langsame Platten, nach einem Absturz "
+                          "fehlt aber mehr.")));
     lay->addWidget(projects);
 
     // Proxy media on import: never by default (the user decides; Playback › Generate Proxy Media, right-click on clips)
@@ -488,6 +501,20 @@ void SettingsDialog::store(bool own, const QString& folder)
     QSettings s;
     s.setValue("project/ownFolder", own);
     s.setValue("project/folder", folder);
+}
+
+int SettingsDialog::autosaveSeconds() const { return m_autosave->currentData().toInt(); }
+
+int SettingsDialog::storedAutosaveSeconds()
+{
+    const int s = QSettings().value("project/autosaveSeconds", kDefaultAutosaveSeconds).toInt();
+    return s >= 10 && s <= 3600 ? s : kDefaultAutosaveSeconds;
+}
+
+void SettingsDialog::setStoredAutosaveSeconds(int seconds)
+{
+    if (seconds == kDefaultAutosaveSeconds) QSettings().remove("project/autosaveSeconds");
+    else QSettings().setValue("project/autosaveSeconds", seconds);
 }
 
 bool SettingsDialog::updateHint() const { return m_updateHint->isChecked(); }

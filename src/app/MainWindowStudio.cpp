@@ -34,6 +34,12 @@ void MainWindow::ensureStudioPage()
     tracks->setPlayhead(tv->playhead());
     // The timeline's playhead while the viewer shows a file (Source mode): the mixer's read-mode faders stay there
     m_studioPage->mixer()->setTimelinePlayhead([tv] { return tv->playhead(); });
+    // Playing: the lanes may follow the playhead (Settings › Timeline, like the Edit timeline); before the position, so
+    // a start's first frame already follows
+    tracks->setPlaying(m_engine->timelinePositions() ? m_engine->speed() : 0.0);
+    connect(m_engine, &Engine::speedChanged, tracks, [this, tracks](double speed) {
+        tracks->setPlaying(m_engine->timelinePositions() ? speed : 0.0);
+    });
     connect(m_engine, &Engine::positionChanged, tracks, [this, tracks](int f) {
         if (m_engine->timelinePositions()) tracks->setPlayhead(f);
     });

@@ -255,7 +255,7 @@ void TimelineView::setTrackHeights(int video, int audio)
 {
     m_view.videoTrackHeight = video;
     m_view.audioTrackHeight = audio;
-    update();
+    setScrollY(m_view.scrollY); // (heights changed: scroll range, redraw)
 }
 
 void TimelineView::setFitAudioRows(bool on)

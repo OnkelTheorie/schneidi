@@ -16,6 +16,7 @@
 #include "engine/ProbeCache.h"
 #include "ui/SecondScreen.h"
 #include "ui/timeline/PlayheadMove.h"
+#include "ui/timeline/TimelineOptions.h"
 #include "ui/timeline/ViewState.h"
 
 #include <QHash>
@@ -185,6 +186,7 @@ public:
     // of the project left is removed (false = not readable, message shown)
     bool openBackup(const QString& path);
     void disableAutosave();      // test runs: do not write/delete a backup
+    int autosaveIntervalMs() const; // how often the backup is written (Settings › General › Projects; tests)
     // The window's normal geometry on its screen before the first show (main.cpp, then maximized): most of the available
     // area (90 %, centred), so it never starts larger than the screen (1024x768, a scale factor) and is not small on a
     // big one. fitToScreen: a wanted geometry (a size given for a test run) shrunk/moved so that it and its frame
@@ -266,8 +268,11 @@ public:
     void settingsDialog(int tab = 0);
     // After Settings › Timeline changed: the timelines redraw what they show by those choices (no restart)
     void applyTimelineOptions();
-    // Texts of the big step/nudge actions with the sizes chosen in Settings › Timeline
+    // The timeline's tracks at a height step (Settings › Timeline, Timeline View › Track Height): user input
+    void setTrackHeightStep(TimelineOptions::TrackHeight height);
+    // Texts of the big step/nudge actions with the sizes chosen in Settings › Timeline (and Ctrl+T's kind)
     void updateStepTexts();
+    static QString addTransitionText(); // "Add transition (<the chosen kind>)"
     // What AIs on the live connection hear while the app cannot take their commands (Cli::Live::Server::setWaiting;
     // main.cpp hands it in): a tour runs on a practice project, nothing of an AI may land there
     void setLiveWaiting(const std::function<void(const QString& message)>& waiting) { m_liveWaiting = waiting; }
@@ -639,6 +644,9 @@ private:
     class DrawBar* m_drawBar = nullptr;
     QAction* m_drawAction = nullptr;
     QAction* m_magneticAction = nullptr; // "Lücken automatisch schließen (Spur 1)" (follows applyCenterPlayhead)
+    // Loop playback as the In/Out range and Settings › Timeline allow (Playback › Loop; buildActions)
+    std::function<void()> m_applyLoop = [] {};
+    bool m_loopRestored = false; // the remembered loop was offered (once per start, not per rebuildUi)
     QAction* m_scrubAudioAction = nullptr; // Playback › Sound while scrubbing (rebuilt with the menus)
     void setDrawTool(bool on);
     void drawToolChanged(bool on);

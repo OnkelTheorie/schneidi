@@ -29,6 +29,8 @@ public:
     TimelineOptions::Follow follow() const;       // follow the playhead while playing
     TimelineOptions::ShuttleSteps shuttleSteps() const; // the speeds J/L step through
     bool spaceReturns() const;                    // Space stops and goes back to the start position
+    bool loopWholeTimeline() const;               // without In/Out the whole timeline loops
+    bool rememberLoop() const;                    // the loop as last switched, after a start
     bool scrubAudio() const;                      // sound while scrubbing
     bool clickSetsPlayhead() const;               // a click into the tracks sets the playhead too
     TimelineOptions::ClipFormat clipFormat() const; // the first clip with another format: ask, adapt, keep
@@ -39,9 +41,11 @@ public:
     TimelineOptions::Thumbnails thumbnails() const; // pictures on video clips
     TimelineOptions::WaveShape waveShape() const;
     TimelineOptions::WaveScale waveScale() const;
+    TimelineOptions::TrackHeight trackHeight() const; // the tracks' height at the start
     int snapTargets() const;                        // TimelineOptions::SnapTarget flags
     double stillSeconds() const;                    // default length of new stills
     double transitionSeconds() const;               // default length of new transitions
+    TransitionType transitionType() const;          // what Ctrl+T makes on video tracks
     TimelineOptions::Step bigStep() const;          // Shift+arrow
     TimelineOptions::Step bigNudge() const;         // Shift+, / Shift+.
     TimelineOptions::SnapReach snapReach() const;
@@ -54,6 +58,8 @@ private:
     QComboBox* m_follow = nullptr;
     QComboBox* m_space = nullptr;
     QComboBox* m_scrubAudio = nullptr;
+    QComboBox* m_loopWhole = nullptr;
+    QComboBox* m_loopRemember = nullptr;
     QComboBox* m_shuttle = nullptr;
     QComboBox* m_click = nullptr;
     QComboBox* m_middle = nullptr;
@@ -64,10 +70,12 @@ private:
     QComboBox* m_thumbnails = nullptr;
     QComboBox* m_waveShape = nullptr;
     QComboBox* m_waveScale = nullptr;
+    QComboBox* m_trackHeight = nullptr;
     QVector<QPair<int, QCheckBox*>> m_snapTargets;
     QComboBox* m_snapReach = nullptr;
     QDoubleSpinBox* m_stillSeconds = nullptr;
     QDoubleSpinBox* m_transitionSeconds = nullptr;
+    QComboBox* m_transitionType = nullptr;
     QSpinBox* m_stepCount = nullptr;
     QComboBox* m_stepUnit = nullptr;
     QSpinBox* m_nudgeCount = nullptr;

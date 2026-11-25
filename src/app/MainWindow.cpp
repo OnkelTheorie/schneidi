@@ -33,6 +33,7 @@
 #include "app/PasteAttributesDialog.h"
 #include "core/Loudness.h"
 #include "app/ProjectSettingsDialog.h"
+#include "app/SettingsDialog.h"
 #include "core/Accents.h"
 #include "core/Editor.h"
 #include "core/EffectRegistry.h"
@@ -81,6 +82,7 @@
 #include "ui/comp/CompPage.h"
 #include "ui/timeline/TimelineView.h"
 #include "ui/timeline/TimelineOptions.h"
+#include "ui/touch/Touch.h"
 
 #include <QAction>
 #include <QCursor>
@@ -219,10 +221,11 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     applyCenterPlayhead(); // (the desktop: only when set to "on")
     qApp->installEventFilter(this); // Mouse side buttons -> actions (keybindings.json, section "mouse")
 
-    // Automatic backup every minute (only on changes), separate from the project file
+    // Automatic backup every minute or as the user chose (Settings › General › Projects; only on changes), separate
+    // from the project file
     m_autosaveTimer = new QTimer(this);
     connect(m_autosaveTimer, &QTimer::timeout, this, &MainWindow::autosave);
-    m_autosaveTimer->start(60 * 1000);
+    m_autosaveTimer->start(SettingsDialog::storedAutosaveSeconds() * 1000);
 #ifdef Q_OS_ANDROID
     // Going to the background may be the end (the system frees the memory without asking): the backup now
     connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
@@ -360,6 +363,8 @@ void MainWindow::buildUi()
         if (m_engine->timelinePositions()) tv->setPlayhead(f);
     });
     TimelineOptions::applyEditDefaults(); // the user's still and transition lengths (Settings › Timeline)
+    // The tracks' height chosen in Settings › Timeline (medium = the view's own 64/52); touch mode keeps its taller rows
+    if (!Touch::modeActive()) setTrackHeightStep(TimelineOptions::trackHeight());
     // Snapping on/off is remembered across starts (test runs leave the settings alone)
     connect(tv, &TimelineView::snappingChanged, this, [this](bool on) {
         if (!m_autosaveDisabled) TimelineOptions::setSnapping(on);
