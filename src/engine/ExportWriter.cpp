@@ -760,6 +760,7 @@ struct ExportWriter::Impl {
         return QStringLiteral("no frame %1 from the timeline").arg(i);
     }
 
+    // Flags such as smartBroke are set before calling it: Exporter::pollWriter reads them once it sees Failed
     void fail(const QString& message, bool encoderProblem = false)
     {
         {
@@ -1760,8 +1761,8 @@ struct ExportWriter::Impl {
         r = avformat_write_header(oc, &options);
         av_dict_free(&options);
         if (r < 0) {
-            fail(QStringLiteral("cannot write the header of %1: %2").arg(s.path, avError(r)));
             smartBroke = smart;
+            fail(QStringLiteral("cannot write the header of %1: %2").arg(s.path, avError(r)));
             return false;
         }
         headerWritten = true;
@@ -1817,8 +1818,8 @@ struct ExportWriter::Impl {
         if (smart) {
             pieceHeader.assign(venc->extradata, venc->extradata + venc->extradata_size);
             if (pieceHeader.size() < 4 || (pieceHeader[0] != 0 || pieceHeader[1] != 0)) { // not Annex B
-                fail(QStringLiteral("encoder %1 delivers no Annex B parameter sets").arg(s.videoCodec));
                 smartBroke = true;
+                fail(QStringLiteral("encoder %1 delivers no Annex B parameter sets").arg(s.videoCodec));
                 avcodec_free_context(&c);
                 return nullptr;
             }
@@ -1877,8 +1878,8 @@ struct ExportWriter::Impl {
         }
         p->dts = videoPackets - kDelay;
         if (p->pts == AV_NOPTS_VALUE || p->dts > p->pts) {
-            fail(QStringLiteral("picture %1 shown before it is decoded").arg(videoPackets));
             smartBroke = true;
+            fail(QStringLiteral("picture %1 shown before it is decoded").arg(videoPackets));
             return false;
         }
         p->duration = 1;
@@ -1887,8 +1888,8 @@ struct ExportWriter::Impl {
         p->stream_index = vst->index;
         const int w = av_interleaved_write_frame(oc, p);
         if (w < 0) {
-            fail(QStringLiteral("writing failed: %1").arg(avError(w)));
             smartBroke = true;
+            fail(QStringLiteral("writing failed: %1").arg(avError(w)));
             return false;
         }
         return true;
@@ -1905,8 +1906,8 @@ struct ExportWriter::Impl {
         if (!sampleEntries || size <= 0) return true;
         uint8_t* side = av_packet_new_side_data(p, AV_PKT_DATA_NEW_EXTRADATA, size_t(size));
         if (!side) {
-            fail(QStringLiteral("out of memory"));
             smartBroke = true;
+            fail(QStringLiteral("out of memory"));
             return false;
         }
         std::memcpy(side, params, size_t(size));
