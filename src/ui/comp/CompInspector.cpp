@@ -237,8 +237,11 @@ void CompInspector::refresh()
     m_about->setText(k ? k->description : T("Diese Knotenart kennt diese Version nicht; sie reicht ihr Bild durch."));
     m_outButton->setVisible(n->id != g.out);
     const QStringList keys = shownKeys(*c);
-    if (keys != m_keys || n->type != m_type) {
+    // Another node (even of the same kind) gets new rows: their update and edit lambdas capture the node
+    if (keys != m_keys || n->type != m_type || m_clipId != m_builtClip || m_node != m_builtNode) {
         m_type = n->type;
+        m_builtClip = m_clipId;
+        m_builtNode = m_node;
         rebuild(*c, keys);
     }
     for (const auto& u : m_updates) u(*c);

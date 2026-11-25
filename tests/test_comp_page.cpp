@@ -348,6 +348,32 @@ int main(int argc, char** argv)
         CHECK(Keys::animated(*c, Keys::effectParam(Comp::kEffectId, CompGraph::paramKey(nextId, "x"))));
     }
     CHECK_EQ(canvas->selected(), nextId);
+    // Two nodes of one kind: switching between them shows each one's values and edits the one shown (review ui-04)
+    if (Editor* editor = w.findChild<Editor*>(); CHECK(editor)) {
+        QString e;
+        CHECK(editor->setCompNodeValues(clipId, nextId, {{"w", 0.2}}, &e));
+        const auto wField = [&] { return dynamic_cast<ScrubField*>(page->inspector()->findChild<QLineEdit*>("comp_param_w")); };
+        const auto wOf = [&](int node) {
+            return CompUi::nodeValues(*TimelineOps::findClip(project->timeline(), clipId), node).value("w").toDouble();
+        };
+        const double maskW = wOf(mask);
+        page->selectNode(mask);
+        settle();
+        if (ScrubField* f = wField(); CHECK(f)) CHECK(std::abs(f->value() - maskW) < 1e-6);
+        page->selectNode(nextId);
+        settle();
+        if (ScrubField* f = wField(); CHECK(f)) {
+            CHECK(std::abs(f->value() - 0.2) < 1e-6);
+            f->onChange(0.3);
+            f->onFinish();
+            settle();
+            CHECK(std::abs(wOf(nextId) - 0.3) < 1e-6);
+            CHECK(std::abs(wOf(mask) - maskW) < 1e-6);
+            CHECK(std::abs(f->value() - 0.3) < 1e-6);
+        }
+        canvas->setFocus();
+    }
+    CHECK_EQ(canvas->selected(), nextId);
     dump(&w, "comp-nodes");
 
     // Del removes the selected node (one undo step)
