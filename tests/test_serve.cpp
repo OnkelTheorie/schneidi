@@ -109,6 +109,24 @@ void sandboxRules(const QString& base)
         CHECK_EQ(codeOf([] { resolve("keys/new.mp4"); }), QString("HIDDEN"));
         CHECK_EQ(codeOf([] { resolve("keys"); }), QString("HIDDEN"));
     }
+    // Windows' places that run or configure programs, by name (a profile as work folder; hidden() uses this there,
+    // with the hidden/system attributes)
+    using Cli::Sandbox::windowsProtected;
+    CHECK(windowsProtected("AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/run.bat"));
+    CHECK(windowsProtected("u/appdata/local/x"));
+    CHECK(windowsProtected("AppData./Roaming/x"));
+    CHECK(windowsProtected("AppData /x"));
+    CHECK(windowsProtected("APPDATA::$INDEX_ALLOCATION/x"));
+    CHECK(windowsProtected("Application Data\\x"));
+    CHECK(windowsProtected("Local Settings"));
+    CHECK(windowsProtected("ProgramData/Microsoft/Windows/Start Menu/Programs/StartUp/x.lnk"));
+    CHECK(!windowsProtected("clips/AppDataBackup/a.mp4"));
+    CHECK(!windowsProtected("Videos/a.mp4"));
+    CHECK(!windowsProtected(""));
+#ifdef Q_OS_WIN
+    CHECK_EQ(codeOf([] { resolve("AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/run.bat"); }),
+             QString("HIDDEN"));
+#endif
     // Files that make MLT/FFmpeg read other files or addresses (MLT XML, playlists) are no media here, by name or
     // content; other XML (a timeline of another program) is fine
     const auto write = [&](const QString& rel, const QByteArray& data) {

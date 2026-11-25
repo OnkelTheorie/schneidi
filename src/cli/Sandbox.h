@@ -46,7 +46,13 @@ QString mapPath(const QString& path);
 QString relative(const QString& absolutePath);
 // A hidden file or folder in the work folder, or something in one (".ssh/id_rsa", ".config/…"): the server's own file
 // access (/files, `files`, `upload`) leaves them out, as its listings do
+// On Windows also what Windows marks hidden or system (AppData, NTUSER.DAT, desktop.ini) and windowsProtected() by name
 bool hidden(const QString& absolutePath);
+// A path relative to the work folder that leads into a place Windows runs or reads settings from, by name (a profile
+// as work folder): "AppData" (the Startup folder, every program's settings), its old names "Application Data" and
+// "Local Settings", "Start Menu"; any case, with what Windows ignores at the end of a name (dots, spaces, ":stream").
+// Pure, on every system; hidden() uses it on Windows.
+bool windowsProtected(const QString& relativePath);
 // With a root: an existing file that makes MLT or FFmpeg read other files or addresses when opened as media (MLT XML,
 // .kdenlive, m3u/HLS playlists, ffconcat, SDP, DASH manifests), by name or content; a path inside the root would
 // otherwise read anything. checkMedia() throws BAD_MEDIA for one. Only a clear early answer for the known kinds: the

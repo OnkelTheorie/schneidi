@@ -19,6 +19,13 @@
 
 #include <algorithm>
 
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace Cli::Sandbox {
 
 namespace {
@@ -235,10 +242,35 @@ QString relative(const QString& absolutePath)
     return {};
 }
 
+bool windowsProtected(const QString& relativePath)
+{
+    static const QStringList names{"appdata", "application data", "local settings", "start menu"};
+    const QStringList parts = QString(relativePath).replace('\\', '/').split('/', Qt::SkipEmptyParts);
+    return std::any_of(parts.begin(), parts.end(), [](QString part) {
+        part = part.section(':', 0, 0); // "AppData::$INDEX_ALLOCATION" is the folder too
+        while (!part.isEmpty() && (part.endsWith('.') || part.endsWith(' '))) part.chop(1);
+        return names.contains(part.trimmed().toLower());
+    });
+}
+
 bool hidden(const QString& absolutePath)
 {
-    const QStringList parts = relative(absolutePath).split('/');
-    return std::any_of(parts.begin(), parts.end(), [](const QString& part) { return part.startsWith('.'); });
+    const QString rel = relative(absolutePath);
+    const QStringList parts = rel.split('/');
+    if (std::any_of(parts.begin(), parts.end(), [](const QString& part) { return part.startsWith('.'); })) return true;
+#ifdef Q_OS_WIN
+    // The Startup folder of a profile as work folder runs what is put there at the next login
+    if (windowsProtected(rel)) return true;
+    // Hidden or system by attribute, the path or a folder of it inside the work folder
+    for (QString probe = QDir::cleanPath(absolutePath); !relative(probe).isEmpty();) {
+        const DWORD attr = GetFileAttributesW(reinterpret_cast<const wchar_t*>(QDir::toNativeSeparators(probe).utf16()));
+        if (attr != INVALID_FILE_ATTRIBUTES && (attr & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM))) return true;
+        const QString parent = QFileInfo(probe).path();
+        if (parent == probe) break;
+        probe = parent;
+    }
+#endif
+    return false;
 }
 
 QString mapBack(const QString& path)
