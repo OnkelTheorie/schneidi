@@ -1036,7 +1036,14 @@ void opEffect(Session& s, const QJsonObject& op)
                                           d->video ? "video effects" : "audio effects");
     QVariantMap values;
     const QJsonObject params = op.value("params").toObject();
-    for (auto it = params.begin(); it != params.end(); ++it) values[EffectRegistry::storedKey(effectId, it.key())] = effectValue(*d, it.key(), it.value(), s.format().size(), s.project);
+    for (auto it = params.begin(); it != params.end(); ++it) {
+        const QVariant v = effectValue(*d, it.key(), it.value(), s.format().size(), s.project);
+        // A number outside the parameter's range is set to its end: said, not silently (`effects` lists the ranges)
+        if (it.value().isDouble() && v.typeId() == QMetaType::Double && v.toDouble() != it.value().toDouble())
+            s.notes << QString("%1.%2 %3 is outside its range: set to %4 (`effects` lists the ranges)")
+                           .arg(effectId, it.key()).arg(it.value().toDouble()).arg(v.toDouble());
+        values[EffectRegistry::storedKey(effectId, it.key())] = v;
+    }
     if (QString why; Picture::Custom::isCustom(effectId) && !Picture::Custom::canRender(effectId, &why))
         s.notes << QString("%1 is stored but skipped while rendering on this machine: %2").arg(effectId, why);
     s.editor.addEffect(targets, effectId); // clips that have it already keep it

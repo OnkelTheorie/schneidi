@@ -668,6 +668,11 @@ int runTests(int argc, char** argv)
              .arg(firstId).arg(cues[0]["id"].toInt()).arg(cues[1]["id"].toInt()).toUtf8().constData());
     tl = run("info", {{"project", g_path}})["timeline"].toObject();
     CHECK_EQ(tl["tracks"][0]["clips"][0]["effects"][0]["params"]["strength"].toDouble(), 100.0); // clamped
+    // ... and the answer says so (review 25.11.: it answered ok, the agent believed 500 was set)
+    CHECK(QJsonDocument(run("edit", {{"project", g_path}, {"dry_run", true},
+                                     {"ops", QString(R"([{"op":"effect","clips":[%1],"effect":"blur","params":{"strength":500}}])")
+                                                 .arg(firstId)}})["notes"].toArray())
+              .toJson().contains("blur.strength 500 is outside its range: set to 100"));
     CHECK_EQ(tl["subtitles"][0]["cues"].toArray().size(), 2);
     CHECK_EQ(tl["subtitles"][0]["cues"][0]["text"].toString(), QString("Two!"));
     // move takes subtitle ids too (its comment said so, it answered "no clip with id"); 'to' places the first id given
