@@ -6,6 +6,7 @@
 #include "cli/Live.h"
 #include "cli/Sandbox.h"
 #include "cli/Serve.h"
+#include "cli/ToolText.h"
 
 #include "core/ChannelLayout.h"
 #include "core/CodeTrust.h"
@@ -1908,6 +1909,8 @@ QJsonObject inputSchema(const Command& cmd)
         case ParamType::Object: s["type"] = QJsonArray{"object", "string"}; break;
         case ParamType::Data: s["type"] = QJsonArray{"string", "array", "object"}; break;
         }
+        if (const QStringList values = ToolText::choices(cmd.name, p.name); !values.isEmpty())
+            s["enum"] = QJsonArray::fromStringList(values);
         props[p.name] = s;
         if (p.required) required << p.name;
     }
@@ -1974,14 +1977,22 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
     }
     QStringList names;
     for (const Param& p : cmd.params) names << p.name;
+    // Errors teach: the parameter meant (a typing error, another word), every parameter, and where the details are
+    const QString helpCall = QString("help {command:'%1'}").arg(cmd.name);
     for (auto it = raw.begin(); it != raw.end(); ++it)
-        if (!has(it.key()))
-            fail("BAD_ARGUMENT", QString("unknown parameter '%1' for %2 (parameters: %3)")
-                                     .arg(it.key(), cmd.name, names.join(", ")));
+        if (!has(it.key())) {
+            const QStringList close = ToolText::nearest(it.key(), names, 2);
+            fail("BAD_ARGUMENT", QString("unknown parameter '%1' for %2%3 (parameters: %4; details: %5)")
+                                     .arg(it.key(), cmd.name,
+                                          close.isEmpty() ? QString() : QString(" - did you mean '%1'?").arg(close.join("' or '")),
+                                          names.join(", "), helpCall));
+        }
     QJsonObject out;
     for (const Param& p : cmd.params) {
         if (!raw.contains(p.name) || raw[p.name].isNull()) {
-            if (p.required) fail("BAD_ARGUMENT", QString("missing parameter '%1' for %2").arg(p.name, cmd.name));
+            if (p.required)
+                fail("BAD_ARGUMENT", QString("missing parameter '%1' for %2 (%3; details: %4)")
+                                         .arg(p.name, cmd.name, p.help.section(" (", 0, 0).left(80), helpCall));
             continue;
         }
         const QJsonValue v = raw[p.name];
@@ -2151,7 +2162,24 @@ QJsonObject normalize(const Command& cmd, const QJsonObject& given)
             }
             break;
         }
-        if (!ok) fail("BAD_ARGUMENT", QString("parameter '%1' has a wrong value: %2").arg(p.name, v.toVariant().toString()));
+        if (!ok) {
+            const auto takes = [](ParamType t) -> QString {
+                switch (t) {
+                case ParamType::Path: return "a file path";
+                case ParamType::Integer: return "a whole number";
+                case ParamType::Number: return "a number";
+                case ParamType::Time: return "a time: frames, \"4.5s\" or \"MM:SS\"";
+                case ParamType::Object: return "an object or a text";
+                case ParamType::Data: return "a file, a list or an object";
+                default: return "another value";
+                }
+            };
+            const QString given = v.isObject()  ? QString::fromUtf8(QJsonDocument(v.toObject()).toJson(QJsonDocument::Compact)).left(60)
+                                  : v.isArray() ? QString::fromUtf8(QJsonDocument(v.toArray()).toJson(QJsonDocument::Compact)).left(60)
+                                                : v.toVariant().toString();
+            fail("BAD_ARGUMENT", QString("parameter '%1' has a wrong value: %2 (it takes %3; details: %4)")
+                                     .arg(p.name, given, takes(p.type), helpCall));
+        }
     }
     return out;
 }
@@ -2217,6 +2245,15 @@ QJsonObject cmdHelp(const QJsonObject& a, Context&)
                     v = op;
                 }
                 o["details"] = "help with op:'<name>' (or a comma list, \"all\" = every op) shows the details of ops";
+                // The ops' usage and summary follow in 'ops': the parameter text keeps only the rules (it had them all
+                // a second time)
+                QJsonObject schema = o["params"].toObject();
+                QJsonObject props = schema["properties"].toObject();
+                QJsonObject opsParam = props["ops"].toObject();
+                opsParam["description"] = editRules() + " Not with plan_id: a plan runs its own ops.";
+                props["ops"] = opsParam;
+                schema["properties"] = props;
+                o["params"] = schema;
             } else if (a["op"].toString() != "all") {
                 // Only the asked ops (the full list is long); the parameter list of `edit` itself is left out too
                 const QStringList wanted = a["op"].toString().split(',', Qt::SkipEmptyParts);

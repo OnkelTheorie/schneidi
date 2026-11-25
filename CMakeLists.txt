@@ -745,6 +745,7 @@ add_library(schneidi_cli_lib ${SCHNEIDI_LIB_TYPE}
     src/cli/ServeJobs.h src/cli/ServeJobs.cpp
     src/cli/Live.h     src/cli/Live.cpp
     src/cli/Guide.h    src/cli/Guide.cpp
+    src/cli/ToolText.h src/cli/ToolText.cpp
     src/cli/Setup.h    src/cli/Setup.cpp
     src/cli/LiveBackground.cpp
     src/cli/EditOpsMusicBed.cpp)

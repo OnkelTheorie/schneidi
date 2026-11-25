@@ -7,6 +7,7 @@
 #include "cli/CommandsDetail.h"
 #include "cli/Live.h"
 #include "cli/Sandbox.h"
+#include "cli/ToolText.h"
 #include "engine/MemoryRelease.h"
 
 #include <QBuffer>
@@ -51,77 +52,42 @@ QJsonObject text(const QJsonObject& o)
 
 QString instructions(const Options& opt)
 {
-    QString s = "schneidi is a video editor. `guide` explains how to edit well with it (workflow and "
-                "how-tos per task) - read it first. Edit projects (.schneidi) with these tools: `new` creates one "
-                "(from a start template such as podcast or vertical; `templates` lists them and content templates, "
-                "projects with slots that `templates` fill makes a finished project of), "
-                "`probe`/`silence`/`scenes`/`peaks`/`frames`/`transcribe`/`loudness`/`scopes` look at (and listen to) "
-                "the material (`sync` lines up recordings of the same event by their sound, `highlights` finds kills "
-                "and loud moments for a highlight video, `beats` gives a song's tempo, bars, phrases, breaks and "
-                "drops, `index` knows every shot - quality, speech, sounds, descriptions you write - and finds "
-                "\"the calm wide shot of the shop\"), `edit` changes a "
-                "timeline (see its 'ops' description, `help` with command 'edit' and op '<name>' has details "
-                "per op; op 'speak' turns text into a spoken voice clip, op 'voiceover' places a recorded voice, op 'music_bed' makes background music of its own (moods hype, lofi, epic, funk; any length, its beats known); ops 'comp'/'node' build a compositing graph on a "
-                "clip - keys, masks, merges, text - and `frames` with clip/node shows the picture at a node; `effects` "
-                "lists effects, LUTs, transitions, accents, effect sounds, with kind 'music' the music bed moods and with kind 'nodes' the node types; an effect "
-                "schneidi lacks you write yourself: effect 'ffmpeg_filter' (a filter chain) or 'shader' (GLSL)), `info` shows the "
-                "result (a project can have several timelines, each may have its own resolution: a 9:16 short "
-                "next to a 16:9 edit), `check` finds what typically goes wrong before "
-                "rendering (gaps, sound, game sound buried under the music, stutter in recordings, text a phone app "
-                "covers, too long without a cut, a late hook, where viewers left by a retention CSV), `render` writes a video (presets for YouTube Shorts, Instagram Reels, TikTok), `short` makes a "
-                "finished vertical short of recordings in one call (best moments, reframe, captions, check, render), "
-                "`direct` suggests what to cut (a short with variants, a highlight video of any material: kills, "
-                "loud, laughter, cheering, movement; the pauses of a conversation, shots for a template, the takes of a "
-                "script) with a reason each and applies the chosen ones as one edit, "
-                "`restore` undoes a change (`backups` lists the saved states), `brand` is the user's brand kit "
-                "(logo, colors, fonts, intro/outro; titles can follow it), "
-                "`watch` takes new files of watched folders into the media pool (a recorder's output; for automated "
-                "work: new recording -> highlights -> render).";
+    // The essentials only (the guide teaches the workflow, `help` the details): every AI reads this before it starts
+    QString s = "schneidi is a video editor. Read `guide` first (workflow, how-tos per task). The tool list shows only "
+                "the common parameters: before using a tool or an edit op the first time, call `help` (command, and "
+                "for edit the op) - it has every parameter, defaults and answer fields.";
     if (opt.app)
-        s += " If the project is open in the schneidi app, all tools "
-             "work live on what the app shows (unsaved changes included): `edit` changes it there as one "
-             "undo step and does not save, `info` adds the user's playhead and selection, `app` controls "
-             "the app (play, seek, select, undo, save, proxies, cleaning up old proxy files). \"@app\" as "
-             "project = the project open in the running app.";
+        s += " \"@app\" as project = the project open in the schneidi app: tools work live on it (edit = one undo "
+             "step, not saved).";
     if (opt.root.isEmpty())
         s += " Use absolute file paths.";
     else
-        s += QString(" Files: everything happens in the work folder %1 on this computer; paths are relative to it (or "
-                     "absolute inside it), nothing outside it can be used.")
+        s += QString(" Files: everything happens in the work folder %1; paths are relative to it (or absolute inside "
+                     "it), nothing outside it can be used.")
                  .arg(opt.root);
     if (opt.server)
-        s += QString(" This is a schneidi server: `files` lists the material in the work folder, `upload` fetches a "
-                     "file from a URL into it (people can also PUT /files/<path> over HTTP), and answers that wrote "
-                     "files carry a `url` to download them (with the same Authorization header). A call that takes "
-                     "longer than about %1 s answers {\"job\", \"state\":\"running\"} and keeps running: `jobs` with "
-                     "that job (and wait) gives its progress and then its result.")
+        s += QString(" This is a schneidi server: `files` lists the work folder, `upload` fetches a file from a URL "
+                     "(or PUT /files/<path>), answers that wrote files carry a `url` (same Authorization header). A "
+                     "call longer than about %1 s answers {\"job\", \"state\":\"running\"}: `jobs` with that job "
+                     "gives progress and result.")
                  .arg(opt.jobWaitS);
-    s += " Times are frames in the project frame rate, seconds like \"4.5s\", timecodes \"HH:MM:SS:FF\" "
-         "or clock times \"MM:SS\" / \"HH:MM:SS.sss\".";
+    s += " project = a .schneidi file; timeline = its id or name (default: the open one). Times: frames in the "
+         "project frame rate, seconds \"4.5s\" (safest), \"MM:SS\" / \"HH:MM:SS.sss\" or timecode "
+         "\"HH:MM:SS:FF\".";
     return s;
 }
 
 QJsonArray toolList(const Options& opt)
 {
+    // Every tool in short (cli/ToolText.h): what it is for and its common parameters; `help` has the rest
     QJsonArray tools;
     for (const Command& c : commands()) {
         if (!offered(c.name, opt)) continue;
-        // help: only for the details of the edit ops (the tool list already has the rest)
-        QString summary = c.name == "help" ? QString("Details of the edit ops (parameters, ranges): "
-                                                     "command 'edit' and op 'name' (or a comma list; "
-                                                     "\"all\" = every op; without op: only what each op is for).")
-                                           : c.summary;
+        QString summary = ToolText::description(c);
         static const QStringList longTools{"render", "transcribe", "sync", "highlights", "scenes", "index", "direct"};
         if (opt.server && longTools.contains(c.name))
-            summary += QString(" On this server: if it takes longer than %1 s, the answer is a job (see `jobs`).")
-                           .arg(opt.jobWaitS);
-        QJsonObject schema = inputSchema(c);
-        if (c.name == "help") { // "all" (every command with every parameter, ~80 KB): the tool list already has them
-            QJsonObject props = schema["properties"].toObject();
-            props.remove("all");
-            schema["properties"] = props;
-        }
-        tools << QJsonObject{{"name", c.name}, {"description", summary}, {"inputSchema", schema}};
+            summary += QString(" Over %1 s: the answer is a job (`jobs`).").arg(opt.jobWaitS);
+        tools << QJsonObject{{"name", c.name}, {"description", summary}, {"inputSchema", ToolText::schema(c)}};
     }
     for (const QJsonValue& t : opt.extraTools) tools << t;
     return tools;
@@ -221,7 +187,9 @@ QString unknownTool(const QString& name, const QJsonObject& args, const Options&
     QStringList tools;
     for (const Command& c : commands())
         if (offered(c.name, opt)) tools << c.name;
-    return QString("unknown tool %1 (tools: %2)").arg(name, tools.join(", "));
+    const QStringList close = ToolText::nearest(name, tools, 2);
+    return QString("unknown tool %1%2 (tools: %3)")
+        .arg(name, close.isEmpty() ? QString() : QString(" - did you mean %1?").arg(close.join(" or ")), tools.join(", "));
 }
 
 } // namespace

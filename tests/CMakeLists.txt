@@ -227,6 +227,8 @@ target_link_libraries(test_tours PRIVATE schneidi_cli_lib)
 schneidi_test(test_handover)
 target_link_libraries(test_handover PRIVATE schneidi_cli_lib)
 schneidi_test(test_setup)
+schneidi_test(test_mcp_tool_size) # the MCP tool list stays small, help keeps every text, errors name the help call
+target_link_libraries(test_mcp_tool_size PRIVATE schneidi_cli_lib)
 schneidi_test(test_check)
 schneidi_test(test_contact_sheet)
 schneidi_test(test_overview)

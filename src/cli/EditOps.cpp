@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // schneidi-cli: the operations of the `edit` command (one JSON object each, applied through the Editor like in the app)
 #include "cli/CommandsDetail.h"
+#include "cli/ToolText.h"
 
 #include "core/CodeTrust.h"
 #include "core/EffectRegistry.h"
@@ -1467,7 +1468,18 @@ void applyOp(Session& s, const QJsonObject& given)
     const auto def = std::find_if(editOps().begin(), editOps().end(), [&](const OpDef& d) { return d.name == name; });
     if (!given.contains("op") || (name.isEmpty() && !given.value("op").isString()))
         fail("BAD_ARGUMENT", "missing 'op' (the operation's name, e.g. {op:'trim', clip, edge, by}; `help edit` lists them)");
-    if (def == editOps().end()) fail("BAD_ARGUMENT", QString("unknown op '%1' (see `help edit`)").arg(name));
+    if (def == editOps().end()) {
+        // The op meant (a typing error, another word: "add_title", "cut"), else the groups of the tool description
+        QStringList names;
+        for (const OpDef& d : editOps()) names << d.name;
+        const QStringList close = ToolText::nearest(name, names);
+        fail("BAD_ARGUMENT",
+             close.isEmpty()
+                 ? QString("unknown op '%1' (the ops by group are in the edit tool's 'ops' description; all of them: "
+                           "help {command:'edit'})").arg(name)
+                 : QString("unknown op '%1' - did you mean %2? (keys of an op: help {command:'edit', op:'%3'})")
+                       .arg(name, "'" + close.join("', '") + "'", close.first()));
+    }
     // A key the op does not read was dropped without a word ("star" for "start"): the op ran and did something else
     const QStringList keys = editOpKeys(name);
     for (auto it = given.begin(); it != given.end(); ++it)
@@ -1481,8 +1493,10 @@ void applyOp(Session& s, const QJsonObject& given)
             const QString hint = usual.contains(it.key()) && keys.contains(usual.value(it.key()))
                                      ? QString("use '%1'; ").arg(usual.value(it.key()))
                                      : QString();
-            fail("BAD_ARGUMENT", QString("unknown key '%1' (%2keys: %3; `help` with command 'edit' and op '%4')")
-                                     .arg(it.key(), hint, shown.isEmpty() ? "none" : shown.join(", "), name));
+            const QStringList close = hint.isEmpty() ? ToolText::nearest(it.key(), shown, 1) : QStringList();
+            fail("BAD_ARGUMENT", QString("unknown key '%1' (%2keys: %3; details: help {command:'edit', op:'%4'})")
+                                     .arg(it.key(), close.isEmpty() ? hint : QString("use '%1'; ").arg(close.first()),
+                                          shown.isEmpty() ? "none" : shown.join(", "), name));
         }
     // The reason for the op (any op, free text): not evaluated, echoed in the edit's answer; the op never sees it
     if (op.contains("why")) {
@@ -1534,6 +1548,26 @@ void applyOp(Session& s, const QJsonObject& given)
     }
 }
 
+QString editRules()
+{
+    return QStringLiteral(
+        "List of operations, applied in order, saved once (nothing is saved if one fails). Times: frames "
+        "(integer), \"4.5s\", timecode \"HH:MM:SS:FF\" (frames below the frame rate) or clock time \"MM:SS\" "
+        "/ \"HH:MM:SS.sss\"; ranges are half-open [from, to). A timeline position (at, to, "
+        "from, cue times …) can also be relative, resolved when the op runs so earlier ops that move clips do "
+        "not shift it: {clip:id, offset?} (from the clip start), {clip:id, from_end}, {clip:id, source} (where "
+        "the clip plays that source time; speed and ramps included) or {media:file, source} (first clip that "
+        "plays it); source times in seconds (\"12.4s\") are safest. Lengths and source times (fade in/out, length, "
+        "in/out of a file) take no such object. Tracks: \"V1\", \"A2\" (a "
+        "media clip goes to V<n> and A<n>). Clip ids come from `info` and change when clips are split. "
+        "Linked audio/video partners are included unless linked:false; ops for one kind of clip (effect, color, "
+        "transform, volume, keyframe …) take only the given clips of that kind, a clip of the other kind "
+        "stands for its linked partners (linked:true = all partners, false = only the given ones). Subtitle ids work with 'delete' too. "
+        "Every op takes why:'<reason>' (free text, e.g. 'hook: the loudest kill first'): not evaluated, the "
+        "answer lists it under 'why' with the op's index. "
+        "`help` with command 'edit' and op '<name>' has the details of an op.");
+}
+
 QString editHelp()
 {
     QStringList lines;
@@ -1541,23 +1575,7 @@ QString editHelp()
         if (d.usage.isEmpty()) continue;
         lines << (d.summary.isEmpty() ? d.usage : d.usage + " " + d.summary);
     }
-    return QStringLiteral(
-               "List of operations, applied in order, saved once (nothing is saved if one fails). Times: frames "
-               "(integer), \"4.5s\", timecode \"HH:MM:SS:FF\" (frames below the frame rate) or clock time \"MM:SS\" "
-               "/ \"HH:MM:SS.sss\"; ranges are half-open [from, to). A timeline position (at, to, "
-               "from, cue times …) can also be relative, resolved when the op runs so earlier ops that move clips do "
-               "not shift it: {clip:id, offset?} (from the clip start), {clip:id, from_end}, {clip:id, source} (where "
-               "the clip plays that source time; speed and ramps included) or {media:file, source} (first clip that "
-               "plays it); source times in seconds (\"12.4s\") are safest. Lengths and source times (fade in/out, length, "
-               "in/out of a file) take no such object. Tracks: \"V1\", \"A2\" (a "
-               "media clip goes to V<n> and A<n>). Clip ids come from `info` and change when clips are split. "
-               "Linked audio/video partners are included unless linked:false; ops for one kind of clip (effect, color, "
-               "transform, volume, keyframe …) take only the given clips of that kind, a clip of the other kind "
-               "stands for its linked partners (linked:true = all partners, false = only the given ones). Subtitle ids work with 'delete' too. "
-               "Every op takes why:'<reason>' (free text, e.g. 'hook: the loudest kill first'): not evaluated, the "
-               "answer lists it under 'why' with the op's index. "
-               "`help` with command 'edit' and op '<name>' has the details of an op. Operations: ")
-        + lines.join("; ") + ".";
+    return editRules() + " Operations: " + lines.join("; ") + ".";
 }
 
 QJsonArray editOpsHelp()
