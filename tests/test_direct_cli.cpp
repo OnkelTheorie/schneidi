@@ -642,6 +642,42 @@ int main(int argc, char** argv)
                 CHECK(streams.contains("System Output") && streams.contains("Mikrofon") && !streams.contains("Discord"));
                 CHECK(ducked);
             }
+            // The session's stream names differ from the file's (an untitled stream's "Spur 2" made in another UI
+            // language): the duck finds the tracks by the streams placed, not by their names - and never fails the cut
+            {
+                QJsonObject renamed = session;
+                QJsonArray material = renamed["material"].toArray();
+                QJsonObject m0 = material[0].toObject();
+                QJsonArray names = m0["audio_streams"].toArray();
+                if (CHECK(names.size() == 3)) names[1] = "Microphone";
+                m0["audio_streams"] = names;
+                QJsonArray voices = m0["voice"].toArray();
+                for (int i = 0; i < voices.size(); ++i) {
+                    QJsonObject v = voices[i].toObject();
+                    if (v["stream"].toInt() == 1) v["name"] = "Microphone";
+                    voices[i] = v;
+                }
+                m0["voice"] = voices;
+                material[0] = m0;
+                renamed["material"] = material;
+                const QJsonObject r2 = run("direct", {{"session", renamed}, {"apply", QJsonObject{{"on", "all"}}},
+                                                      {"project_dir", dir.filePath("out/died-renamed")}});
+                CHECK(!r2.contains("error"));
+                ProjectData d;
+                QString error;
+                bool ducked = false;
+                if (CHECK(ProjectFile::load(r2["project"].toString(), &d, &error)))
+                    for (const Track& t : d.timeline.audio)
+                        for (const Clip& c : t.clips)
+                            ducked |= c.audioStream == 0 && !c.keys.value(AnimParam::Volume).isEmpty();
+                if (!CHECK(ducked)) {
+                    std::printf("       %s\n", QJsonDocument(r2).toJson().constData());
+                    for (const Track& t : d.timeline.audio)
+                        for (const Clip& c : t.clips)
+                            std::printf("       track '%s' stream %d keys %d\n", qPrintable(t.name), c.audioStream,
+                                        int(c.keys.value(AnimParam::Volume).size()));
+                }
+            }
             // audio_stream 'game': only the game sound, as before
             const QJsonObject gameOnly = run("direct", {{"recipe", "short"}, {"files", QJsonArray{died}},
                                                         {"options", QJsonObject{{"audio_stream", "game"}}}});

@@ -619,10 +619,10 @@ bool sameProject(const QString& a, const QString& b)
 // Sound of the recordings: audio_stream 'auto' (default: the game streams of game material with several streams,
 // plus each voice stream - microphone, voice chat - that is heard in a used moment of its recording), 'game' (only
 // the game streams, as before 0.26), 'all', or numbers/names - as `short` always chose (per file: undefined = all).
-// *voiced: per recording the voice streams placed and why
+// *voiced: per recording the voice streams placed and why; *gameRefs/*voiceRefs: the streams placed ({media, stream})
 QVector<QJsonValue> soundStreams(const Direction::Session& s, const QString& game, QStringList* said,
                                  const QVector<const Direction::Suggestion*>& used, QStringList* dropped,
-                                 QStringList* voiced, QStringList* gameNames, QStringList* voiceNames)
+                                 QStringList* voiced, QJsonArray* gameRefs, QJsonArray* voiceRefs)
 {
     const QString choice = s.options.contains("audio_stream") ? s.options["audio_stream"].toVariant().toString().trimmed()
                                                               : QString(s.recipe == QLatin1String("short") ? "auto" : "game");
@@ -668,8 +668,8 @@ QVector<QJsonValue> soundStreams(const Direction::Session& s, const QString& gam
         out[i] = list;
         // Only the recordings in the cut are named (not a switched-off one, not one without a moment)
         if (mine.isEmpty()) continue;
-        for (int k : g) if (!gameNames->contains(names[k])) *gameNames << names[k];
-        for (int k : voices) if (!voiceNames->contains(names[k])) *voiceNames << names[k];
+        for (int k : g) *gameRefs << QJsonObject{{"media", s.material[i].file}, {"stream", k}};
+        for (int k : voices) *voiceRefs << QJsonObject{{"media", s.material[i].file}, {"stream", k}};
         *said << QString("%1: %2").arg(QFileInfo(s.material[i].file).fileName(), kept.join(", "));
         if (!heardIn.isEmpty())
             *voiced << QString("%1: %2").arg(QFileInfo(s.material[i].file).fileName(), heardIn.join(", "));
@@ -961,9 +961,10 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
         created = true;
         done << QString("new project %1 (template %2)").arg(project, n["template"].toString());
     }
-    QStringList soundSaid, soundDropped, voiced, gameNames, voiceNames;
-    const QVector<QJsonValue> soundOf = soundStreams(s, game, &soundSaid, list, &soundDropped, &voiced, &gameNames,
-                                                     &voiceNames);
+    QStringList soundSaid, soundDropped, voiced;
+    QJsonArray gameRefs, voiceRefs;
+    const QVector<QJsonValue> soundOf = soundStreams(s, game, &soundSaid, list, &soundDropped, &voiced, &gameRefs,
+                                                     &voiceRefs);
     if (!soundSaid.isEmpty())
         done << QString("sound: the game streams (%1)").arg(soundSaid.join("; "));
     if (!voiced.isEmpty())
@@ -1038,9 +1039,10 @@ QJsonObject applyOnce(const Direction::Session& s, const QJsonObject& apply, con
             from = to;
         }
     }
-    // The voices placed: the game sound (the bed) a little under them while they speak
-    if (!voiceNames.isEmpty() && !gameNames.isEmpty())
-        ops << QJsonObject{{"op", "duck"}, {"track", gameNames.join(',')}, {"by", voiceNames.join(',')}, {"amount_db", -6}};
+    // The voices placed: the game sound (the bed) a little under them while they speak - by the streams placed, not by
+    // their names (an unplayable stream is not placed, an untitled one's name depends on the UI language)
+    if (!voiceRefs.isEmpty() && !gameRefs.isEmpty())
+        ops << QJsonObject{{"op", "_voice_duck"}, {"game", gameRefs}, {"voice", voiceRefs}, {"amount_db", -6}};
     QString result = cut;
     if (isShort) {
         // The vertical copy, every clip following its subject; game footage keeps its kill feed readable at the top
@@ -1277,6 +1279,44 @@ void addDirectOps(QVector<OpDef>& ops)
                      }
                  },
                  {"files"}};
+    // Hidden too: a short's game sound ducked under the voices placed with it ({game:[{media, stream}], voice:[…],
+    // amount_db}). The tracks are found by their clips' recording and stream; a duck that finds nothing or fails is
+    // left out with a note - it never fails the cut
+    ops << OpDef{"_voice_duck", {}, {}, {},
+                 [](Session& s, const QJsonObject& op) {
+                     const auto placed = [](const Clip& c, const QJsonArray& refs) {
+                         return std::any_of(refs.begin(), refs.end(), [&](const QJsonValue& r) {
+                             return absolute(r["media"].toString()) == c.mediaPath && r["stream"].toInt() == c.audioStream;
+                         });
+                     };
+                     const QJsonArray gameRefs = op.value("game").toArray(), voiceRefs = op.value("voice").toArray();
+                     const Timeline& tl = s.project.timeline();
+                     QJsonArray game;
+                     QStringList voice;
+                     for (int i = 0; i < tl.audio.size(); ++i) {
+                         bool hasGame = false, hasVoice = false;
+                         for (const Clip& c : tl.audio[i].clips) {
+                             if (placed(c, gameRefs)) {
+                                 game << c.id;
+                                 hasGame = true;
+                             } else if (placed(c, voiceRefs)) {
+                                 hasVoice = true;
+                             }
+                         }
+                         if (hasVoice && !hasGame) voice << QString("A%1").arg(i + 1);
+                     }
+                     if (game.isEmpty() || voice.isEmpty()) {
+                         s.notes << "the game sound is not ducked under the voices: the cut has no track of each";
+                         return;
+                     }
+                     try {
+                         applyOp(s, QJsonObject{{"op", "duck"}, {"clips", game}, {"by", voice.join(',')},
+                                                {"amount_db", op.value("amount_db").toDouble(-6)}});
+                     } catch (const Error& e) {
+                         s.notes << "the game sound is not ducked under the voices: " + e.message;
+                     }
+                 },
+                 {"game", "voice", "amount_db"}};
 }
 
 } // namespace Cli::detail
