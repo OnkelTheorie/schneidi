@@ -57,6 +57,7 @@ public:
             lay->addWidget(*l);
         }
         range->setObjectName("jobRange"); // (tests)
+        summary->setObjectName("jobSummary"); // (tests)
         message->setStyleSheet(QString("color: %1; font-size: 8pt;").arg(Theme::warning.name()));
         progress = new QProgressBar;
         progress->setRange(0, 100);
@@ -257,6 +258,8 @@ void RenderQueuePanel::rebuild()
         const QFileInfo fi(j.path);
         card->title->setFullText(T("Auftrag %1").arg(j.id) + QStringLiteral(" · ") + fi.fileName());
         QString itemTip = j.preset.isEmpty() ? T("Eigene Einstellungen") : j.preset;
+        // The whole settings line (the card's may be cut off at its end)
+        itemTip += '\n' + j.settings.summary(j.size, j.sourceBitrateK);
         if (j.status == RenderStatus::Done) itemTip += '\n' + T("Doppelklick: im Dateimanager zeigen");
         item->setToolTip(itemTip); // the list shows it (the card lets the mouse through)
         const bool current = j.status == RenderStatus::Rendering && m_queue->currentJob() == j.id;
@@ -277,9 +280,13 @@ void RenderQueuePanel::rebuild()
         const QString timeline = !j.sequence ? QString()
                                  : m_project->sequence(j.sequence) ? m_project->sequenceName(j.sequence)
                                                                    : T("(Timeline gelöscht)");
-        const QString summary = j.review ? T("Prüf-Render") + QStringLiteral(" · ") + j.settings.summary(j.size, j.sourceBitrateK)
-                                         : j.settings.summary(j.size, j.sourceBitrateK);
-        card->summary->setFullText(timeline.isEmpty() ? summary : timeline + QStringLiteral(" · ") + summary);
+        // The size limit first (a narrow card cuts the end off: "… Hochformat HD · max…."), then the timeline
+        QStringList line;
+        if (const QString limit = j.settings.sizeLimitLabel(); !limit.isEmpty()) line << limit;
+        if (j.review) line << T("Prüf-Render");
+        if (!timeline.isEmpty()) line << timeline;
+        line << j.settings.summary(j.size, j.sourceBitrateK, false);
+        card->summary->setFullText(line.join(QStringLiteral(" · ")));
         card->range->setFullText(j.inOut ? T("In/Out: %1 – %2")
                                            .arg(TimelineOptions::formatTime(j.from, m_project->frameRate()),
                                                 j.to >= 0 ? TimelineOptions::formatTime(j.to, m_project->frameRate())
