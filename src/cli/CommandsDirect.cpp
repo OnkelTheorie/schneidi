@@ -191,6 +191,13 @@ Direction::Suggestion suggestionOf(const ShortPick::Moment& m, const QVector<Dir
     return s;
 }
 
+// How far a recording's moments may reach: its length, or where its game picture ends (the desktop in its last seconds)
+double usableLength(const Direction::Material& m)
+{
+    const double end = m.analysis["game_end_s"].toDouble(-1);
+    return end > 0 && end < m.length ? end : m.length;
+}
+
 // bounded (recipe short): each moment within its lo/hi - from shortly before its first hit to a little after its last
 // one or the player's death - and growing only inside them
 QVector<ShortPick::Moment> asMoments(const QVector<DirectMoment>& list, bool bounded = false)
@@ -308,7 +315,7 @@ void suggestShort(Direction::Session& s, const CollectedMoments& found, const QS
     const bool hookBest = o["hook"].toString("best").trimmed().toLower() != QLatin1String("chronological");
 
     QVector<double> durations;
-    for (const Direction::Material& m : s.material) durations << m.length;
+    for (const Direction::Material& m : s.material) durations << usableLength(m);
     // The highlights first (as `short` always took them); without any, the sound events and picture changes
     QVector<DirectMoment> source = found.highlights;
     std::stable_sort(source.begin(), source.end(),
@@ -396,7 +403,7 @@ void suggestHighlights(Direction::Session& s, const CollectedMoments& found, con
     if (transitions != QLatin1String("cut") && transitions != QLatin1String("soft"))
         fail("BAD_ARGUMENT", "transitions must be cut or soft");
     QVector<double> durations;
-    for (const Direction::Material& m : s.material) durations << m.length;
+    for (const Direction::Material& m : s.material) durations << usableLength(m);
     // Everything that stands out counts here (holiday clips: laughter, cheering, movement, loud)
     // (not the end of a replay clip: a fallback of recipe short; this recipe offers the ends when few stood out)
     QVector<DirectMoment> all;

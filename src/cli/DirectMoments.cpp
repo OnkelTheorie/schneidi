@@ -32,7 +32,7 @@ namespace Cli::detail {
 
 namespace {
 
-constexpr int kMomentsVersion = 7; // raise when the moments of a file change for the same sources
+constexpr int kMomentsVersion = 11; // raise when the moments of a file change for the same sources
 
 constexpr double kHighlightsPreS = 2.0;  // highlights' default lead-in before the first kill or loud moment
 constexpr double kHighlightsPostS = 1.0; // ... and lead-out after the last one
@@ -442,6 +442,11 @@ QJsonObject clipEndMoment(const MediaSource& m, const QJsonObject& h, double len
 // first hit to kAfterS after its last, and never into the player's death screen
 void bound(QJsonObject& m, const QJsonArray& deaths, double length)
 {
+    // Nothing reaches past `length` (the end of the game picture when the recording's last seconds show the desktop)
+    if (m["to_s"].toDouble() > length) m["to_s"] = std::round(length * 1000) / 1000;
+    if (m["from_s"].toDouble() > m["to_s"].toDouble()) m["from_s"] = m["to_s"];
+    if (m.contains("hi_s") && m["hi_s"].toDouble() > length) m["hi_s"] = std::round(length * 1000) / 1000;
+    if (m.contains("lo_s") && m["lo_s"].toDouble() > length) m["lo_s"] = std::round(length * 1000) / 1000;
     const double from = m["from_s"].toDouble(), to = m["to_s"].toDouble();
     const double first = m["first_s"].toDouble(-1), last = m["last_s"].toDouble(first >= 0 ? first : to);
     double lo = m.contains("lo_s") ? m["lo_s"].toDouble() : first >= 0 ? std::max(0.0, first - kLeadInS) : from;
@@ -494,6 +499,113 @@ void indexBonus(const QString& file, QJsonArray& moments)
     }
 }
 
+} // namespace
+
+// ---------- The end of the game picture ----------
+
+namespace {
+constexpr double kTailLookS = 5.0; // the last seconds looked at
+constexpr int kTailRate = 10;
+constexpr double kTailHard = 18;   // mean luma difference (0..255) of a hard change of the whole picture
+constexpr double kTailStill = 5;   // ... and of a picture that stays still (a mouse, a blinking cursor)
+constexpr double kTailBar = 11;    // ... of the bottom row, far more than the rest: a task bar coming up
+constexpr int kTailW = 32, kTailH = 18;
+
+std::vector<double> lumaOf(const QImage& img)
+{
+    std::vector<double> out(size_t(kTailW * kTailH), 0.0);
+    if (img.isNull()) return {};
+    const QImage s = img.scaled(kTailW, kTailH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation).convertToFormat(QImage::Format_RGB32);
+    for (int y = 0; y < kTailH; ++y)
+        for (int x = 0; x < kTailW; ++x) {
+            const QRgb p = s.pixel(x, y);
+            out[size_t(y * kTailW + x)] = 0.299 * qRed(p) + 0.587 * qGreen(p) + 0.114 * qBlue(p);
+        }
+    return out;
+}
+
+double lumaDistance(const std::vector<double>& a, const std::vector<double>& b)
+{
+    if (a.empty() || b.empty() || a.size() != b.size()) return 255;
+    double sum = 0;
+    for (size_t i = 0; i < a.size(); ++i) sum += std::abs(a[i] - b[i]);
+    return sum / double(a.size());
+}
+} // namespace
+
+double gameEndOf(const QVector<QImage>& pictures, double firstS, int rate)
+{
+    const int n = int(pictures.size());
+    if (n < 3 || rate <= 0) return -1;
+    std::vector<std::vector<double>> l;
+    for (const QImage& p : pictures) l.push_back(lumaOf(p));
+    // Still from c on: every later picture close to the one at c
+    const auto stillFrom = [&](int c, int upTo) {
+        for (int j = c + 1; j < upTo; ++j)
+            if (lumaDistance(l[size_t(j)], l[size_t(c)]) > kTailStill) return false;
+        return true;
+    };
+    const auto hardAt = [&](int c) { return c > 0 && lumaDistance(l[size_t(c)], l[size_t(c - 1)]) >= kTailHard; };
+    const bool debug = qEnvironmentVariableIsSet("SCHNEIDI_TAIL_DEBUG");
+    if (debug)
+        for (int i = 1; i < n; ++i)
+            std::fprintf(stderr, "tail %.2f s: change %.1f\n", firstS + double(i) / rate, lumaDistance(l[size_t(i)], l[size_t(i - 1)]));
+    // A hard change followed by at least 1 s of still pictures with at most 1 s left after them (the recorder's own
+    // stop can move the picture once more): the earliest such one
+    int end = -1;
+    for (int c = 1; c < n && end < 0; ++c) {
+        if (!hardAt(c)) continue;
+        int j = c + 1;
+        while (j < n && lumaDistance(l[size_t(j)], l[size_t(c)]) <= kTailStill) ++j;
+        if (j - c >= rate && n - j <= rate) end = c;
+    }
+    // Else the last hard change whose pictures after it stay still to the end (at least 0.2 s)
+    for (int c = n - 2; c >= 1 && end < 0; --c)
+        if (hardAt(c) && stillFrom(c, n)) end = c;
+    if (end < 0) return -1;
+    // Still pictures before it, one after the other (a window, then another): the first of them
+    for (int c = end - 1; c >= 1; --c)
+        if (hardAt(c) && stillFrom(c, end)) end = c;
+    // The task bar coming up over the game just before (the mouse went down to stop the recorder): a hard change of
+    // the bottom row of the picture alone, up to 1 s before
+    const auto rowsChange = [&](int c, int y0, int y1) {
+        if (l[size_t(c)].empty() || l[size_t(c - 1)].empty()) return 255.0;
+        double sum = 0;
+        for (int y = y0; y < y1; ++y)
+            for (int x = 0; x < kTailW; ++x)
+                sum += std::abs(l[size_t(c)][size_t(y * kTailW + x)] - l[size_t(c - 1)][size_t(y * kTailW + x)]);
+        return sum / ((y1 - y0) * kTailW);
+    };
+    const auto barAt = [&](int c) {
+        const double bottom = rowsChange(c, kTailH - 1, kTailH), rest = rowsChange(c, 0, kTailH - 1);
+        return bottom >= kTailBar && bottom >= 2.5 * rest;
+    };
+    if (debug)
+        for (int c = std::max(1, end - rate); c < end; ++c)
+            std::fprintf(stderr, "tail bottom %.2f s: %.1f rest %.1f\n", firstS + double(c) / rate,
+                         rowsChange(c, kTailH - 1, kTailH), rowsChange(c, 0, kTailH - 1));
+    for (int c = end - 1; c >= std::max(1, end - rate); --c)
+        if (barAt(c)) {
+            end = c;
+            break;
+        }
+    return firstS + double(end) / rate;
+}
+
+namespace {
+// The end of the game picture in a recording's last seconds (-1: none)
+double gameEnd(const MediaSource& m, double length)
+{
+    if (!m.info.hasVideo || m.info.isImage || length < 2 * kTailLookS) return -1;
+    const auto snap = Snapshot::Source::media(m.format, m.info.path);
+    const double fps = m.format.rate.fps(), first = length - kTailLookS;
+    QVector<QImage> pictures;
+    for (int i = 0; i < int(kTailLookS * kTailRate); ++i) {
+        const int frame = std::min(m.info.length - 1, int(std::lround((first + double(i) / kTailRate) * fps)));
+        pictures << snap->frame(frame, 160);
+    }
+    return gameEndOf(pictures, first, kTailRate);
+}
 } // namespace
 
 QString gameInPicture(const QStringList& files, Context& ctx, int upTo)
@@ -583,6 +695,12 @@ QJsonObject directMomentsFile(const QJsonObject& a, Context& ctx)
         if (ctx.progress) ctx.progress(0.6);
         QJsonArray extra, deaths;
         QString died = "none", voices = "none";
+        // Game footage: where the game picture ends (the desktop in the last seconds): no moment reaches past it
+        double usable = length;
+        if (game) {
+            const double end = gameEnd(m, length);
+            if (end > 0) usable = end;
+        }
         if (!game) {
             extra = eventMoments(m, length, &events);
             if (ctx.progress) ctx.progress(0.75);
@@ -611,12 +729,12 @@ QJsonObject directMomentsFile(const QJsonObject& a, Context& ctx)
                 }
                 if (!inside) highlights << v;
             }
-            if (!found && length <= kClipEndMaxS) highlights << clipEndMoment(m, {}, length, deaths);
+            if (!found && length <= kClipEndMaxS) highlights << clipEndMoment(m, {}, usable, deaths);
         }
         // How far each may grow in a short: around its hits (or loud peaks), not into a death
         for (int i = 0; i < highlights.size(); ++i) {
             QJsonObject x = highlights[i].toObject();
-            bound(x, deaths, length);
+            bound(x, deaths, usable);
             highlights[i] = x;
         }
         if (ctx.progress) ctx.progress(1);
@@ -625,6 +743,7 @@ QJsonObject directMomentsFile(const QJsonObject& a, Context& ctx)
         if (game) {
             mat.analysis["death"] = died;
             mat.analysis["voice"] = voices;
+            if (usable < length) mat.analysis["game_end_s"] = std::round(usable * 100) / 100;
         }
         out = {{"file", m.info.path}, {"material", Direction::toJson(mat)}, {"highlights", highlights}, {"extra", extra}};
         if (!deaths.isEmpty()) out["deaths"] = deaths;

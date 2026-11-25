@@ -28,6 +28,7 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonArray>
+#include <QPainter>
 #include <QJsonDocument>
 #include <QProcess>
 #include <QTemporaryDir>
@@ -560,6 +561,72 @@ int main(int argc, char** argv)
         }
         rgb.resize(150); // without the tint at the end: only the first
         CHECK_EQ(Cli::detail::deathScreensOf(rgb, 10).size(), 1);
+    }
+
+    // ---- Where the game picture ends (the recorder stopped from the task bar: the desktop in the last seconds), in
+    // pictures 10 a second over the last 5 s: a hard change to a still picture; the recorder's stop moving it once
+    // more at the very end; the task bar coming up just before; a game going on (or cutting to another moving scene)
+    // has none
+    {
+        const auto game = [](int i) { // a moving picture: a bright square crossing a gradient
+            QImage img(160, 90, QImage::Format_RGB32);
+            for (int y = 0; y < 90; ++y)
+                for (int x = 0; x < 160; ++x) img.setPixel(x, y, qRgb((x * 3 + i * 7) % 256, (y * 2 + i * 5) % 256, 90));
+            QPainter(&img).fillRect((i * 9) % 140, 30, 20, 20, Qt::white);
+            return img;
+        };
+        const auto desktop = [](int i) {
+            QImage img(160, 90, QImage::Format_RGB32);
+            img.fill(QColor(40, 44, 52));
+            QPainter p(&img);
+            p.fillRect(20, 10, 120, 70, QColor(200, 200, 205));
+            p.fillRect(80 + i % 2, 50, 2, 3, Qt::black); // a blinking cursor
+            return img;
+        };
+        const auto withBar = [](QImage img) {
+            QPainter(&img).fillRect(0, 86, 160, 4, QColor(20, 20, 24));
+            return img;
+        };
+        QVector<QImage> p;
+        for (int i = 0; i < 50; ++i) p << (i < 32 ? game(i) : desktop(i));
+        CHECK(std::abs(Cli::detail::gameEndOf(p, 25, 10) - 28.2) < 1e-6);
+        // the recorder's stop changes the picture once more in the last 0.4 s
+        for (int i = 46; i < 50; ++i) p[i] = game(i * 3);
+        CHECK(std::abs(Cli::detail::gameEndOf(p, 25, 10) - 28.2) < 1e-6);
+        // the task bar comes up 0.2 s before the window
+        p[30] = withBar(game(30)), p[31] = withBar(game(31));
+        CHECK(std::abs(Cli::detail::gameEndOf(p, 25, 10) - 28.0) < 1e-6);
+        // only the last 0.3 s show the desktop
+        p.clear();
+        for (int i = 0; i < 50; ++i) p << (i < 47 ? game(i) : desktop(i));
+        CHECK(std::abs(Cli::detail::gameEndOf(p, 25, 10) - 29.7) < 1e-6);
+        // the game to the end, or a cut to another moving scene: none
+        p.clear();
+        for (int i = 0; i < 50; ++i) p << game(i);
+        CHECK_EQ(Cli::detail::gameEndOf(p, 25, 10), -1.0);
+        for (int i = 30; i < 50; ++i) p[i] = game(i).mirrored(true, true);
+        CHECK_EQ(Cli::detail::gameEndOf(p, 25, 10), -1.0);
+    }
+
+    // ... and in a recording: no moment reaches into the desktop at its end (a loud moment right before it)
+    {
+        const QString tail = Check::makeMedia(
+            dir.filePath("clips/cs2/cs2_clip_tail.mkv"),
+            {"-f", "lavfi", "-i",
+             "testsrc2=s=640x360:r=30:d=16[a];color=c=0x30343c:s=640x360:r=30:d=16,drawbox=x=100:y=40:w=440:h=280:"
+             "c=0xc8c8cc:t=fill[d];[a][d]overlay=enable='gte(t,13.5)'",
+             "-f", "lavfi", "-i", "aevalsrc='0.02*sin(2*PI*220*t)+if(between(t,12.6,13.0),0.8*sin(2*PI*440*t),0)':d=16:s=48000",
+             "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"});
+        if (CHECK(!tail.isEmpty())) {
+            const QJsonObject r = run("direct", {{"recipe", "short"}, {"files", QJsonArray{tail}}});
+            const QJsonObject session = r["session"].toObject();
+            const double end = session["material"][0]["analysis"]["game_end_s"].toDouble(-1);
+            if (!CHECK(std::abs(end - 13.5) < 0.15)) std::printf("       game end %.2f\n", end);
+            const QJsonArray list = session["suggestions"].toArray();
+            CHECK(!list.isEmpty());
+            for (const QJsonValue& x : list)
+                if (!CHECK(x["to_s"].toDouble() <= 13.5 + 0.15)) std::printf("       %s\n", QJsonDocument(x.toObject()).toJson().constData());
+        }
     }
 
     // ---- A CS2 replay clip without a kill (25.11.: the second clip of a short was dropped as "no moment"): its end,

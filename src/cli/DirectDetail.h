@@ -7,6 +7,7 @@
 #include "core/Direction.h"
 
 #include <QJsonArray>
+#include <QImage>
 #include <QJsonObject>
 #include <QString>
 #include <QStringList>
@@ -36,6 +37,13 @@ struct DirectMoment {
 // The player's deaths in samples of the middle of a CS2 picture (mean R, G, B each, `rate` per second): the red
 // tint over everything that fades into a black screen -> [{s: the tint begins, end_s: where a moment ends}]
 QJsonArray deathScreensOf(const std::vector<std::array<double, 3>>& rgb, int rate);
+
+// Where the game picture ends at the end of a recording (the recorder stopped from the task bar: its last seconds
+// show the desktop): pictures `rate` per second from `firstS` on; the end is a hard change of the whole picture after
+// which it stays (nearly) still for at least 1 s with at most 1 s after that (the recorder's stop may move it once
+// more), or still up to the last picture (at least 0.2 s) - a desktop, a window, a menu. Changes from one still
+// picture to another (a second window) belong to the tail too. -1 = the game goes on to the end
+double gameEndOf(const QVector<QImage>& pictures, double firstS, int rate);
 
 // The game of recordings that do not name it (a clip tool's "Desktop_clip_…"): the first of up to `upTo` files whose
 // pictures show a known game's kill feed lines staying (KillFeedLines::recognise), confirmed by the player's own kills
