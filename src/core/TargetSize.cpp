@@ -67,6 +67,7 @@ Plan plan(const Input& in)
     Plan p;
     if (!(in.maxMb > 0) || !(in.seconds > 0) || in.size.isEmpty()) {
         p.error = QStringLiteral("nothing to render for max_mb (empty range or size)");
+        p.empty = true;
         return p;
     }
     p.limitBytes = qint64(std::floor(in.maxMb * kBytesPerMb));
@@ -83,7 +84,10 @@ Plan plan(const Input& in)
         }
     }
     const double videoBytes = aim - p.overheadBytes - audioBytes(p.audioK, in.seconds);
-    p.videoK = int(std::floor(std::max(0.0, videoBytes) * 8 / in.seconds / 1000));
+    // In double, bounded before it becomes an int: a tiny range with a huge limit gave a rate beyond int (UB) - more
+    // than ~1 bit per pixel and frame at the full size buys nothing
+    const double maxK = std::floor(kMaxBitsPerPixel / bitsPerPixel(1, in.size, in.fps));
+    p.videoK = int(std::min(std::floor(std::max(0.0, videoBytes) * 8 / in.seconds / 1000), maxK));
     p.floor = floorBitsPerPixel(in.videoCodec);
     if (p.videoK < kMinVideoK) {
         // What a watchable small picture would need (360p at the floor, sound at its least)

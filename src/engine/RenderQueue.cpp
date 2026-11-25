@@ -16,6 +16,7 @@
 #include <QThread>
 #include <QTimer>
 #include <algorithm>
+#include <cmath>
 
 namespace {
 RenderQueue::ReviewMarks g_reviewMarks;
@@ -246,6 +247,12 @@ bool RenderQueue::launch()
     const auto& q = m_project->renderQueue();
     const auto it = std::find_if(q.cbegin(), q.cend(), [id](const RenderJob& j) { return j.id == id; });
     QString error;
+    // A size limit too small for the range (an empty range is not that: the exporter names it)
+    const auto tooSmall = [this](const RenderJob& j) {
+        if (!j.settings.hasMaxMb() || j.review) return false;
+        const TargetSize::Plan p = sizePlan(j, *m_project);
+        return !p.ok && !p.empty;
+    };
     if (it == q.cend()) { // cannot happen: the running job is not deleted (RenderQueuePanel::removeJobs)
         error = T("Export abgebrochen.");
     } else if (it->sequence && !m_project->sequence(it->sequence)) {
@@ -253,7 +260,7 @@ bool RenderQueue::launch()
     } else if (it->review && g_reviewMarks && !m_marksReady) {
         makeReviewMarks(*it); // launch() again when the marks are there
         return true;
-    } else if (it->settings.hasMaxMb() && !it->review && !sizePlan(*it, *m_project).ok) {
+    } else if (tooSmall(*it)) {
         error = T("Passt nicht in %1 MB: für diese Länge bleibt zu wenig Bitrate fürs Bild. Bereich kürzen oder die "
                   "Grenze erhöhen.").arg(QLocale().toString(it->settings.maxMb, 'g', 4));
     } else {
@@ -306,6 +313,16 @@ void RenderQueue::makeReviewMarks(const RenderJob& job)
     t->start(QThread::LowPriority);
 }
 
+QString RenderQueue::sizeMissNote(const RenderJob& job, const Project& project, qint64 bytes)
+{
+    if (!job.settings.hasMaxMb() || job.review) return {};
+    const TargetSize::Plan plan = sizePlan(job, project);
+    const qint64 limit = plan.limitBytes > 0 ? plan.limitBytes : qint64(std::floor(job.settings.maxMb * TargetSize::kBytesPerMb));
+    if (bytes <= limit) return {};
+    return T("Größer als %1 MB: die Datei hat %2 MB, auch nach einem zweiten Versuch mit weniger Bitrate.")
+        .arg(QLocale().toString(job.settings.maxMb, 'g', 4), QLocale().toString(bytes / TargetSize::kBytesPerMb, 'f', 2));
+}
+
 bool RenderQueue::retryForSize(int id)
 {
     const auto& q = m_project->renderQueue();
@@ -351,8 +368,16 @@ void RenderQueue::onExportFinished(bool ok, const QString& message)
     } else {
         ++m_done;
     }
-    // Done: the encoder note (e.g. hardware encoder fell back to software) stays with the job
-    setStatus(id, status, m_canceling ? QString() : ok ? m_exporter->note() : message, m_clock.elapsed(),
+    // Done: the encoder note (e.g. hardware encoder fell back to software) stays with the job, and a size limit still
+    // missed after the retry
+    QString note = m_canceling ? QString() : ok ? m_exporter->note() : message;
+    if (ok && !m_canceling)
+        if (const auto it = std::find_if(m_project->renderQueue().cbegin(), m_project->renderQueue().cend(),
+                                         [id](const RenderJob& j) { return j.id == id; });
+            it != m_project->renderQueue().cend())
+            if (const QString miss = sizeMissNote(*it, *m_project, QFileInfo(it->path).size()); !miss.isEmpty())
+                note = note.isEmpty() ? miss : miss + "\n" + note;
+    setStatus(id, status, note, m_clock.elapsed(),
               ok ? m_exporter->usedCodec() : QString(), ok ? m_exporter->targetBitrateK() : -1);
     emit jobFinished(id, status);
     if (m_canceling) {

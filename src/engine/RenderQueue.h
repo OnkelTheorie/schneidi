@@ -52,6 +52,9 @@ public:
     // File size limit (RenderSettings::hasMaxMb): bit rates and size for the job's range as the timeline is now.
     // scale: the picture may get smaller; audioFixed: the sound's bit rate stays as set (else at most 128 kbit/s)
     static TargetSize::Plan sizePlan(const RenderJob& job, const Project& project, bool scale = true, bool audioFixed = false);
+    // A size-limited job whose file (`bytes`) is still over its limit after the last try: the note for the job (the
+    // CLI's fits:false); empty when it fits or has no limit
+    static QString sizeMissNote(const RenderJob& job, const Project& project, qint64 bytes);
     // The plan into the exporter's settings: its rates and size, no smart render, no other quality target
     static void applySizePlan(ExportSettings& s, const TargetSize::Plan& plan);
     // Quality "like source": the video bit rate (kbit/s) the job would aim at with the timeline as it is now (its range,
