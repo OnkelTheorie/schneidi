@@ -537,7 +537,7 @@ void opTransition(Session& s, const QJsonObject& op)
     }
     const bool trim = op.value("trim").toBool();
     // The wanted length and alignment go in right away: trim:true takes off only the frames missing for them
-    const int length = op.contains("length") ? timeOf(s, op, "length") : 0;
+    const int length = op.contains("length") ? spanOf(s, op, "length") : 0;
     if (op.contains("length") && length <= 0)
         fail("BAD_ARGUMENT", "length must be at least 1 frame (remove:true takes a transition off)");
     // Longer than a clip it joins: it cannot fit (12-B7: 10 s on two 4 s clips was accepted with trim:true)
@@ -949,8 +949,8 @@ void opMedia(Session& s, const QJsonObject& op)
     if (op.contains("picture_aspect")) s.project.setMediaPictureAspect(paths, pictureAspectOf(op.value("picture_aspect")));
     if (op.contains("in") || op.contains("out")) {
         for (const QString& p : paths) {
-            if (op.contains("in")) s.editor.setSourceMarkIn(p, timeOf(s, op, "in"));
-            if (op.contains("out")) s.editor.setSourceMarkOut(p, timeOf(s, op, "out") - 1);
+            if (op.contains("in")) s.editor.setSourceMarkIn(p, spanOf(s, op, "in"));
+            if (op.contains("out")) s.editor.setSourceMarkOut(p, spanOf(s, op, "out") - 1);
         }
     }
 }
@@ -1016,8 +1016,8 @@ void opSourceEdit(Session& s, const QJsonObject& op, Editor::SourceEditMode mode
 {
     const MediaInfo m = s.media(op.value("media").toString());
     // Source In/Out of the clip for this edit only (the app's marks stay as they were)
-    const int in = timeOf(s, op, "in", 0);
-    const int out = std::min(op.contains("out") ? timeOf(s, op, "out") : m.length, m.length);
+    const int in = spanOf(s, op, "in", 0);
+    const int out = std::min(op.contains("out") ? spanOf(s, op, "out") : m.length, m.length);
     if (in >= out) fail("BAD_ARGUMENT", "empty source range");
     const int track = parseTrack(op.value("track"));
     const int at = timeOf(s, op, "at");

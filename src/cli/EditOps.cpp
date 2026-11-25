@@ -154,6 +154,14 @@ int timeRef(Session& s, const QJsonObject& r, const char* key)
 
 } // namespace
 
+int spanOf(Session& s, const QJsonObject& op, const char* key, int fallback)
+{
+    if (op.contains(key) && op[key].isObject())
+        fail("BAD_ARGUMENT", QString("'%1' is a length or source time (frames, \"2s\", a timecode), not a timeline "
+                                     "position like {clip, offset}").arg(key));
+    return timeOf(s, op, key, fallback);
+}
+
 bool rangeEnds(const QJsonValue& r, QJsonValue* from, QJsonValue* to)
 {
     if (r.isArray()) {
@@ -236,9 +244,9 @@ namespace {
 // Source range [in, out) of a media file: defaults to the whole file
 void sourceRange(Session& s, const QJsonObject& op, const MediaInfo& m, int* in, int* out)
 {
-    *in = timeOf(s, op, "in", 0);
-    qint64 end = op.contains("out") ? timeOf(s, op, "out") : m.length;
-    if (op.contains("duration")) end = qint64(*in) + timeOf(s, op, "duration");
+    *in = spanOf(s, op, "in", 0);
+    qint64 end = op.contains("out") ? spanOf(s, op, "out") : m.length;
+    if (op.contains("duration")) end = qint64(*in) + spanOf(s, op, "duration");
     if (!m.isImage) end = std::min<qint64>(end, m.length); // a still takes any length (its default: the still length)
     if (end > kMaxFrame)
         fail("BAD_ARGUMENT", QString("the source range ends at frame %1, beyond the limit of %2").arg(end).arg(kMaxFrame));
@@ -786,8 +794,8 @@ void opFade(Session& s, const QJsonObject& op)
     }
     for (int id : clipIds(s, sel)) {
         if (s.editor.isSubtitle(id)) continue;
-        if (op.contains("in")) s.editor.setClipFade(id, TimelineOps::Edge::Start, timeOf(s, op, "in"));
-        if (op.contains("out")) s.editor.setClipFade(id, TimelineOps::Edge::End, timeOf(s, op, "out"));
+        if (op.contains("in")) s.editor.setClipFade(id, TimelineOps::Edge::Start, spanOf(s, op, "in"));
+        if (op.contains("out")) s.editor.setClipFade(id, TimelineOps::Edge::End, spanOf(s, op, "out"));
     }
 }
 
@@ -1521,7 +1529,8 @@ QString editHelp()
                "from, cue times …) can also be relative, resolved when the op runs so earlier ops that move clips do "
                "not shift it: {clip:id, offset?} (from the clip start), {clip:id, from_end}, {clip:id, source} (where "
                "the clip plays that source time; speed and ramps included) or {media:file, source} (first clip that "
-               "plays it); source times in seconds (\"12.4s\") are safest. Tracks: \"V1\", \"A2\" (a "
+               "plays it); source times in seconds (\"12.4s\") are safest. Lengths and source times (fade in/out, length, "
+               "in/out of a file) take no such object. Tracks: \"V1\", \"A2\" (a "
                "media clip goes to V<n> and A<n>). Clip ids come from `info` and change when clips are split. "
                "Linked audio/video partners are included unless linked:false; ops for one kind of clip (effect, color, "
                "transform, volume, keyframe …) take only the given clips of that kind, a clip of the other kind "

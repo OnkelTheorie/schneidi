@@ -289,6 +289,9 @@ QVector<int> onTracks(Session& s, const QVector<int>& ids, TrackKind kind, const
 // linked:true = all linked partners of this kind, linked:false = strictly the given clips. Fails if none is left
 QVector<int> clipsOn(Session& s, const QJsonObject& op, TrackKind kind, const char* what);
 int timeOf(Session& s, const QJsonObject& op, const char* key, int fallback = -1);
+// A length or source time (fade in/out, length, in/out of a file): frames, "2s", a timecode - not a timeline
+// position {clip, …} (timeOf), which resolved to a place on the timeline used as a length
+int spanOf(Session& s, const QJsonObject& op, const char* key, int fallback = -1);
 // One range of a `ranges` list: a [from, to] pair, {from, to, ...} (silence, transcribe words, cut_pauses' list) or
 // {start, end}; false for anything else (the caller names the op in its error)
 bool rangeEnds(const QJsonValue& r, QJsonValue* from, QJsonValue* to);

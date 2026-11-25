@@ -824,7 +824,7 @@ void opAccent(Session& s, const QJsonObject& op)
     if (op.contains("shake")) a.shake = numberOf(op, "shake", 0, 0.25);
     if (op.contains("strength")) a = a.scaled(numberOf(op, "strength", 0, 5));
     if (op.contains("length")) {
-        const int frames = timeOf(s, op, "length");
+        const int frames = spanOf(s, op, "length");
         if (frames <= 0) fail("BAD_ARGUMENT", "'length' must be longer than 0");
         a.length = seconds(frames, s.format());
     }

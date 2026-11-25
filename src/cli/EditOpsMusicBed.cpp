@@ -71,7 +71,7 @@ MusicBed::Options bedOptions(Session& s, const QJsonObject& op, int* at, int* fr
             fail("EMPTY", "length:'timeline' (the default): the timeline has nothing after 'at' to take the length "
                           "from - give a length (\"30s\")");
     } else {
-        *frames = timeOf(s, op, "length");
+        *frames = spanOf(s, op, "length");
     }
     checkFrameLimit(qint64(*at) + std::max(0, *frames), "music_bed");
     const double seconds = *frames / fps;

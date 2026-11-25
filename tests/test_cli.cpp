@@ -2707,6 +2707,24 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         const QJsonObject n = Cli::normalize(*render, {{"project", g_path}, {"out", "x.mp4"}, {"review_hits", "false"}});
         CHECK(n["review_hits"].isBool() && !n["review_hits"].toBool());
     }
+    // Relative positions {clip, offset} work for track_volume's points/from/to as the help promises; lengths and
+    // source times (fade in, in/out) refuse them (they resolved to a timeline place used as a length)
+    {
+        const QString tone = Check::makeMedia(dir.filePath("rel-tone.wav"), {"-f", "lavfi", "-i", "sine=f=440:d=6"});
+        const QString rp = dir.filePath("rel.schneidi");
+        run("new", {{"project", rp}, {"overwrite", true}});
+        run("edit", {{"project", rp}, {"ops", QString(R"([{"op":"append","media":"%1","track":"A1"}])").arg(tone)}});
+        int id = -1;
+        for (const QJsonValue& t : run("info", {{"project", rp}})["timeline"]["tracks"].toArray())
+            if (t["track"].toString() == "A1" && !t["clips"].toArray().isEmpty()) id = t["clips"][0]["id"].toInt();
+        if (CHECK(id >= 0)) {
+            const QString ops = QString(R"([{"op":"track_volume","track":"A1","from":{"clip":%1,"offset":"1s"},"to":{"clip":%1,"offset":"3s"},
+                                            "points":[{"at":{"clip":%1,"offset":"2s"},"db":-6}]}])").arg(id);
+            CHECK_EQ(errorOf("edit", {{"project", rp}, {"ops", ops}}), QString("none"));
+            CHECK(messageOf("edit", {{"project", rp}, {"ops", QString(R"([{"op":"fade","clips":[%1],"in":{"clip":%1}}])").arg(id)}})
+                      .contains("'in' is a length or source time"));
+        }
+    }
     return Check::result();
 }
 
