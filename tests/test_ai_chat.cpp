@@ -997,7 +997,8 @@ void test(const QString& dir)
         CHECK_EQ(names, tools);
         const qint64 compactChars = sys.size() + QJsonDocument(o1.body["tools"].toArray()).toJson(QJsonDocument::Compact).size();
         std::printf("       request: full %lld, short %lld characters\n", (long long)fullChars, (long long)compactChars);
-        CHECK(compactChars * 2 < fullChars);
+        // The short request saves mainly the guide now (the tool list itself is short since cli/ToolText.h)
+        CHECK(compactChars * 3 < fullChars * 2);
         if (const QString d = qEnvironmentVariable("AI_CHAT_DUMP"); !d.isEmpty()) {
             QFile f(d + "/request-compact.json");
             if (f.open(QIODevice::WriteOnly)) f.write(QJsonDocument(o1.body).toJson());
@@ -1347,7 +1348,8 @@ void test(const QString& dir)
         fake.gets["/api/show"] = R"({"parameters":"num_ctx                        12288","model_info":{}})";
         fake.script = {openAiTool("call_r1", "help", help), openAiText("Weiter geht's.", 9000)};
         int sent2 = int(fake.requests.size());
-        panel->sendText("Lies die Hilfe zu edit");
+        // (a long wish: the tool list alone got small enough that request + capped result fit 12288 otherwise)
+        panel->sendText("Lies die Hilfe zu edit." + QString(" Bitte alles genau lesen.").repeated(160));
         CHECK(waitFor([&] { return !chat->busy(); }));
         CHECK_EQ(int(fake.requests.size()), sent2 + 1); // the request with the result is not sent
         if (const AiChat::Entry* e = lastOf(chat, AiChat::Entry::Kind::Error); CHECK(e)) CHECK(e->text.contains("12288"));

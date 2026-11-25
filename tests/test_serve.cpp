@@ -945,8 +945,11 @@ int main(int argc, char* argv[])
                       && t["inputSchema"]["properties"].toObject().contains("command"));
             // The schema allows what the help documents (review 25.11.): review_hits an object or false (an array is
             // refused by render), edit run a list or "all"
+            // (review_hits is left to `help` in the short tool list: its schema there, cli/ToolText.h)
             if (t["name"].toString() == "render") {
-                const QJsonArray type = t["inputSchema"]["properties"]["review_hits"]["type"].toArray();
+                CHECK(!t["inputSchema"]["properties"].toObject().contains("review_hits"));
+                const QJsonObject full = Cli::inputSchema(*Cli::find("render"))["properties"].toObject();
+                const QJsonArray type = full["review_hits"].toObject()["type"].toArray();
                 CHECK(type.contains("object") && type.contains("boolean") && !type.contains("array"));
             }
             if (t["name"].toString() == "edit") {

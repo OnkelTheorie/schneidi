@@ -164,7 +164,8 @@ int main(int argc, char** argv)
         // An op list answers at most 10 ops, the rest named for the next call
         const QJsonObject many = QJsonDocument::fromJson(helpText({{"command", "edit"},
             {"op", "append,place,keep,split,trim,move,delete,fade,title,volume,duck,speed"}})).object()["commands"][0].toObject();
-        CHECK(many["ops"].toArray().size() == 10 && many["more"].toString().contains("duck,speed"));
+        CHECK(many["ops"].toArray().size() == 10
+              && many["more"].toString().section("ask again for: ", 1).section(' ', 0, 0).split(',').size() == 2);
     }
 
     // ---- Errors teach: the name meant, the valid ones, the help call ----
