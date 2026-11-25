@@ -12,7 +12,9 @@ QVector<Moment> joined(QVector<Moment> list, double gap)
               [](const Moment& a, const Moment& b) { return a.file != b.file ? a.file < b.file : a.from < b.from; });
     QVector<Moment> out;
     for (const Moment& m : list) {
-        if (!out.isEmpty() && out.last().file == m.file && m.from - out.last().to < gap) {
+        // Not across a death screen: the earlier one's end (hi) before where the later one may begin (lo, else from)
+        const bool apart = !out.isEmpty() && out.last().hi >= 0 && out.last().hi < (m.lo >= 0 ? m.lo : m.from);
+        if (!out.isEmpty() && out.last().file == m.file && m.from - out.last().to < gap && !apart) {
             // The earlier one's lo; the end's hi of the one reaching further (no limit when either has none)
             if (m.to > out.last().to) out.last().hi = m.hi;
             else if (m.hi < 0) out.last().hi = -1;

@@ -145,6 +145,15 @@ int main(int argc, char** argv)
         b.lo = 12.5, b.hi = 16;
         const QVector<Moment> j = ShortPick::joined({a, b}, 2);
         if (CHECK_EQ(j.size(), 1)) CHECK(near(j[0].lo, 9.5) && near(j[0].hi, 16));
+        // ... but never across a death screen: the earlier one ends (hi) before the later one may begin (its lo, else
+        // its from) - joined, the gap between them would show it
+        Moment dead{0, 10, 12, 5}, next{0, 13.5, 15, 4};
+        dead.hi = 12.3;
+        CHECK_EQ(ShortPick::joined({dead, next}, 2).size(), 2);
+        next.lo = 13.2;
+        CHECK_EQ(ShortPick::joined({dead, next}, 2).size(), 2);
+        next.lo = 12.1; // it may begin before the earlier one's end: one stretch of game
+        CHECK_EQ(ShortPick::joined({dead, next}, 2).size(), 1);
     }
 
     // ---- Presets for Shorts, Reels, TikTok
