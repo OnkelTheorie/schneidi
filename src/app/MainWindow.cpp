@@ -227,9 +227,15 @@ MainWindow::MainWindow(Engine* engine, QWidget* parent) : QMainWindow(parent), m
     connect(m_autosaveTimer, &QTimer::timeout, this, &MainWindow::autosave);
     m_autosaveTimer->start(SettingsDialog::storedAutosaveSeconds() * 1000);
 #ifdef Q_OS_ANDROID
-    // Going to the background may be the end (the system frees the memory without asking): the backup now
+    // Going to the background may be the end (the system frees the memory without asking): the backup now.
+    // And playback pauses (a running voice-over take ends and is placed, as with Space): the sound runs on its own
+    // threads, it would go on behind the home screen, another app or a call while the picture stands still. Qt for
+    // Android reports Inactive on the activity's onPause (not in split screen, where the app stays visible and Active)
+    // and Suspended on onStop. It starts again only by the user (no resume on Active). The desktop keeps playing.
     connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
-        if (state != Qt::ApplicationActive && !m_autosaveDisabled) autosave();
+        if (state == Qt::ApplicationActive) return;
+        if (m_engine && m_engine->speed() != 0.0) m_engine->pause();
+        if (!m_autosaveDisabled) autosave();
     });
 #endif
     // Outside changes of the project file (schneidi-cli): QSaveFile replaces the file, so the watcher loses it
