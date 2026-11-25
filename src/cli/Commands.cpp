@@ -1242,6 +1242,20 @@ const QVector<Command>& commands()
                                  "source and visibly "
                                  "lossless; the answer's 'video_bitrate_k' is the rate aimed at, unknown = high and a "
                                  "note in 'encoder_note'. ProRes, DNxHR, GIF and images have a fixed quality"},
+          {"max_mb", T::Number, "file size limit in MB (1 MB = 1,000,000 bytes), e.g. 9 (Discord), 16 (WhatsApp), "
+                                "25 (mail): the video bit rate is computed from the length, the sound and the "
+                                "container (aiming ~3 % under the limit) and each encoder runs at that average rate "
+                                "(x264/x265/VP9/NVENC/VAAPI/QSV b+maxrate+bufsize, OpenH264 its bit rate mode, SVT-AV1 "
+                                "VBR, s264 two passes); no smart render. The sound gets 128 kbit/s (96/64 when it "
+                                "would take more than a fifth) unless audio_bitrate is given. When the rate is too "
+                                "low for the picture the size steps down 1080 -> 720 -> 540 -> 360 (not when "
+                                "height/size is given). A file over the limit is rendered once more at a lower rate. "
+                                "The answer has max_mb, size_mb (the real size), fits, video_bitrate_k, "
+                                "audio_bitrate_k, bits_per_pixel, width/height, tries (2 after a retry) and notes "
+                                "(scaled down, quality will be poor). Video formats with a quality choice only (h264, "
+                                "h265, av1, vp9, s264; BAD_ARGUMENT for prores/dnxhr, gif, images, audio only); not "
+                                "with quality or review; too small for the length = BAD_ARGUMENT with the MB a 360p "
+                                "would need"},
           {"height", T::Integer, "shorter image edge, e.g. 720: 16 to 8192, an odd one rounded down to even (default: timeline resolution)"},
           {"size", T::String, "fixed output size, e.g. 1080x1920 (portrait; the picture is fitted in)"},
           {"fps", T::Number, "output frame rate (default: the timeline's): 10, 12, 15, 23.976, 24, 25, 29.97, 30, 48, 50, "
@@ -1258,7 +1272,7 @@ const QVector<Command>& commands()
           {"speed", T::String, "only format s264: its speed stage - default, or fast (B pictures search fewer "
                                "partition layouts in dense texture: camera footage ~14 % less work for ~1 % larger "
                                "files at the same quality); the answer's s264_speed is the stage the encoder ran with"},
-          {"audio_bitrate", T::Integer, "kbit/s for AAC/MP3/Opus (default 320)"},
+          {"audio_bitrate", T::Integer, "kbit/s for AAC/MP3/Opus (default 320; with max_mb 128 or less)"},
           {"channels", T::String, "sound channels of the file: project (default: the project's mix, see `info` "
                                   "format.channels), stereo (a 5.1/7.1 mix downmixed, ITU), 5.1 or 7.1 (FL FR FC LFE "
                                   "Ls Rs [Lss Rss]; AAC, Opus, FLAC, WAV/AIFF, ALAC 5.1). MP3 has no 5.1: it writes the "

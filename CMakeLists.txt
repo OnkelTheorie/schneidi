@@ -216,6 +216,7 @@ add_library(schneidi_lib ${SCHNEIDI_LIB_TYPE}
     src/core/Equalizer.h          src/core/Equalizer.cpp
     src/core/RenderJob.h          src/core/RenderJob.cpp
     src/core/SourceBitrate.h      src/core/SourceBitrate.cpp
+    src/core/TargetSize.h         src/core/TargetSize.cpp
     src/core/ShortPick.h          src/core/ShortPick.cpp
     src/core/Direction.h          src/core/Direction.cpp
     src/core/ReelPick.h           src/core/ReelPick.cpp

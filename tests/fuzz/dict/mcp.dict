@@ -85,6 +85,7 @@
 "max_bpm"
 "max_chars"
 "max_offset_s"
+"max_mb"
 "media"
 "min"
 "min_area"

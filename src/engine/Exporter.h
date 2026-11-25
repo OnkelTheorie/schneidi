@@ -48,6 +48,9 @@ struct ExportSettings {
     // Quality "like source" (RenderSettings::kQualitySource): start() aims the video at the bit rate of the media the
     // range shows (core/SourceBitrate, targetBitrateK()); unknown = crf ("High") and a note saying so
     bool sourceQuality = false;
+    // A video bit rate to aim at (kbit/s) for a file size (core/TargetSize: `render` max_mb, Deliver's size limit): an
+    // average rate per encoder instead of a constant quality, before sourceQuality and maxBitrateK; 0 = none
+    int targetBitrateK = 0;
     QString preset = "medium"; // speed vs. file size
     int audioBitrateK = 192;
     QString audioSampleFormat; // empty = codec default (Apple Lossless: s16p/s32p for 16/24 bit)

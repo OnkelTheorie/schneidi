@@ -592,6 +592,11 @@ bool Exporter::start(const Timeline& tl, const ExportSettings& s, QString* error
             m_note = m_note.isEmpty() ? why : m_note + ' ' + why;
         }
     }
+    // A file size: its bit rate (smart render is off for it, RenderQueue::exportSettings)
+    if (s.targetBitrateK > 0 && !s.videoCodec.isEmpty() && s.output == ExportSettings::Output::File) {
+        m_targetBitrateK = s.targetBitrateK;
+        qInfo("Export: file size target, video %d kbit/s", m_targetBitrateK);
+    }
     // (development, for measuring encoders through the real export: SCHNEIDI_EXPORT_CRF=<n> = that CRF instead of the
     // quality level's - s264 makes its QP of it as of a level -, SCHNEIDI_EXPORT_BITRATE=<kbit/s> = a bit rate target
     // as quality "like source" gives one: s264 two passes, other software encoders their average bit rate; only with

@@ -10,6 +10,12 @@ the preset. `help` `render` lists the current set with the user's own presets.
 - Upload anywhere / play anywhere: H.264 MP4 (default), `quality` `web` (bit rate like YouTube recommends).
 - Keep the recordings' quality (archive, re-upload, a master): `quality` `source` - the bit rate of the clips used,
   so the file is about as big as the source; the answer's `video_bitrate_k` says the rate aimed at.
+- A file that must fit a size (Discord 9-10 MB, WhatsApp 16 MB, mail 25 MB): `max_mb` `9` (h264/h265/av1/vp9/s264).
+  The video rate comes from the length and the sound (128 kbit/s or less unless `audio_bitrate`), the picture steps
+  down to 720/540/360 when that rate is too low for it (not with `height`/`size`), and a file over the limit is
+  rendered once more lower. Read `size_mb`, `fits`, `height` and the notes ("quality will be poor": shorten the range
+  or use h265/av1 rather than sending mush). Not with `quality`; too small for the length is BAD_ARGUMENT naming the
+  MB a 360p would need.
 - Smaller at the same quality: H.265 (Apple and modern players), AV1 (smallest, slower).
 - `format` `s264`: schneidi's own H.264 encoder, experimental (8-bit 4:2:0 only; in two passes faster than x264
   medium on game, calm and animated footage, slower on camera footage and in one pass) - only when the user asks for
