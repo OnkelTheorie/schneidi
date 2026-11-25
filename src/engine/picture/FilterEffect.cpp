@@ -211,6 +211,22 @@ QString checkExpression(const QString& name, const AVDictionaryEntry* e)
         .arg(name, QString::fromUtf8(e->key), m.captured(2));
 }
 
+// The frame number variables (n, N) of the expression filters count the frames the thread's cached graph has worked
+// on, not the clip's: frames render out of order and in parallel, so preview and export would differ (as for eq). The
+// time t is right. In `enable` (every filter) and the expressions of hue, geq, rotate, crop, swaprect, vignette, scale
+QString checkFrameCount(const QString& name, const AVDictionaryEntry* e)
+{
+    static const QSet<QString> counting = {"hue", "geq", "rotate", "crop", "swaprect", "vignette", "scale"};
+    const QString key = QString::fromUtf8(e->key);
+    if (key != QLatin1String("enable") && !(counting.contains(name) && textOptions().value(name).contains(key))) return {};
+    static const QRegularExpression frame(QStringLiteral(R"((?<![0-9.A-Za-z_])([nN])(?![A-Za-z0-9_]))"));
+    const QRegularExpressionMatch m = frame.match(QString::fromUtf8(e->value));
+    if (!m.hasMatch()) return {};
+    return QStringLiteral("filter '%1': option '%2' uses the frame number %3 (frames render out of order: preview and "
+                          "export would differ; use t, the time in seconds)")
+        .arg(name, key, m.captured(1));
+}
+
 // noise's temporal flags (t, a) keep a random state from frame to frame: each render thread and cached graph has its
 // own, so preview and export (and two exports) would differ. Only the still flags u (uniform) and p (pattern), by
 // name (a number could hide the temporal bits)
@@ -526,6 +542,7 @@ QString checkSegment(const AVFilterGraphSegment* seg)
             if (const QString why = checkOption(f, name, e); !why.isEmpty()) return why;
             if (const QString why = checkExpression(name, e); !why.isEmpty()) return why;
             if (const QString why = checkNoise(name, e); !why.isEmpty()) return why;
+            if (const QString why = checkFrameCount(name, e); !why.isEmpty()) return why;
         }
     }
     return {};
@@ -540,6 +557,10 @@ struct Graph {
     AVFilterContext* sink = nullptr;
     bool timedEq = false;   // an eq whose LUT changes over time (applyFilter sends it for each frame's time)
     double eqSeconds = 0.0; // the time its LUTs are made for
+    // fade keeps a state (waiting, fading, done) that only goes forward: built again when the time steps back (a
+    // seek), else a fade-in showed at full brightness, a fade-out black
+    bool stateful = false;
+    double lastSeconds = -1e300; // the time of the last picture it worked on
 };
 
 // Builds the graph for w x h; nullptr = error in *error
@@ -577,6 +598,7 @@ std::unique_ptr<Graph> build(const QString& chain, int w, int h, QString* error)
     QStringList names;
     for (size_t i = 0; i < seg->chains[0]->nb_filters; ++i)
         names << QString::fromUtf8(seg->chains[0]->filters[i]->filter_name);
+    g->stateful = names.contains(QStringLiteral("fade"));
     if ((ret = avfilter_graph_segment_create_filters(seg.get(), 0)) < 0)
         return fail(QStringLiteral("cannot make the filters: %1").arg(avError(ret)));
     if ((ret = avfilter_graph_segment_apply_opts(seg.get(), 0)) < 0) {
@@ -723,6 +745,10 @@ bool applyFilter(const QString& chain, uint8_t* rgba, int width, int height, dou
     }
     auto it = std::find_if(c.graphs.begin(), c.graphs.end(),
                            [&](const auto& g) { return g->chain == chain && g->w == width && g->h == height; });
+    if (it != c.graphs.end() && (*it)->stateful && seconds < (*it)->lastSeconds) { // back in time: a fresh state
+        c.graphs.erase(it);
+        it = c.graphs.end();
+    }
     if (it == c.graphs.end()) {
         QString why;
         auto g = build(chain, width, height, &why);
@@ -757,7 +783,10 @@ bool applyFilter(const QString& chain, uint8_t* rgba, int width, int height, dou
         }
         (*it)->eqSeconds = seconds;
     }
-    if (run(**it, rgba, seconds, &why)) return true;
+    if (run(**it, rgba, seconds, &why)) {
+        (*it)->lastSeconds = seconds;
+        return true;
+    }
     // A chain that fails while running is not built again every frame: kept as failed like one that does not build
     c.graphs.erase(it);
     if (c.failed.size() > 32) c.failed.clear();
