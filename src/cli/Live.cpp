@@ -875,6 +875,14 @@ std::map<QString, std::unique_ptr<Connection>>& connections()
     return map;
 }
 
+// Connections whose app went away: kept until release(), never destroyed during a lookup - a Live::Activity (or a
+// Session) still holds the pointer and reads its socket state when the command ends
+std::vector<std::unique_ptr<Connection>>& retired()
+{
+    static std::vector<std::unique_ptr<Connection>> list;
+    return list;
+}
+
 struct Candidate {
     std::unique_ptr<Connection> conn;
     bool busy = false;
@@ -962,6 +970,7 @@ void release()
         if (conn->socket.state() != QLocalSocket::UnconnectedState) conn->socket.waitForDisconnected(1000);
     }
     connections().clear();
+    retired().clear();
 }
 
 Connection* connectionFor(const QString& project)
@@ -973,6 +982,7 @@ Connection* connectionFor(const QString& project)
     auto& map = connections();
     if (auto it = map.find(key); it != map.end()) {
         if (it->second->socket.state() == QLocalSocket::ConnectedState) return it->second.get();
+        retired().push_back(std::move(it->second));
         map.erase(it);
     }
     // The file of an app this process is already attached to (e.g. as "@app"): same connection, a second one
