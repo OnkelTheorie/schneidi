@@ -116,6 +116,13 @@ void CompLayers::setSelected(int node)
         if (b->property("node").isValid() && b->isCheckable()) b->setChecked(b->property("node").toInt() == node && node);
 }
 
+void CompLayers::setPlayhead(int frame)
+{
+    if (frame == m_playhead) return;
+    m_playhead = frame;
+    refresh(); // the rows' values at the new frame (a drag of the opacity field starts from the value shown)
+}
+
 void CompLayers::refresh()
 {
     const Clip* c = m_clipId ? TimelineOps::findClip(m_editor->project()->timeline(), m_clipId) : nullptr;

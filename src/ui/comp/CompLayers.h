@@ -23,7 +23,7 @@ public:
     explicit CompLayers(Editor* editor, QWidget* parent = nullptr);
 
     void setClip(int clipId);
-    void setPlayhead(int frame) { m_playhead = frame; }
+    void setPlayhead(int frame); // a keyframed opacity shows its value there
     void setSelected(int node);
     void refresh();
     // The clip has a graph that is not a plain layer stack (it only shows as nodes)
