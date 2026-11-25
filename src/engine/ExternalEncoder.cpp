@@ -44,16 +44,25 @@ QStringList ExternalEncoder::arguments(const Params& p)
       << QStringList{"-map", "0:v:0", "-an", "-sn", "-dn", "-c:v", p.codec, "-pix_fmt", pix ? pix : "yuv420p"};
     if (p.threads > 0) a << "-threads:v" << QString::number(p.threads);
     // Options: "vprofile" style names (the export formats') without their prefix, as the writer's applyOption does
+    // x265's own quiet log level joins its "x265-params" (a second -x265-params replaced the first: the low-memory
+    // rc-lookahead was lost)
+    const bool x265 = p.codec == "libx265";
+    bool x265Params = false;
     for (const auto& [key, value] : p.options) {
         QString name = QString::fromUtf8(key);
         if (name == "vprofile" || name == "vb" || name == "vlevel") name = name.mid(1);
-        a << QString("-%1:v").arg(name) << QString::fromUtf8(value);
+        QString v = QString::fromUtf8(value);
+        if (x265 && name == "x265-params") {
+            x265Params = true;
+            v = v.isEmpty() ? QString("log-level=error") : v + ":log-level=error";
+        }
+        a << QString("-%1:v").arg(name) << v;
     }
     // The same tags into the stream (the writer copies the stream's parameters into the file)
     for (qsizetype i = 0; i + 1 < tags.size(); i += 2) a << tags[i] + ":v" << tags[i + 1];
     if (p.aspect.num > 0 && p.aspect.den > 0 && p.aspect.num != p.aspect.den)
         a << "-aspect:v" << QString::number(double(p.width) * p.aspect.num / (double(p.height) * p.aspect.den), 'f', 6);
-    if (p.codec == "libx265") a << "-x265-params" << "log-level=error";
+    if (x265 && !x265Params) a << "-x265-params:v" << "log-level=error";
     a << "-f" << "nut" << p.output;
     return a;
 }
