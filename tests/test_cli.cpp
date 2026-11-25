@@ -2707,6 +2707,20 @@ World","at":0,"duration":20,"track":"V2","color":"#ff0000","bold":true,"box":tru
         const QJsonObject n = Cli::normalize(*render, {{"project", g_path}, {"out", "x.mp4"}, {"review_hits", "false"}});
         CHECK(n["review_hits"].isBool() && !n["review_hits"].toBool());
     }
+    // A plan names its steps by n (from 1) in notes and errors, as plan.steps and run do (were 0-based op indexes)
+    {
+        const QString pp = dir.filePath("plan-n.schneidi");
+        run("new", {{"project", pp}, {"overwrite", true}});
+        const QJsonObject plan = run("edit", {{"project", pp}, {"plan", true},
+                                              {"ops", R"([{"op":"marker","at":"1s","why":"a"},{"op":"delete_range","from":5000,"to":6000,"why":"b"}])"}});
+        const QString notes = QJsonDocument(plan["notes"].toArray()).toJson();
+        if (!CHECK(notes.contains("step 2 (delete_range): changed nothing"))) std::printf("       %s\n", qPrintable(notes));
+        CHECK_EQ(plan["why"][1]["step"].toInt(), 2);
+        CHECK(messageOf("edit", {{"project", pp}, {"plan", true}, {"ops", R"([{"op":"marker","at":"1s"},{"op":"split","at":"x"}])"}})
+                  .contains("step 2 (split)"));
+        CHECK(messageOf("edit", {{"project", pp}, {"ops", R"([{"op":"marker","at":"1s"},{"op":"split","at":"x"}])"}})
+                  .contains("op 1 (split)"));
+    }
     // Relative positions {clip, offset} work for track_volume's points/from/to as the help promises; lengths and
     // source times (fade in, in/out) refuse them (they resolved to a timeline place used as a length)
     {

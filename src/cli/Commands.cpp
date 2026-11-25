@@ -1111,7 +1111,8 @@ const QVector<Command>& commands()
                  "removed ids) and the timeline as a summary. Plan first (the user decides): plan:true changes "
                  "nothing and answers plan {id, steps:[{n, op, why, summary, changes}]}; then edit with plan_id and "
                  "run:[step numbers] or \"all\" (one edit, one undo step) or discard:true. A plan is void once the "
-                 "project changes (PLAN_STALE: plan again) and gone after a day.",
+                 "project changes (PLAN_STALE: plan again) and gone after a day. Errors and notes name an op by its "
+                 "index in ops (\"op 0\" = the first); of a plan by its step number n (\"step 1\" = the first).",
          {{"project", T::Path, "project file", true, true},
           {"ops", T::Json, editHelp() + " (Not with plan_id: a plan runs its own ops.)"},
           {"timeline", T::String, "timeline to edit (id or name from `info`; default: the open one)"},

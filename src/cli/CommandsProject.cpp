@@ -585,12 +585,15 @@ QJsonObject applyEdit(Session& s, const QJsonArray& ops, const QJsonObject& a, b
             if (noteUnchanged && name != QLatin1String("timeline") && !name.startsWith('_')) {
                 const QJsonObject now = projectState(s);
                 if (now == stateLast && s.notes.size() == notes)
-                    s.notes << QString("op %1 (%2): changed nothing").arg(i).arg(name);
+                    s.notes << (steps ? QString("step %1 (%2): changed nothing").arg(i + 1) // as plan.steps n
+                                      : QString("op %1 (%2): changed nothing").arg(i)).arg(name);
                 stateLast = now;
             }
         } catch (const Error& e) {
             if (!numbers.isEmpty())
                 throw Error{e.code, QString("step %1 (%2): %3").arg(numbers.value(i)).arg(ops[i]["op"].toString(), e.message)};
+            if (steps) // making a plan: the step numbers its answer gives (n, from 1)
+                throw Error{e.code, QString("step %1 (%2): %3").arg(i + 1).arg(ops[i]["op"].toString(), e.message)};
             throw Error{e.code, QString("op %1 (%2): %3").arg(i).arg(ops[i]["op"].toString(), e.message)};
         }
         if (steps) {
@@ -617,7 +620,16 @@ QJsonObject applyEdit(Session& s, const QJsonArray& ops, const QJsonObject& a, b
     }
     if (s.live) o["live"] = true; // changed in the app (one undo step there), the user saves
     if (!s.notes.isEmpty()) o["notes"] = s.notes;
-    if (!s.why.isEmpty()) o["why"] = s.why; // the reasons the ops were given, by op index
+    if (!s.why.isEmpty()) { // the reasons the ops were given, by op index (a plan: by step number n)
+        QJsonArray why = s.why;
+        if (steps)
+            for (QJsonValueRef v : why) {
+                QJsonObject w = v.toObject();
+                if (w.contains("index")) w["step"] = w.take("index").toInt() + 1;
+                v = w;
+            }
+        o["why"] = why;
+    }
     if (s.project.sequences().size() > 1) o["timelines"] = timelinesJson(s.project, s.multicamSync);
     if (!dry) {
         const QString backup = s.save();
