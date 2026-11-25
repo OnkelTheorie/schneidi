@@ -1817,6 +1817,12 @@ S264_DEV(double, gTpFollow, devEnv("H264_TPFOLLOW") ? std::atof(devEnv("H264_TPF
 // debt is paid. Measured on seven clips of 4 to 30 s: every target within 2 % at 2 s (within 2.5 %
 // at 4 s), for 0.2 to 0.5 % of BD-rate; H264_TPFOLLOW=0 with it is 0.5 to 1 % better and misses by up to 3.3 %.
 S264_DEV(double, gTpLag, devEnv("H264_TPLAG") ? std::atof(devEnv("H264_TPLAG")) : 2.0);
+// ... and over no more than this share of the clip (H264_TPLAGSHARE; 0 = the seconds above whatever the clip's
+// length, as before 24.11.2026): 2 s are all of a 2 s clip - a debt known after its first third was still not paid
+// at its end. Measured on 2 s cuts of game footage (miss of the target, share 0 / 0.125 / 0.25 / 0.5): +3.1 / +1.5 /
+// +1.4 / +2.3 % and +2.7 / +0.4 / +1.6 / +2.3 %, the synthetic clip with a standing start 573 / 592 / 592 / 580 of
+// 600 kbit/s. A quarter leaves every clip of 8 s or more as it was (those hit their targets within 2 %).
+S264_DEV(double, gTpLagShare, devEnv("H264_TPLAGSHARE") ? std::atof(devEnv("H264_TPLAGSHARE")) : 0.25);
 // The least budget the pictures left are planned with: this share of what they cost at the plan
 // QP (H264_TPRESTFLOOR; 0 = half the clip's mean rate per picture, as before - on a clip whose
 // I pictures take a third of the bits that is more than its other pictures ever need, so an
@@ -2050,6 +2056,115 @@ void Encoder::tpStartBoost(double kI, double kP)
     tpBuildTables();
 }
 
+// Two-pass: the macroblock tree runs out at the clip's end. Nothing follows the last lookahead window, so its
+// reference pictures inherit less and less and are coded with ever smaller offsets (traced on a 2 s clip: the mean
+// offset of the last six P pictures -7.8, -7.4, -6.9, -6.0, -4.7, -1.9 against -8.2 before; they cost 39 to 18 kbit
+// instead of 43 at the same QP). The model's k is learned at the tree's full level and planned that tail at the full
+// price; the bits it did not take were left over - about a lookahead window's share of them, 9 % of a 2 s clip and
+// well under 1 % of a minute. So once the clip's end is in the queue (the tree of every picture left is final then)
+// each queued reference picture's shortfall against the level so far goes into the plan as a coarser QP of that
+// picture (tpQOff_, as the model sees it - the picture is coded as before), and the plan spends the difference on
+// all the pictures left.
+// Only what the missing lookahead does counts: a picture whose tree is weaker because of what it shows (the first
+// pictures of a new scene, 35 pictures before the end of a talk cut) is no tail - taken for one, the plan coded
+// exactly those pictures finer and the clip went 7 % further over. While pictures still join the queue, every
+// fourth run of the tree notes how far the offsets of the queued pictures with d pictures behind them lie above
+// the coded picture's (tpTailShape_); a picture d before the clip's end is short by no more than that.
+// H264_TPTAIL: weight of the shortfall (0 = off, the plan before 24.11.2026).
+S264_DEV(double, gTpTail, devEnv("H264_TPTAIL") ? std::atof(devEnv("H264_TPTAIL")) : 1.0);
+
+void Encoder::tpTreeTail(const LookaheadFrame& frame, int type)
+{
+    if (gTpTail <= 0 || !cfg_.mbtree || queue_.empty() || tpQOff_.empty())
+        return;
+    const size_t n = tpQOff_.size();
+    const size_t mbs = size_t(mbW_) * mbH_;
+    auto kind = [&](const LookaheadFrame& g) { return g.keyframe ? 0 : useB() && g.type == 2 ? 2 : 1; };
+    // A picture's mean tree offset per unit of strength (every stride-th macroblock).
+    auto level = [&](const LookaheadFrame& g, size_t stride) {
+        if (g.intraCost.size() != mbs || g.propagate.size() != mbs)
+            return 0.0;
+        const double strength = treeStrength(g);
+        double sum = 0;
+        size_t count = 0;
+        for (size_t m = 0; m < mbs; m += stride, ++count)
+            sum += std::max(-gTreeCap, Lookahead::qpOffset(g, int(m), strength));
+        return sum / double(std::max<size_t>(1, count)) / std::max(0.1, strength);
+    };
+    const int last = queue_.back().index;
+    if (size_t(last) + 1 < n) {
+        // Pictures still join the queue: this picture has the whole lookahead behind it.
+        if (type == 2)
+            return;
+        const double own = level(frame, 1);
+        tpTreeCount_ = std::min(tpTreeCount_ + 1, 16); // the level of the last pictures, not of the whole clip
+        tpTreeLevel_ += (own - tpTreeLevel_) / tpTreeCount_;
+        if (tpTailRuns_++ % 4)
+            return;
+        double sum[kTpTailSteps] = {};
+        int count[kTpTailSteps] = {};
+        const double ownCoarse = level(frame, 7);
+        for (const LookaheadFrame& g : queue_) {
+            if (g.index <= frame.index || g.coded || kind(g) == 2)
+                continue;
+            const int step = std::min((last - g.index) / 4, kTpTailSteps - 1);
+            sum[step] += level(g, 7) - ownCoarse;
+            ++count[step];
+        }
+        for (int k = 0; k < kTpTailSteps; ++k)
+            if (count[k]) {
+                tpTailShapeCount_[k] = std::min(tpTailShapeCount_[k] + 1, 16);
+                tpTailShape_[k] += (sum[k] / count[k] - tpTailShape_[k]) / tpTailShapeCount_[k];
+            }
+        return;
+    }
+    // The run that first has the clip's end in the queue does not count: the pictures that joined last are not
+    // searched yet and show no tree at all (the plan took them for free and coded the pictures before them finer).
+    if (!tpTailOpen_) {
+        tpTailOpen_ = true;
+        if (tpTreeCount_ > 0)
+            return;
+    }
+    if (tpTreeCount_ == 0) { // a clip no longer than the lookahead: the level of its first picture
+        if (type == 2)
+            return;
+        tpTreeLevel_ = level(frame, 1);
+        tpTreeCount_ = 1;
+    }
+    tpTail_.resize(n, 0.0f);
+    std::vector<double> row(kTpQSteps);
+    for (const LookaheadFrame& g : queue_) {
+        const size_t i = size_t(g.index);
+        const int t = kind(g);
+        if (i >= n || t == 2 || (g.coded && &g != &frame))
+            continue;
+        double shortBy = std::max(0.0, level(g, 1) - tpTreeLevel_);
+        const int step = std::min((last - g.index) / 4, kTpTailSteps - 1);
+        if (tpTailShapeCount_[step] > 0) // (none noted: a clip no longer than the lookahead)
+            shortBy = std::min(shortBy, std::max(0.0, tpTailShape_[step]));
+        const float tail = float(gTpTail * shortBy * treeStrength(g));
+        if (std::abs(tail - tpTail_[i]) < 0.05f)
+            continue;
+        double* rem = tpRemTab_.data() + size_t(tpClass_[i]) * kTpQSteps;
+        double* all = tpAllTab_.data() + size_t(tpClass_[i]) * kTpQSteps;
+        tpRow(i, row.data());
+        for (int k = 0; k < kTpQSteps; ++k) {
+            rem[k] = std::max(0.0, rem[k] - row[size_t(k)]);
+            all[k] = std::max(0.0, all[k] - row[size_t(k)]);
+        }
+        tpQOff_[i] += tail - tpTail_[i];
+        tpTail_[i] = tail;
+        tpRow(i, row.data());
+        for (int k = 0; k < kTpQSteps; ++k) {
+            rem[k] += row[size_t(k)];
+            all[k] += row[size_t(k)];
+        }
+        if (devEnv("H264_RC_TRACE"))
+            std::fprintf(stderr, "tail: at %d picture %zu tree short by %.2f (level %.2f, strength %.1f, shape %.2f)\n", frameIndex_, i, tail,
+                         tpTreeLevel_, treeStrength(g), tpTailShapeCount_[step] > 0 ? tpTailShape_[step] : -1.0);
+    }
+}
+
 // QP for the P pictures at which the pictures not coded yet (first-pass costs, k per picture type
 // from the pictures coded so far) spend exactly the bits that are left of the clip's budget.
 double Encoder::twoPassQp(double kI, double kP, double kB, double planQp) const
@@ -2080,7 +2195,10 @@ double Encoder::twoPassPlanQp(double kI, double kP, double kB) const
 // second and what a doubling of the frame rate adds. Fitted (16.11.2026, with the macroblock tree's level and the
 // AQ reference below) so that a crf value gives about the size and PSNR of x264's --crf with the same value
 // (medium preset) on game, camera, animation and screen footage; see the encoder notes of that day.
-S264_DEV(double, gCrfBase, devEnv("H264_CRFBASE") ? std::atof(devEnv("H264_CRFBASE")) : 5.6);
+// (5.6 until 24.11.2026: the tree's level in startFrame, kCrfTreeLevel, made every value 11 to 43 % larger. 6.55 brings
+// the sizes at the export's quality levels (crf 18 / 22 / 28) back in the mean of the three test projects (-0.2 %): game
+// clips with stills +5 / +8 / +4 %, highlights -1 %, a vertical short -5 / -5 / -4 % against before.)
+S264_DEV(double, gCrfBase, devEnv("H264_CRFBASE") ? std::atof(devEnv("H264_CRFBASE")) : 6.55);
 // QP steps per crf step around 23: our sizes fall faster with the QP than x264's (psy fades out above QP 26);
 // with 1, crf 18 came out 15-28 % larger than x264's and crf 33 21-46 % smaller.
 S264_DEV(double, gCrfSlope, devEnv("H264_CRFSLOPE") ? std::atof(devEnv("H264_CRFSLOPE")) : 0.87);
@@ -4666,13 +4784,17 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             // The QP stays put; the model's k settles over the first pictures (the probe misses
             // by up to 2x, so up to 2 QP per picture then) and the leftover budget corrects
             // slowly (at most half a QP per picture).
+            if (!fc.treeOffset_.empty()) // the tree was run over the queue for this picture
+                tpTreeTail(frame, type);
             const double plan = twoPassPlanQp(kOf(true), kOf(false), kB());
             qp = twoPassQp(kOf(true), kOf(false), kB(), plan);
             const double rest = qp;
             if (rcFramesSeen_ >= 12) {
                 const double gap = gTpDev > 0 ? std::clamp(rest - plan, -gTpDev, gTpDev) : rest - plan;
-                if (gTpLag > 0)
-                    tpGap_ += (gap - tpGap_) / std::max(1.0, gTpLag * cfg_.fps);
+                if (gTpLag > 0) {
+                    const double lag = gTpLagShare > 0 ? std::min(gTpLag * cfg_.fps, gTpLagShare * double(cfg_.firstPass->size())) : gTpLag * cfg_.fps;
+                    tpGap_ += (gap - tpGap_) / std::max(1.0, lag);
+                }
                 qp = plan + gTpFollow * (qp - plan) + (1.0 - gTpFollow) * tpGap_;
             }
             if (gTpDev > 0 && rcFramesSeen_ >= 12)
@@ -4702,7 +4824,8 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             qp += tpOff_[size_t(frame.index)];
         cfg_.qp = std::clamp(int(std::lround(idr ? qp - 3 : type == 2 ? qp + (bRef ? bRefQp : bQp) : qp)), 10, 51);
         if (twoPass) // the model's cost of this picture: its need at the QP it is coded with, as cost * 2^(-qp/6)
-            costUsed = tpNeed(std::min(size_t(frame.index), cfg_.firstPass->size() - 1), cfg_.qp) * std::exp2(cfg_.qp / 6.0);
+            costUsed = tpNeed(std::min(size_t(frame.index), cfg_.firstPass->size() - 1),
+                              cfg_.qp + (size_t(frame.index) < tpTail_.size() ? tpTail_[size_t(frame.index)] : 0.0f)) * std::exp2(cfg_.qp / 6.0);
         rcNeedSeen_ += kType(type) * costUsed * typeScale(type);
         rcFramesSeen_ += 1;
     } else if (cfg_.bitrateKbps > 0) {
@@ -4747,11 +4870,24 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
         // mean offset of the full strength (unclamped) against the one applied; the split stays as it is.
         // B pictures (no tree of their own) take their reference's. H264_CRFTREEX: weight (measuring).
         static const double kCrfTreeX = devEnv("H264_CRFTREEX") ? std::atof(devEnv("H264_CRFTREEX")) : 1.0;
+        // ... and by a quarter of that mean offset more (kCrfTreeLevel 1.25: the level of a tree of 1.25 times the
+        // strength, the split inside the picture as it is; B pictures follow their reference): pictures that much of
+        // the clip is predicted from - stills, calm stretches, a talking head - get finer against moving ones than the
+        // tree alone makes them. Measured 24.11.2026, BD-rate against x264 medium (PSNR-Y / SSIM-Y, CRF 19-28) at
+        // 1 / 1.25 / 1.5: talk (game clips and stills) +0.1 / +6.1 %, -2.4 / -1.1 %, +0.1 / -0.1 %; highlights -3.7 /
+        // +2.9 %, -3.8 / +1.3 % at 1.25; a vertical short -6.6 / -10.3 %, -7.1 / -11.9 %. The whole tree at 1.25 times
+        // the strength instead (mbtreeStrength 2.5): talk -3.7 / -0.7 %, highlights -4.3 / +1.7 %, the short -6.3 /
+        // -11.3 % - and two-pass missed its targets further (talk at 12 Mbit/s +14 instead of +9 %). The sizes of a
+        // crf value grow by 10 to 40 % with it (gCrfBase went up for that). With gCrfBase 6.2, PSNR-Y / SSIM-Y / VMAF: talk
+        // -2.9 / -1.3 / +3.2 % (before +0.1 / +6.1 / +5.9 %), highlights -3.9 / +1.5 / -3.7 % (-3.7 / +2.9 / -2.1 %), the
+        // short -7.1 / -12.2 / -26.2 % (-6.6 / -10.3 / -24.2 %), a screen recording -3.4 / -3.3 % (-2.3 / -1.7 %).
+        // H264_CRFTREELEVEL: the factor (1 = before).
+        static const double kCrfTreeLevel = devEnv("H264_CRFTREELEVEL") ? std::atof(devEnv("H264_CRFTREELEVEL")) : 1.25;
         if (!fc.treeOffset_.empty()) {
             double t = 0, x = 0;
             for (size_t m = 0; m < fc.treeOffset_.size(); ++m) {
                 t += fc.treeOffset_[m];
-                x += Lookahead::qpOffset(frame, int(m), cfg_.mbtreeStrength);
+                x += Lookahead::qpOffset(frame, int(m), cfg_.mbtreeStrength * kCrfTreeLevel);
             }
             crfTreeShift_ = (x - t) / double(fc.treeOffset_.size());
         }
@@ -4781,7 +4917,8 @@ FrameCoder* Encoder::startFrame(LookaheadFrame& frame)
             cfg_.qp = int(std::lround(nq));
             qpFrac = float(nq - cfg_.qp);
             if (cfg_.bitrateKbps > 0 && lookahead && cfg_.firstPass && size_t(frameIndex_) < cfg_.firstPass->size())
-                costUsed = tpNeed(std::min(size_t(frame.index), cfg_.firstPass->size() - 1), cfg_.qp) * std::exp2(cfg_.qp / 6.0);
+                costUsed = tpNeed(std::min(size_t(frame.index), cfg_.firstPass->size() - 1),
+                              cfg_.qp + (size_t(frame.index) < tpTail_.size() ? tpTail_[size_t(frame.index)] : 0.0f)) * std::exp2(cfg_.qp / 6.0);
         }
         fc.vbvQp_ = cfg_.qp + qpFrac;
         fc.vbvCost_ = cost;
@@ -6960,7 +7097,15 @@ double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y
         }
         return double(sad) + lambdaSad * mvBits(vx, vy);
     };
+    auto sadI = [&](int vx, int vy) {
+        return packed ? sadPacked(srcPacked, refBase + ptrdiff_t(vy >> 2) * extW_ + (vx >> 2), extW_, bw, bh)
+                      : sadPart(R, mbx, mby, x4, y4, w4, h4, vx, vy, false);
+    };
 #else
+    auto sadI = [&](int vx, int vy) {
+        return !weighted ? sadBlock(srcBlk, padW_, refBase + ptrdiff_t(vy >> 2) * extW_ + (vx >> 2), extW_, bw, bh)
+                         : sadPart(R, mbx, mby, x4, y4, w4, h4, vx, vy, false);
+    };
     auto cost = [&](int vx, int vy) {
         const int sad = !useSatd && !(vx & 3) && !(vy & 3) && !weighted
                             ? sadBlock(srcBlk, padW_, refBase + ptrdiff_t(vy >> 2) * extW_ + (vx >> 2), extW_, bw, bh)
@@ -6971,7 +7116,26 @@ double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y
     // Start points measured so far (duplicates are common: the skip vector, the neighbours, the prediction).
     int seenX[16], seenY[16], seenCount = 0;
     int bx = 0, by = 0;
-    double best = cost(0, 0);
+    // The full-pel stage compares in whole numbers (SAD and lambda * bits in 2^-20 steps) and falls back to the
+    // exact sum where two costs are closer than the rounding of lambda can be off (kTie: at most 46 bits of a
+    // vector, half a step each, for both costs): the same decisions as with the exact sums, for 0.4 to 0.5 % fewer
+    // instructions of a whole encode (24.11.2026, 120 pictures of a game clip, QP 26 / 30).
+    constexpr int64_t kTie = 256;
+    const int64_t lambdaI = std::llround(lambdaSad * 1048576.0);
+    auto exact = [&](int sad, int bits) { return double(sad) + lambdaSad * bits; };
+    int bestSad = sadI(0, 0), bestBits = mvBits(0, 0);
+    int64_t bestI = (int64_t(bestSad) << 20) + lambdaI * bestBits;
+    auto better = [&](int vx, int vy) { // measures a position; true (and it is the best now) where its cost is below the best
+        const int sad = sadI(vx, vy), bits = mvBits(vx, vy);
+        const int64_t c = (int64_t(sad) << 20) + lambdaI * bits;
+        const int64_t d = c - bestI;
+        if (d > kTie || (d >= -kTie && !(exact(sad, bits) < exact(bestSad, bestBits))))
+            return false;
+        bestI = c;
+        bestSad = sad;
+        bestBits = bits;
+        return true;
+    };
     seenX[0] = seenY[0] = 0;
     seenCount = 1;
     for (int i = 0; i < startCount; ++i) {
@@ -6986,16 +7150,14 @@ double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y
             seenX[seenCount] = cx;
             seenY[seenCount++] = cy;
         }
-        const double c = cost(cx, cy);
-        if (c < best) {
-            best = c;
+        if (better(cx, cy)) {
             bx = cx;
             by = cy;
         }
     }
     // Experiment: a start point that already matches well (under 2 SAD per sample) skips
     // the coarse steps.
-    const bool goodStart = ((gExp & 8) && best < 2.0 * 16.0 * w4 * h4) || (predCost >= 0 && best <= predCost);
+    const bool goodStart = ((gExp & 8) && exact(bestSad, bestBits) < 2.0 * 16.0 * w4 * h4) || (predCost >= 0 && exact(bestSad, bestBits) <= predCost);
     int fromX = INT_MIN, fromY = INT_MIN; // the centre the last move left (measured, never better)
     for (int step : {32, 16, 8, 4}) {
         if (goodStart && step > 8)
@@ -7007,9 +7169,7 @@ double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y
                 const int cx = bx + d[0] * step, cy = by + d[1] * step;
                 if (std::abs(cx) > range || std::abs(cy) > range || (cx == fromX && cy == fromY))
                     continue;
-                const double c = cost(cx, cy);
-                if (c < best) {
-                    best = c;
+                if (better(cx, cy)) {
                     fromX = bx;
                     fromY = by;
                     bx = cx;
@@ -7036,9 +7196,7 @@ double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y
                 const int cx = cx0 + d.first * 4, cy = cy0 + d.second * 4;
                 if (std::abs(cx) > range || std::abs(cy) > range)
                     continue;
-                const double c = cost(cx, cy);
-                if (c < best) {
-                    best = c;
+                if (better(cx, cy)) {
                     bx = cx;
                     by = cy;
                 }
@@ -7055,14 +7213,13 @@ double FrameCoder::motionSearch(const RefPic& R, int mbx, int mby, int x4, int y
                 const int cx = cx0 + dx * 4, cy = cy0 + dy * 4;
                 if (std::abs(cx) > range || std::abs(cy) > range)
                     continue;
-                const double c = cost(cx, cy);
-                if (c < best) {
-                    best = c;
+                if (better(cx, cy)) {
                     bx = cx;
                     by = cy;
                 }
             }
     }
+    double best = exact(bestSad, bestBits);
     if (fullPelCost)
         *fullPelCost = best;
     useSatd = true;

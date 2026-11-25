@@ -1057,22 +1057,18 @@ void testStandingStart()
     std::sort(late.begin(), late.end());
     const int lateQp = late.empty() ? 0 : late[late.size() / 2];
     // (the I picture is coded 3 below the P QP; the plan's first QP within 4 of where it settles; the rate
-    // within 15 %: these 2 seconds come out below the target with every version - 547 kbit/s on main
-    // 7016fe69, 541 after the CRF and tempo work, 539 with the cheaper trellis - the check is about the probe.
-    // Where the bits stay (traced 22.11.2026): the macroblock tree fades out over the clip's last lookahead
-    // window - its mean offset goes from -8.2 to -1.9 over the last six P pictures, they cost 39 to 18 kbit
-    // instead of 43 at the same QP, and the model's k (learned at the tree's full level) does not know; that
-    // tail is a fifth of this clip. The rest is the start: the seeds take the B pictures for 0.4 of the P
-    // pictures' k (here they cost nothing), so the I picture is coded 5 QP coarser than the clip settles, and
-    // the leftover budget is followed over 2 s (gTpLag) and within 2 QP (gTpDev) - as long as the whole clip.
-    // Without the tree (H264_TREECAP=0) the clip comes out at 615 kbit/s, with its level held to the end
-    // (H264_TREECAP=4) at 579.)
-    if (info.qps[0] < lateQp - 7 || startBytes * 4 > bytes || std::abs(kbps - 600.0) >= 90.0 || std::getenv("H264_TEST_STANDING"))
+    // within 5 %. Until 24.11.2026 these 2 seconds came out 9 to 10 % below the target - 547 kbit/s on main
+    // 7016fe69, 539 after the cheaper trellis: the macroblock tree fades out over the clip's last lookahead
+    // window (its mean offset goes from -8.2 to -1.9 over the last six P pictures, they cost 39 to 18 kbit
+    // instead of 43 at the same QP), the model's k did not know, and the leftover budget was followed over 2 s -
+    // as long as the whole clip. With the tail in the plan (Encoder::tpTreeTail) 573, with the lag bound to the
+    // clip's length as well (gTpLagShare) 592.)
+    if (info.qps[0] < lateQp - 7 || startBytes * 4 > bytes || std::abs(kbps - 600.0) >= 30.0 || std::getenv("H264_TEST_STANDING"))
         std::fprintf(stderr, "standing start, two-pass: I QP %d, P QP later %d, %zu of %zu bytes in the standing pictures, %.0f kbit/s\n",
                      info.qps[0], lateQp, startBytes, bytes, kbps);
     CHECK(info.qps[0] >= lateQp - 7);
     CHECK(startBytes * 4 <= bytes);
-    CHECK(std::abs(kbps - 600.0) < 90.0);
+    CHECK(std::abs(kbps - 600.0) < 30.0);
 }
 
 int main()
