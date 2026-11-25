@@ -887,17 +887,25 @@ int main(int argc, char** argv)
             };
             putTerms(1, QJsonArray{QJsonArray{4100, 4400, "Einer"}, QJsonArray{4450, 4800, "Smoke?"}});
             putTerms(2, QJsonArray{QJsonArray{5600, 6000, "Headshot."}});
-            QStringList gameVoices;
-            QStringList withTerms;
-            for (const QJsonValue& w : Cli::detail::voiceCaptionWords(made["project"].toString(), made["timeline"].toString(),
-                                                                     "", cctx, &gameVoices, "cs2"))
-                withTerms << w["text"].toString();
-            CHECK_EQ(withTerms.join(' '), QString("Einer Smoke? Headshot."));
-            QStringList again; // no game: the old transcripts
-            for (const QJsonValue& w : Cli::detail::voiceCaptionWords(made["project"].toString(), made["timeline"].toString(),
-                                                                     "", cctx, &gameVoices))
-                again << w["text"].toString();
-            CHECK_EQ(again.join(' '), QString("Einer soll? Heilige Scheiße. Crazy."));
+            // The game's terms are off by default (setting transcribe/gameTerms): the old key, the old transcripts;
+            // switched on (setting or the call's game_terms) another key
+            const auto said2 = [&](bool given, const QJsonValue& call) {
+                Vocabulary::setGameTermsOn(given);
+                Cli::detail::ShortFinish f;
+                f.game = "cs2";
+                f.gameTerms = Vocabulary::useGameTerms(call);
+                QStringList gameVoices, out;
+                for (const QJsonValue& w : Cli::detail::voiceCaptionWords(made["project"].toString(), made["timeline"].toString(),
+                                                                         "", cctx, &gameVoices, Cli::detail::captionTermsGame(f)))
+                    out << w["text"].toString();
+                return out.join(' ');
+            };
+            CHECK(!Vocabulary::gameTermsOn());
+            CHECK_EQ(said2(false, {}), QString("Einer soll? Heilige Scheiße. Crazy."));
+            CHECK_EQ(said2(true, {}), QString("Einer Smoke? Headshot."));
+            CHECK_EQ(said2(true, false), QString("Einer soll? Heilige Scheiße. Crazy."));
+            CHECK_EQ(said2(false, true), QString("Einer Smoke? Headshot."));
+            Vocabulary::setGameTermsOn(false);
         }
     }
 

@@ -5,6 +5,7 @@
 // that is not said. The user's list lives in the settings (File > Settings, QSettings "transcribe/vocabulary"); a
 // call can add words, and a known game adds a few of its terms (short/direct captions).
 
+#include <QJsonValue>
 #include <QString>
 #include <QStringList>
 
@@ -22,6 +23,12 @@ void setStored(const QStringList& words);
 
 // A few terms of a game as players say and write them ("cs2", "valorant"); empty for others
 QStringList gameTerms(const QString& game);
+// Add a known game's terms to the voice transcripts of short/direct (settings "transcribe/gameTerms", default off:
+// on the night clips they fixed "Eco", "Long", "Sneaky" but turned "Einer soll?" into "Ein Assault?" and lost a line)
+bool gameTermsOn();
+void setGameTermsOn(bool on);
+// A call's game_terms (true/false) or else the setting
+bool useGameTerms(const QJsonValue& given);
 
 // whisper reads at most this many prompt tokens (half its text context of 448); more are cut by whisper itself
 constexpr int kMaxPromptTokens = 224;

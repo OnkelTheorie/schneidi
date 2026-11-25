@@ -160,12 +160,13 @@ QJsonArray shortFinishOps(const QString& project, const QString& timeline, const
             // Each voice track transcribed on its own (a quiet voice chat partner is lost in a mix with the
             // microphone), else the timeline's sound as `transcribe` hears it
             QStringList voices;
-            QJsonArray words = voiceCaptionWords(project, timeline, f.language, ctx, &voices, f.game);
+            const QString termsOf = captionTermsGame(f);
+            QJsonArray words = voiceCaptionWords(project, timeline, f.language, ctx, &voices, termsOf);
             int segments = 0;
             if (voices.isEmpty()) {
                 QJsonObject t{{"source", project}, {"timeline", timeline}, {"words", true}};
                 if (!f.language.isEmpty()) t["language"] = f.language;
-                if (const QStringList terms = Vocabulary::gameTerms(f.game); !terms.isEmpty())
+                if (const QStringList terms = Vocabulary::gameTerms(termsOf); !terms.isEmpty())
                     t["vocabulary"] = QJsonArray::fromStringList(terms);
                 try {
                     const QJsonObject tr = run("transcribe", t);
@@ -501,7 +502,8 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
     done << QString("timeline '%1' %2, reframe %3%4").arg(shortTimeline, aspect, reframe, feedText);
 
     // 6. Word captions (whisper) and effect sounds (sfx:'mild'), one edit
-    ShortFinish finish{captions, sfx, game ? game->id : QString(), a["language"].toString()};
+    ShortFinish finish{captions, sfx, game ? game->id : QString(), a["language"].toString(),
+                       Vocabulary::useGameTerms(a["game_terms"])};
     Context finishCtx = step(0.4, 0.6);
     const bool burn = shortFinish(project, shortTimeline, finish, finishCtx, &done, &notes);
 

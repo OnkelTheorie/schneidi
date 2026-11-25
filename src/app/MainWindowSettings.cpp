@@ -138,6 +138,7 @@ void MainWindow::settingsDialog(int tab)
         QSettings().setValue("timeline/clipDrag", dlg.clipDrag());
         QSettings().setValue("timeline/momentum", dlg.timelineMomentum());
         Vocabulary::setStored(dlg.vocabulary());
+        Vocabulary::setGameTermsOn(dlg.gameTerms());
     }
     applyCenterPlayhead();
     // The magnetic main track switched on here: V1's gaps close at once, as with its switch (setMagneticMainByUser)

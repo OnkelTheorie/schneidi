@@ -105,7 +105,10 @@ struct ShortFinish {
     QString sfx = "off";
     QString game;     // empty = none
     QString language; // empty = detect
+    bool gameTerms = false; // the game's terms go to whisper too (Vocabulary::useGameTerms: the call's or the setting)
 };
+// The game whose terms go to whisper for a short's captions: f.game when f.gameTerms, else none
+inline QString captionTermsGame(const ShortFinish& f) { return f.gameTerms ? f.game : QString(); }
 // Word captions of a timeline's voice tracks (audible tracks of microphone or voice chat streams), each (file, stream)
 // transcribed on its own (streamTranscript) and mapped onto the timeline, each phrase moved onto the sound of its
 // track (Captions::snapToSound), merged in time order, every word at its own time (Captions::mergeSpeakers):

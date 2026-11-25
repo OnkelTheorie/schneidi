@@ -45,6 +45,22 @@ void setStored(const QStringList& words)
     else QSettings().setValue(kKey, list.join('\n'));
 }
 
+bool gameTermsOn()
+{
+    return QSettings().value(QStringLiteral("transcribe/gameTerms"), false).toBool();
+}
+
+void setGameTermsOn(bool on)
+{
+    if (on) QSettings().setValue(QStringLiteral("transcribe/gameTerms"), true);
+    else QSettings().remove(QStringLiteral("transcribe/gameTerms"));
+}
+
+bool useGameTerms(const QJsonValue& given)
+{
+    return given.isBool() ? given.toBool() : gameTermsOn();
+}
+
 QStringList gameTerms(const QString& game)
 {
     const QString g = game.trimmed().toLower();

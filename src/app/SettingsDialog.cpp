@@ -279,8 +279,14 @@ QWidget* SettingsDialog::buildGeneral()
     m_vocabulary->setFixedHeight(m_vocabulary->fontMetrics().lineSpacing() * 5 + 12);
     trform->addRow(T("Wörterliste"), m_vocabulary);
     trform->addRow(hint(T("Whisper bekommt die Wörter als Starttext und schreibt sie dann eher so. Das hilft bei der "
-                          "Schreibweise, es erfindet keine Wörter, die nicht gesagt werden. Bei Spielen wie CS2 kommen "
-                          "ein paar Spielbegriffe von selbst dazu. Parakeet nutzt die Liste nicht.")));
+                          "Schreibweise, es erfindet keine Wörter, die nicht gesagt werden. Parakeet nutzt die Liste nicht.")));
+    m_gameTerms = new QCheckBox(T("Bei Spielaufnahmen Spielbegriffe ergänzen (z. B. CS2: Headshot, AWP, Eco)"));
+    m_gameTerms->setObjectName("transcribe_game_terms");
+    m_gameTerms->setChecked(Vocabulary::gameTermsOn());
+    m_gameTerms->setToolTip(T("Für die Untertitel von Shorts aus Spielaufnahmen, wenn das Spiel bekannt ist. Die "
+                              "Begriffe werden richtiger geschrieben, andere Wörter können aber in ihre Richtung "
+                              "kippen."));
+    trform->addRow(m_gameTerms);
     lay->addWidget(transcription);
 
     // Projects: "Save as" next to the footage (default) or in a folder of their own, only if the user wants that
@@ -565,6 +571,7 @@ double SettingsDialog::uiScale() const { return m_uiScale->currentData().toDoubl
 bool SettingsDialog::magneticMain() const { return m_magneticMain->isChecked(); }
 QString SettingsDialog::clipDrag() const { return m_clipDrag->currentData().toString(); }
 QStringList SettingsDialog::vocabulary() const { return Vocabulary::parse(m_vocabulary->toPlainText()); }
+bool SettingsDialog::gameTerms() const { return m_gameTerms->isChecked(); }
 
 QString SettingsDialog::timelineMomentum() const { return m_momentum->currentData().toString(); }
 

@@ -212,6 +212,28 @@ void testVocabulary()
             CHECK_EQ(dlg.vocabulary(), (QStringList{"Onkel Theo", "LuciSon", "Gegge"}));
         }
     }
+    // The switch for game terms: off by default, stored, the dialog's checkbox
+    Vocabulary::setGameTermsOn(false);
+    CHECK(!Vocabulary::gameTermsOn());
+    CHECK(!QSettings().contains("transcribe/gameTerms"));
+    CHECK(!Vocabulary::useGameTerms({}) && Vocabulary::useGameTerms(true));
+    {
+        SettingsDialog dlg(AiSettings{});
+        auto* box = dlg.findChild<QCheckBox*>("transcribe_game_terms");
+        if (CHECK(box)) {
+            CHECK(!box->isChecked() && !dlg.gameTerms());
+            box->setChecked(true);
+            CHECK(dlg.gameTerms());
+        }
+    }
+    Vocabulary::setGameTermsOn(true);
+    CHECK(Vocabulary::gameTermsOn() && !Vocabulary::useGameTerms(false));
+    {
+        SettingsDialog again(AiSettings{});
+        auto* box = again.findChild<QCheckBox*>("transcribe_game_terms");
+        CHECK(box && box->isChecked());
+    }
+    Vocabulary::setGameTermsOn(false);
     // Game terms: CS2 and Valorant have a few, other games none
     CHECK(Vocabulary::gameTerms("cs2").contains("Headshot") && Vocabulary::gameTerms("CS2").contains("AWP"));
     CHECK(Vocabulary::gameTerms("valorant").contains("Spike"));
