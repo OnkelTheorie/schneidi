@@ -313,14 +313,70 @@ void relinkUncut(Timeline& tl, const QHash<int, int>& rightLinks)
 
 void resolvePendingLinks(Timeline& tl, const IdGen& newLinkId)
 {
-    QHash<int, int> map;
+    // The pieces of each provisional id. A clip cut twice in one edit (two clips pasted or moved over it) hands the
+    // same provisional id to two pieces of its track: those become groups of their own - the track with the most
+    // pieces sets the groups, a piece of another track joins the one it overlaps most (never a second piece of its
+    // track in one group: then it gets a group of its own). Without such a track all pieces are one group, as before.
+    struct Piece {
+        int id;
+        TrackRef ref;
+        int start, end;
+    };
+    QHash<int, QVector<Piece>> pieces; // provisional id -> pieces (video tracks first, each track by start)
+    for (TrackKind k : {TrackKind::Video, TrackKind::Audio}) {
+        const auto& tracks = std::as_const(tl).tracks(k);
+        for (int i = 0; i < tracks.size(); ++i)
+            for (const Clip& c : tracks[i].clips)
+                if (c.linkId < 0) pieces[c.linkId] << Piece{c.id, TrackRef{k, i}, c.start, c.end()};
+    }
+    if (pieces.isEmpty()) return;
+    QHash<int, int> groupOf; // clip id -> group; 0 when left out
+    int groupCount = 1;
+    for (const QVector<Piece>& ps : std::as_const(pieces)) {
+        TrackRef main = ps.first().ref;
+        qsizetype most = 0;
+        for (const Piece& p : ps)
+            if (const auto n = std::count_if(ps.cbegin(), ps.cend(), [&](const Piece& q) { return q.ref == p.ref; }); n > most) {
+                most = n;
+                main = p.ref;
+            }
+        if (most <= 1) continue;
+        QVector<QVector<const Piece*>> groups;
+        for (const Piece& p : ps)
+            if (p.ref == main) groups << QVector<const Piece*>{&p};
+        for (const Piece& p : ps) {
+            if (p.ref == main) continue;
+            int best = 0, bestOverlap = INT_MIN; // (negative: the distance)
+            for (int g = 0; g < groups.size(); ++g) {
+                const Piece* r = groups[g].first();
+                if (const int o = std::min(p.end, r->end) - std::max(p.start, r->start); o > bestOverlap) {
+                    best = g;
+                    bestOverlap = o;
+                }
+            }
+            if (std::any_of(groups[best].cbegin(), groups[best].cend(), [&](const Piece* q) { return q->ref == p.ref; })) {
+                best = int(groups.size());
+                groups << QVector<const Piece*>{};
+            }
+            groups[best] << &p;
+        }
+        for (int g = 0; g < groups.size(); ++g)
+            for (const Piece* p : std::as_const(groups[g])) groupOf.insert(p->id, g);
+        groupCount = std::max(groupCount, int(groups.size()));
+    }
+    QHash<QPair<int, int>, int> map; // (provisional id, group) -> new link
     changeClips(tl, [](const Clip& c) { return c.linkId < 0; }, [&](Clip& c) {
-        if (!map.contains(c.linkId)) map[c.linkId] = newLinkId();
-        c.linkId = map[c.linkId];
+        const auto key = qMakePair(c.linkId, groupOf.value(c.id, 0));
+        if (!map.contains(key)) map[key] = newLinkId();
+        c.linkId = map[key];
     });
-    QHash<int, int> rightLinks;
-    for (auto m = map.cbegin(); m != map.cend(); ++m) rightLinks.insert(-m.key(), m.value());
-    relinkUncut(tl, rightLinks);
+    // The uncut partners, group by group (a partner goes with the first piece it plays in sync with)
+    for (int g = 0; g < groupCount; ++g) {
+        QHash<int, int> rightLinks;
+        for (auto m = map.cbegin(); m != map.cend(); ++m)
+            if (m.key().second == g) rightLinks.insert(-m.key().first, m.value());
+        if (!rightLinks.isEmpty()) relinkUncut(tl, rightLinks);
+    }
 }
 
 QVector<QPair<int, int>> linksApart(const Timeline& before, const Timeline& after, const QSet<int>& ignore)
@@ -740,7 +796,9 @@ int clampTrim(const Timeline& tl, const QVector<int>& clipIds, Edge edge, int de
             delta = std::min(delta, c->length() - 1);     // at least 1 frame
         } else {
             const int len = sourceLength ? sourceLength(*c) : 0;
-            if (len > 0) delta = std::min(delta, len - 1 - c->out);
+            // Not past the end of the material - only growth is limited: a clip that already reaches past it (a
+            // nested timeline got shorter, a file was relinked to a shorter one) shortens by what was asked
+            if (len > 0 && delta > 0) delta = std::min(delta, std::max(0, len - 1 - c->out));
             if (idx + 1 < clips.size() && !overwrite) delta = std::min(delta, clips[idx + 1].start - c->end());
             delta = std::max(delta, 1 - c->length());
         }

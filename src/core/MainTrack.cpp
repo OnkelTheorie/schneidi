@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "core/MainTrack.h"
 
+#include "core/Automation.h"
 #include "core/Captions.h"
 #include "core/I18n.h"
 #include "core/Subtitles.h"
@@ -22,8 +23,8 @@ QString linkedOnLocked(TrackRef r)
 
 // Moves the clips of track `ref` by `shift` (clip id -> frames) and the clips linked to them on the other tracks by
 // the same frames; refused when anything would land before 0, on a locked track or on another clip. ripple: the
-// shifts as a ripple (TimelineOps::rippleTracks) for the timeline's annotations; cues: what the unlocked subtitle
-// tracks do (with a ripple only).
+// shifts as a ripple (TimelineOps::rippleTracks) for the timeline's annotations and the moving tracks' automation;
+// cues: what the unlocked subtitle tracks do (with a ripple only).
 Result shiftWithLinks(Timeline& tl, TrackRef ref, const QHash<int, int>& shift,
                       const QVector<QPair<int, int>>& ripple, const std::function<void(SubtitleTrack&)>& cues,
                       const QString& prefix, QString* why)
@@ -103,6 +104,9 @@ Result shiftWithLinks(Timeline& tl, TrackRef ref, const QHash<int, int>& shift,
         // Subtitles belong to the picture: the unlocked subtitle tracks follow (locked ones stay put, as on a ripple)
         for (SubtitleTrack& st : tl.subtitles)
             if (!st.locked) cues(st);
+        // A track whose clips move takes its automation along, as on a ripple (Automation.h: a dip under a sentence
+        // stays under it); the tracks that stay keep theirs
+        for (const TrackRef& r : std::as_const(moving)) Automation::rippleTrack(tl.track(r), ripple);
         TimelineOps::rippleAnnotations(tl, ripple, moving, TimelineOps::MarkerCut::MoveToCut);
     }
     return Result::Moved;

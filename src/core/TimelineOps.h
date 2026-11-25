@@ -30,8 +30,8 @@ QVector<TrackRef> tracksOf(const Timeline& tl, const QVector<int>& clipIds);
 // If a track would overwrite a clip that stays (or slide before frame 0), it stays
 // entirely put - never overwrite.
 // What happens to timeline markers and notes in time a ripple takes out: only removing real content (ripple delete,
-// ripple trim of a clip, deleting ranges / a transcript cut) deletes them; closing an empty gap or trimming clips for
-// a transition moves them to the cut point (they mark a moment, not the removed content). Story sections get shorter
+// ripple trim of a clip, deleting ranges / a transcript cut) deletes them; closing an empty gap, trimming clips for
+// a transition or speeding a clip up moves them to the cut point (they mark a moment, not the removed content). Story sections get shorter
 // either way (see rippleAnnotations).
 enum class MarkerCut { Delete, MoveToCut };
 // Timeline markers, notes and story sections follow (rippleAnnotations) with `markerShifts` if given (ripple trim:
@@ -71,7 +71,9 @@ QVector<int> repeatedSound(const Timeline& tl, const QVector<int>& clipIds);
 // resolvePendingLinks (called by Project::edit) turns that into a new common link.
 // A clip cut off at its start keeps its comp graph's picture in place (Comp::followHead; fps = Timeline::frameRate).
 void clearRange(Track& track, int start, int end, const IdGen& newId, double fps);
-// Replace provisional (negative) linkIds from clearRange with new ones: same provisional id -> same new id. A partner
+// Replace provisional (negative) linkIds from clearRange with new ones: same provisional id -> same new id - except
+// where a track holds two pieces with it (a clip cut twice in one edit): then each piece gets its own link, and the
+// pieces of other tracks join the one they overlap most (two clips of a track never share a link). A partner
 // that was not cut (on a track without a right piece) goes with the right piece when it plays in sync with it (same
 // file and playback, same start - in, overlapping in time) and not with the left piece that kept the old link (a
 // delete range over a picture whose sound starts after the range); otherwise it keeps the old link. A partner of

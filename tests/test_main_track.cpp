@@ -419,6 +419,40 @@ void testAnnotations()
     CHECK_EQ(f.tl().markers, marks);
 }
 
+// Review 2026-11-25 (F1): the automation of a track whose clips the magnet moves goes along like on a ripple (a dip
+// under a sentence stays under it); a track that does not move keeps its curve
+QString curve(const AutoCurve& c)
+{
+    QStringList s;
+    for (const AutoPoint& p : c) s << QString("%1:%2").arg(p.frame).arg(p.db);
+    return s.join(' ');
+}
+
+void testAutomation()
+{
+    Fixture f;
+    f.project.edit("curves", [](Timeline& tl) {
+        tl.audio[0].volumeAuto = {{0, 0}, {170, 0}, {180, -20}, {200, 0}}; // a dip in c's sound
+        tl.audio[1].volumeAuto = {{0, 0}, {180, -10}}; // A2: nothing on it moves
+    });
+    const Timeline before = f.tl();
+    const int steps = f.steps();
+    f.sel.set({2, 12});
+    f.editor.deleteSelection(); // b gone: c and its sound move 60 left
+    CHECK_EQ(curve(f.tl().audio[0].volumeAuto), QString("0:0 110:0 120:-20 140:0"));
+    CHECK_EQ(curve(f.tl().audio[1].volumeAuto), curve(before.audio[1].volumeAuto));
+    CHECK_ONE_STEP(f, before, steps, "automation follows the pack");
+    // An insert at 0 pushes the curve right with the sound
+    const AutoCurve packed = f.tl().audio[0].volumeAuto;
+    f.editor.addMediaAt({"/x/x.mp4"}, 0, 0);
+    const int len = f.tl().video[0].clips.first().length();
+    AutoCurve pushed = packed;
+    for (AutoPoint& p : pushed) p.frame += len; // (as rippleTracks: the point at the insert point goes along)
+    CHECK(len > 0);
+    CHECK_EQ(curve(f.tl().audio[0].volumeAuto), curve(pushed));
+    CHECK_EQ(curve(f.tl().audio[1].volumeAuto), curve(before.audio[1].volumeAuto));
+}
+
 void testTrackStructure()
 {
     // Moving, adding or removing a video track never packs the track that becomes V1 (review 1)
@@ -636,6 +670,7 @@ int main(int argc, char** argv)
     testRange();
     testLocked();
     testAnnotations();
+    testAutomation();
     testKeepOldGaps();
     return Check::result();
 }
