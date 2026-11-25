@@ -74,6 +74,12 @@ QVector<Piece> speechPieces(const QVector<QPair<qint64, qint64>>& segments, qint
 // how many
 int dropPromptEcho(QVector<Word>& words, const QString& prompt);
 
+// The echo of whisper's starting text as Transcriber drops it: `base` is the starting text schneidi writes (the
+// punctuation sentence), `full` that with the word list after it. An echo of the whole starting text or of `base`
+// goes; the word list alone never (a list with "Onkel Theo" would delete every spoken "Onkel Theo"), so without a
+// base nothing is dropped. Returns how many words went.
+int dropStartingTextEcho(QVector<Word>& words, const QString& base, const QString& full);
+
 // whisper (turbo above all) now and then writes a piece's whole text twice ("A B C. A B C.", 3 of 69 German FLEURS
 // pieces, measured 22.11.) or writes the piece before it once more (its text is the context of the next piece).
 // words[first..] are the words of one piece, words[previous..first) those of the piece before it (previous < 0 =

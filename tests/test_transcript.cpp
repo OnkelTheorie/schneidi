@@ -168,6 +168,25 @@ void testPieces()
         QVector<Transcript::Word> kept{{0, 100, "Wie"}, {100, 200, "geht's?"}};
         CHECK_EQ(Transcript::dropPromptEcho(kept, "Hallo, wie geht's? Gut, und dir? Ja, passt."), 0);
     }
+    // The word list never deletes spoken words: "Onkel Theo" said in the recording stays, with or without a base
+    // starting text; an echo of the whole starting text (base + list) or of the base alone still goes
+    {
+        const QString base = "Hallo, wie geht's?";
+        const QVector<Transcript::Word> spoken{{0, 100, "Danke,"}, {100, 200, "Onkel"}, {200, 300, "Theo!"}};
+        QVector<Transcript::Word> w = spoken;
+        CHECK_EQ(Transcript::dropStartingTextEcho(w, QString(), "Onkel Theo."), 0);
+        CHECK_EQ(w.size(), 3);
+        w = spoken;
+        CHECK_EQ(Transcript::dropStartingTextEcho(w, base, base + " Onkel Theo."), 0);
+        CHECK_EQ(w.size(), 3);
+        QVector<Transcript::Word> echo{{0, 100, "Hallo,"}, {100, 200, "wie"}, {200, 300, "geht's?"}, {300, 400, "Onkel"},
+                                       {400, 500, "Theo."}, {600, 700, "Echt?"}};
+        CHECK_EQ(Transcript::dropStartingTextEcho(echo, base, base + " Onkel Theo."), 5);
+        CHECK_EQ(echo.size(), 1);
+        QVector<Transcript::Word> baseOnly{{0, 100, "Hallo,"}, {100, 200, "wie"}, {200, 300, "geht's?"}, {300, 400, "Onkel"}};
+        CHECK_EQ(Transcript::dropStartingTextEcho(baseOnly, base, base + " Onkel Theo."), 3);
+        CHECK_EQ(baseOnly.size(), 1);
+    }
     // Repeats (whisper turbo wrote a piece's whole text twice, or the piece before once more)
     {
         const auto words = [](const QString& text, qint64 from, qint64 step) {

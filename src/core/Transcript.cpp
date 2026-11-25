@@ -219,6 +219,14 @@ int dropPromptEcho(QVector<Word>& words, const QString& prompt)
     return dropped;
 }
 
+int dropStartingTextEcho(QVector<Word>& words, const QString& base, const QString& full)
+{
+    if (base.trimmed().isEmpty()) return 0;
+    int dropped = 0;
+    if (full.trimmed() != base.trimmed()) dropped += dropPromptEcho(words, full);
+    return dropped + dropPromptEcho(words, base);
+}
+
 namespace {
 // A word as it is compared for repeats: lower case, letters and digits only
 QString plainWord(QString t)
