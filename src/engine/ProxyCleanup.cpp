@@ -41,12 +41,14 @@ Note readNote(const QString& path)
 }
 
 // Proxy names (<hash>) of these originals: compared by name, the proxy of an original is <hash>.mp4 in whatever folder
-// holds the proxies
+// holds the proxies. Both the SDR and the HDR name: whether a file is HDR is known only once it was probed (the open
+// project's files after HdrScan, never those of recent projects), an HDR proxy was deleted as "changed"
 QSet<QString> proxyNames(const QStringList& originals)
 {
     QSet<QString> out;
     for (const QString& original : originals)
-        if (!original.isEmpty()) out.insert(QFileInfo(ProxyManager::proxyPath(original)).completeBaseName());
+        if (!original.isEmpty())
+            for (const QString& path : ProxyManager::proxyPathsAnyTone(original)) out.insert(QFileInfo(path).completeBaseName());
     return out;
 }
 
@@ -106,7 +108,7 @@ Plan plan(const QStringList& keep, const QStringList& busy, const QString& dirPa
             if (n.original.isEmpty()) item.reason = Reason::Unknown;
             else if (!QFileInfo::exists(n.original)) item.reason = Reason::Missing;
             else if (n.maxSize > 0 && n.maxSize != ProxyManager::maxSize()) item.reason = Reason::OtherSize;
-            else if (QFileInfo(ProxyManager::proxyPath(n.original)).completeBaseName() != hash) item.reason = Reason::Changed;
+            else if (!proxyNames({n.original}).contains(hash)) item.reason = Reason::Changed;
             else item.reason = Reason::Unused;
         }
         p.items << item;

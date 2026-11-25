@@ -311,6 +311,25 @@ int main(int argc, char** argv)
         CHECK(QFileInfo::exists(part) && QFileInfo::exists(busyPart));
         QFile::remove(part);
     }
+    // The proxy of an HDR source (its own name) while this process does not know the file is HDR (a recent project's
+    // file, or before HdrScan): kept for a project that uses it, neither deleted as "changed"; unused: "unused"
+    {
+        const QStringList names = ProxyManager::proxyPathsAnyTone(small);
+        CHECK(names.size() == 2 && names[0] == ProxyManager::proxyPath(small) && names[1] != names[0]);
+        const QString hdr = names.value(1);
+        writeFile(hdr, 400);
+        ProxyCleanup::writeNote(hdr, small, ProxyManager::kMaxSize);
+        const ProxyCleanup::Plan p = ProxyCleanup::plan(QStringList(keep) << small, {busyPart});
+        CHECK(!find(p, hdr));
+        CHECK_EQ(p.kept, 3);
+        const ProxyCleanup::Plan unusedHdr = ProxyCleanup::plan(keep, {busyPart});
+        const auto* it = find(unusedHdr, hdr);
+        CHECK(it && it->reason == ProxyCleanup::Reason::Unused);
+        CHECK_EQ(ProxyCleanup::apply(p, {busyPart}, QStringList(keep) << small), 0);
+        CHECK(QFileInfo::exists(hdr));
+        QFile::remove(hdr);
+        QFile::remove(ProxyCleanup::notePath(hdr));
+    }
 
     // ---- What a project uses: media pool and clips of every timeline, titles have no file
     ProjectData d;
