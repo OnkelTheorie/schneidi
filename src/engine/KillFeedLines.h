@@ -51,6 +51,15 @@ Sample detect(const QImage& picture, const GameHud::Game& game);
 
 QString cacheDir();
 
+// A recording whose game is not named (a clip tool's "Desktop_clip_…"): is it a known game? Its kill feed lines are
+// looked for in pictures `step` seconds apart (at most `maxCount`, spread over the whole length; pictureAt(seconds),
+// a null image counts as none): a game counts when `run` pictures in a row show a line. A kill's line stays for
+// about five seconds; something else that reads as a line once (a band of another game's picture, a window's title
+// bar) does not stay at that place while the picture goes on. nullptr = none recognised (or no game whose lines can
+// be found). *longest: the longest run of pictures with lines (of the game recognised, else of any)
+const GameHud::Game* recognise(const std::function<QImage(double)>& pictureAt, double length, double step = 1.0,
+                               int maxCount = 40, int run = 3, int* longest = nullptr);
+
 // Cached or measured now (blocking): the samples over [from, to] seconds of `file`, whose game picture is `content`
 // (fractions; engine/BarDetect). progress: 0..1000. nullopt = cannot read the file, or cancelled.
 std::optional<Samples> measure(const QString& file, double from, double to, const QRectF& content,

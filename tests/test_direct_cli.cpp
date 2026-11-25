@@ -771,6 +771,41 @@ int main(int argc, char** argv)
         }
     }
 
+    // ---- A game recording that does not name its game ("Desktop_clip_…"): CS2 recognised in the picture (kill feed
+    // lines staying, the player's own kills in their red frame) and said; the same boxes without a kill's frame
+    // (a racing game's fixed HUD boxes at the top right) are no game
+    {
+        const auto line = [](int y, const QString& when, bool own) {
+            QString s = QString("drawbox=x=1640:y=%1:w=270:h=31:c=0x181818@0.7:t=fill:enable='%2'").arg(y).arg(when);
+            if (own) s += QString(",drawbox=x=1640:y=%1:w=270:h=31:c=0xd8444a:t=1:enable='%2'").arg(y).arg(when);
+            for (int x = 1660; x < 1890; x += 40)
+                s += QString(",drawbox=x=%1:y=%2:w=25:h=12:c=white:t=fill:enable='%3'").arg(x).arg(y + 10).arg(when);
+            return s;
+        };
+        const QString back = "gradients=s=1920x1080:c0=0x587898:c1=0x403020:d=12:r=25:speed=0.01";
+        const QString desktop = Check::makeMedia(
+            dir.filePath("clips/Desktop_clip_cs.mkv"),
+            {"-f", "lavfi", "-i", back + "," + line(75, "between(t,2,7.5)", true) + "," + line(109, "between(t,5,10.5)", true),
+             "-f", "lavfi", "-i", "aevalsrc='0.02*sin(2*PI*220*t)+if(between(t,2,2.3)+between(t,5,5.3),0.8*sin(2*PI*440*t),0)':d=12:s=48000",
+             "-c:v", "ffv1", "-pix_fmt", "bgr0", "-c:a", "aac", "-shortest"});
+        const QString racing = Check::makeMedia(
+            dir.filePath("clips/Desktop_clip_race.mkv"),
+            {"-f", "lavfi", "-i", back + "," + line(75, "gte(t,0)", false) + "," + line(109, "gte(t,0)", false), "-f",
+             "lavfi", "-i", "aevalsrc='0.02*sin(2*PI*220*t)':d=12:s=48000", "-c:v", "ffv1", "-pix_fmt", "bgr0", "-c:a", "aac",
+             "-shortest"});
+        if (CHECK(!desktop.isEmpty() && !racing.isEmpty())) {
+            Cli::Context ctx;
+            CHECK_EQ(Cli::detail::gameInPicture({desktop}, ctx), QString("cs2"));
+            CHECK_EQ(Cli::detail::gameInPicture({racing}, ctx), QString());
+            const QJsonObject r = run("direct", {{"recipe", "short"}, {"files", QJsonArray{desktop}}});
+            CHECK_EQ(r["session"]["options"]["game"].toString(), QString("cs2"));
+            if (!CHECK(QJsonDocument(r["session"]["notes"].toArray()).toJson().contains("recognised in the picture")))
+                std::printf("       %s\n", QJsonDocument(r["session"]["notes"].toArray()).toJson().constData());
+            const QJsonObject other = run("direct", {{"recipe", "short"}, {"files", QJsonArray{racing}}});
+            CHECK(!other["session"]["options"].toObject().contains("game"));
+        }
+    }
+
     // ---- The short's hook starts on the action: a hard cut in its lead-in (CS2: the round restarts after the
     // round-end screen) moves its start there (videotest 21.11.: the hook began on "RUNDE VERLOREN")
     {

@@ -218,6 +218,16 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
     } else if (!files.isEmpty() && !noGame) {
         game = GameHud::guess(files.first());
     }
+    // Not named: looked for in the picture (a clip tool's "Desktop_clip_…" of CS2), said in done
+    bool gameSeen = false;
+    if (!game && !noGame && !files.isEmpty()) {
+        Context sub;
+        sub.cancel = ctx.cancel;
+        if (const QString seen = gameInPicture(files, sub); !seen.isEmpty()) {
+            game = GameHud::find(seen);
+            gameSeen = game != nullptr;
+        }
+    }
 
     // Where the video goes: given (not replaced unless overwrite), else next to the first recording / the project
     QString out = a["out"].toString();
@@ -233,6 +243,7 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
     }
 
     QJsonArray done, notes, noteKeys; // noteKeys: the fixed keys of the recipe's notes (Direction::noteText)
+    if (gameSeen) done << QString("game: %1 (recognised in the picture)").arg(game->id);
     QJsonArray moments;
     QJsonArray unused; // recordings without a moment in the short, and why
     QString cutTimeline;

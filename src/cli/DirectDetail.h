@@ -37,6 +37,11 @@ struct DirectMoment {
 // tint over everything that fades into a black screen -> [{s: the tint begins, end_s: where a moment ends}]
 QJsonArray deathScreensOf(const std::vector<std::array<double, 3>>& rgb, int rate);
 
+// The game of recordings that do not name it (a clip tool's "Desktop_clip_…"): the first of up to `upTo` files whose
+// pictures show a known game's kill feed lines staying (KillFeedLines::recognise), confirmed by the player's own kills
+// in it (CS2: their red frame, as `highlights` counts them). Per file in AnalysisCache. Empty = none recognised
+QString gameInPicture(const QStringList& files, Context& ctx, int upTo = 3);
+
 // The moments of one file (args: file, project?, game: id or "none", no_index?): its material line, the highlights'
 // candidates (best first, as `highlights` gives them) and, for material that is no game, the moments of sound events
 // (and of picture movement when nothing else stood out). A source that fails counts as none (not cached). Every

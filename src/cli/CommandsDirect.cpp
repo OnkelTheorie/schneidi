@@ -744,6 +744,12 @@ Direction::Session directSuggest(const QJsonObject& a, Context& ctx, CollectedMo
         fail("BAD_ARGUMENT", "reframe must be auto, center or fit");
     levelTarget(s.options); // checked now, not only when applying
     if (s.recipe == QLatin1String("short")) shortAccents(s.options);
+    // A game neither given nor in the file names: looked for in the picture (its kill feed), kept in the session
+    if (!s.options.contains("game") && gameOf(s.options, files) == QLatin1String("none"))
+        if (const QString seen = gameInPicture(files, ctx); !seen.isEmpty()) {
+            s.options["game"] = seen;
+            s.notes << note("game_recognised", {{"game", seen}});
+        }
     const QString game = gameOf(s.options, files);
     Context sub;
     sub.cancel = ctx.cancel;

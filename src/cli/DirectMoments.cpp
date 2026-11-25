@@ -14,7 +14,9 @@
 #include "engine/AnalysisCache.h"
 #include "engine/AudioEvents.h"
 #include "engine/ClipFormat.h"
+#include "engine/KillFeedLines.h"
 #include "engine/MediaIndex.h"
+#include "engine/Snapshot.h"
 
 #include <QFileInfo>
 #include <QJsonArray>
@@ -493,6 +495,46 @@ void indexBonus(const QString& file, QJsonArray& moments)
 }
 
 } // namespace
+
+QString gameInPicture(const QStringList& files, Context& ctx, int upTo)
+{
+    for (int i = 0; i < std::min(upTo, int(files.size())); ++i) {
+        failIfCanceled();
+        QString id;
+        MediaSource m;
+        try {
+            m = openMedia({{"file", files[i]}});
+        } catch (const Error& e) {
+            if (e.code == QLatin1String("CANCELED")) throw;
+            continue;
+        }
+        if (!m.info.hasVideo || m.info.isImage) continue;
+        const AnalysisCache::Key key = AnalysisCache::key("game-in-picture", m.info.path, {}, 1);
+        if (const auto hit = AnalysisCache::get(key)) {
+            id = (*hit)["game"].toString();
+        } else {
+            const auto snap = Snapshot::Source::media(m.format, m.info.path);
+            const double fps = m.format.rate.fps();
+            const GameHud::Game* g = KillFeedLines::recognise(
+                [&](double s) { return snap->frame(int(s * fps), 1920); }, seconds(m.info.length, m.format));
+            if (g) {
+                // Confirmed by the player's own kills (a racing game's fixed boxes at the top right are no kill feed)
+                Context sub;
+                sub.cancel = ctx.cancel;
+                try {
+                    const QJsonObject h = highlightsFile({{"file", m.info.path}, {"game", g->id}}, sub);
+                    for (const QJsonValue& c : h["candidates"].toArray())
+                        if (c["kills"].toInt() > 0) id = g->id;
+                } catch (const Error& e) {
+                    if (e.code == QLatin1String("CANCELED")) throw;
+                }
+            }
+            AnalysisCache::put(key, {{"game", id}});
+        }
+        if (!id.isEmpty()) return id;
+    }
+    return {};
+}
 
 QJsonObject directMomentsFile(const QJsonObject& a, Context& ctx)
 {
