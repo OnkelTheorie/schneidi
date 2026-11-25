@@ -472,7 +472,10 @@ DeliverPanel::DeliverPanel(Project* project, QWidget* parent, RenderQueue* queue
         updateControls();
         syncPresetToSettings();
     });
-    connect(m_smart, &QCheckBox::toggled, this, [this] { syncPresetToSettings(); });
+    connect(m_smart, &QCheckBox::toggled, this, [this](bool on) {
+        m_smartWanted = on;
+        syncPresetToSettings();
+    });
     connect(m_embed, &QCheckBox::toggled, this, [this] { syncPresetToSettings(); });
     connect(m_review, &QCheckBox::toggled, this, &DeliverPanel::updateControls);
     connect(m_addBtn, &QPushButton::clicked, this, [this] { addToQueue(true); });
@@ -674,7 +677,7 @@ RenderSettings DeliverPanel::settings() const
         s.maxFps = m_maxFps;
     }
     s.subtitles = m_subtitles->currentData().toInt();
-    s.smartRender = m_smart->isChecked();
+    s.smartRender = m_smartWanted; // (the box shows it unchecked under a size limit)
     s.maxMb = m_maxMb->value();
     s.embedSubtitles = m_embed->isChecked() && s.canEmbedSubtitles();
     if (s.audioOnly() && s.subtitles == RenderSettings::BurnSubtitles) s.subtitles = RenderSettings::NoSubtitles;
@@ -705,7 +708,7 @@ void DeliverPanel::setSettings(const RenderSettings& s)
     if (const int b = m_audioBits->findData(s.audioBits); b >= 0) m_audioBits->setCurrentIndex(b);
     m_rate->setCurrentIndex(s.rateNum > 0 ? std::max(0, m_rate->findData(QSize(s.rateNum, s.rateDen))) : 0);
     m_subtitles->setCurrentIndex(std::max(0, m_subtitles->findData(s.subtitles)));
-    m_smart->setChecked(s.smartRender);
+    m_smartWanted = s.smartRender;
     m_maxMb->setValue(s.maxMb);
     m_embed->setChecked(s.embedSubtitles);
     if (!s.audioOnly()) selectSize(s.outputSize(m_project->timelineFormat().size()));
@@ -750,6 +753,11 @@ void DeliverPanel::updateControls()
     updateEncoders();
     const bool copies = smartQuality(m_quality->currentIndex());
     m_smart->setEnabled(f.hardware && copies && !limit); // H.264/H.265 (a size limit encodes everything)
+    {
+        // Greyed and checked read as "still applies": unchecked under a size limit, the user's choice again without
+        const QSignalBlocker block(m_smart);
+        m_smart->setChecked(m_smartWanted && !limit);
+    }
     m_smart->setToolTip(copies || !f.hardware
                             ? smartTip()
                             : T("Bei „Mittel“ und „Klein“ wird alles neu kodiert: kopierte Stellen behielten die Bitrate "
