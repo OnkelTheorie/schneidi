@@ -261,14 +261,8 @@ QJsonObject schema(const Command& cmd)
         if (p.name == "ops" && cmd.name == "edit") o["description"] = editOpsBrief();
         else if (brief.text.isEmpty()) o.remove("description");
         else o["description"] = brief.text;
-        // Times as text: seconds ("4.5s") are the safe way (a bare number is frames); normalize still takes numbers.
-        // Objects without the "or a text" form. Both shorter, and what an AI should send anyway
-        if (p.type == ParamType::Time) o["type"] = "string";
-        else if (p.type == ParamType::Times && p.name != "run") {
-            o["type"] = "array";
-            o["items"] = QJsonObject{{"type", p.name == "clips" ? "integer" : "string"}}; // clip ids, else times
-        }
-        else if (p.type == ParamType::Object) o["type"] = "object";
+        // The types stay those of the full schema: a validating client must not refuse what the server accepts and
+        // hands out itself (direct's session id 'd3-7f2a', frames from `info`); test_mcp_tool_size checks it
         out[p.name] = o;
     }
     s["properties"] = out;
