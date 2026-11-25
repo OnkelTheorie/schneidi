@@ -23,6 +23,9 @@ struct TranscribeRequest {
     QString media;
     int audioStream = 0;
     QVector<int> audioStreams; // several streams of the media file mixed (e.g. two microphones); empty = audioStream
+    // A media file: only this part of it (ms of the file; mediaToMs < 0 = until its end). The words count from the
+    // part's start (the caller adds mediaFromMs)
+    qint64 mediaFromMs = 0, mediaToMs = -1;
     Timeline timeline;
     ProjectFormat format;
     int from = 0, to = -1; // timeline frames; to < 0 = until the end

@@ -17,6 +17,7 @@
 #include "core/Project.h"
 #include "core/ProjectFile.h"
 #include "core/Selection.h"
+#include "core/TranscriptCut.h"
 
 #include "check.h"
 #include "synth_sounds.h"
@@ -853,10 +854,24 @@ int main(int argc, char** argv)
             CHECK(chatDb > 6 && chatDb < 12.01);
             // The captions of the short: each voice transcribed on its own (here the transcripts are in the cache
             // already, as whisper would have left them), both in one list in time order, a speaker per word
+            // (per part of the recording the short plays, keyed with the model that hears it: the default one)
+            Cli::detail::Session shortView(made["project"].toString());
+            shortView.selectTimeline(made["timeline"].toString());
+            const Timeline shortTl = shortView.project.timeline();
+            const double shortFps = shortView.project.frameRate();
+            const auto inParts = [&](int stream, const QJsonArray& words, const auto& putOne) {
+                for (const auto& [from, to] : TranscriptCut::playedRangesMs(shortTl, shortFps, -1, two, stream)) {
+                    QJsonArray part;
+                    for (const QJsonValue& w : words)
+                        if (w[0].toDouble() >= from && w[0].toDouble() < to) part << w;
+                    putOne(from, to, part);
+                }
+            };
             const auto put = [&](int stream, const QJsonArray& words) {
-                AnalysisCache::put(AnalysisCache::key("speech-words", two,
-                                                      QJsonObject{{"language", ""}, {"stream", stream}, {"verbatim", false}}, 1),
-                                   QJsonObject{{"stream", stream}, {"language", "de"}, {"words", words}});
+                inParts(stream, words, [&](qint64 from, qint64 to, const QJsonArray& part) {
+                    AnalysisCache::put(Cli::detail::streamTranscriptKey(two, stream, "", false, {}, {}, from, to),
+                                       QJsonObject{{"stream", stream}, {"language", "de"}, {"words", part}});
+                });
             };
             put(1, QJsonArray{QJsonArray{4100, 4400, "Einer"}, QJsonArray{4450, 4800, "soll?"}});
             put(2, QJsonArray{QJsonArray{5600, 6000, "Heilige"}, QJsonArray{6050, 6500, "Scheiße."},
@@ -880,10 +895,10 @@ int main(int argc, char** argv)
             const QString id = Vocabulary::cacheId(Vocabulary::gameTerms("cs2"));
             CHECK(!id.isEmpty());
             const auto putTerms = [&](int stream, const QJsonArray& w) {
-                AnalysisCache::put(AnalysisCache::key("speech-words", two,
-                                                      QJsonObject{{"language", ""}, {"stream", stream}, {"verbatim", false},
-                                                                  {"vocabulary", id}}, 1),
-                                   QJsonObject{{"stream", stream}, {"language", "de"}, {"words", w}});
+                inParts(stream, w, [&](qint64 from, qint64 to, const QJsonArray& part) {
+                    AnalysisCache::put(Cli::detail::streamTranscriptKey(two, stream, "", false, Vocabulary::gameTerms("cs2"), {}, from, to),
+                                       QJsonObject{{"stream", stream}, {"language", "de"}, {"words", part}});
+                });
             };
             putTerms(1, QJsonArray{QJsonArray{4100, 4400, "Einer"}, QJsonArray{4450, 4800, "Smoke?"}});
             putTerms(2, QJsonArray{QJsonArray{5600, 6000, "Headshot."}});
@@ -910,10 +925,10 @@ int main(int argc, char** argv)
             // language the first one heard); a phrase heard differently is left out, with both readings
             const QString checkModel = "/nonexistent/ggml-check.bin";
             const auto putCheck = [&](int stream, const QJsonArray& w) {
-                AnalysisCache::put(AnalysisCache::key("speech-words", two,
-                                                      QJsonObject{{"language", "de"}, {"stream", stream}, {"verbatim", false},
-                                                                  {"model", "ggml-check.bin"}}, 1),
-                                   QJsonObject{{"stream", stream}, {"language", "de"}, {"words", w}});
+                inParts(stream, w, [&](qint64 from, qint64 to, const QJsonArray& part) {
+                    AnalysisCache::put(Cli::detail::streamTranscriptKey(two, stream, "de", false, {}, checkModel, from, to),
+                                       QJsonObject{{"stream", stream}, {"language", "de"}, {"words", part}});
+                });
             };
             putCheck(1, QJsonArray{QJsonArray{4120, 4800, "einer soll"}});                       // the same
             putCheck(2, QJsonArray{QJsonArray{5610, 6000, "Heilige"}, QJsonArray{6040, 6500, "Scheisse."}, // spelt otherwise

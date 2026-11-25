@@ -1654,8 +1654,8 @@ const QVector<Command>& commands()
                                       "`probe` lists them (\"Mikrofon\", \"Discord,Mikrofon\" = mixed). Default auto: "
                                       "the streams named like a microphone/voice (game recordings: no song lyrics "
                                       "from the music stream), else the first (the mix)"},
-          {"from", T::Time, "for a project: start of the range"},
-          {"to", T::Time, "for a project: end of the range"},
+          {"from", T::Time, "start of the range (a media file: in its own time)"},
+          {"to", T::Time, "end of the range"},
           {"timeline", T::String, "for a project: which timeline (id or name; default: the open one)"},
           {"tracks", T::String, "for a project: only these audio tracks, e.g. \"A3\", \"A2,A3\" or by name \"Discord,Mikrofon\" "
                                 "(track or audio stream name; muted ones too). Default: the audible tracks named like "

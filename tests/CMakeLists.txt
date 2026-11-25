@@ -578,6 +578,8 @@ target_link_libraries(test_direction_json PRIVATE schneidi_cli_lib)
 schneidi_test(test_direct_cli) # 0.25: `direct` short/highlights suggest -> apply, non-game moments, cancel, sessions
 target_link_libraries(test_direct_cli PRIVATE schneidi_cli_lib)
 add_dependencies(test_direct_cli schneidi-cli) # the command line's own arguments (--session)
+schneidi_test(test_caption_check) # 25.11.: short captions: voice streams heard in the played parts, model in the cache key, check rules
+target_link_libraries(test_caption_check PRIVATE schneidi_cli_lib)
 
 # Every test_*.cpp without a schneidi_test() line above (CONFIGURE_DEPENDS: a new file is picked up by the next build)
 file(GLOB _schneidi_test_sources CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp)

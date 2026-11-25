@@ -108,23 +108,42 @@ QJsonObject verbatimTranscripts(const QString& project, int timeline, const QStr
 
 } // namespace
 
-std::optional<QJsonObject> streamTranscript(const QString& file, int stream, const QString& language, bool verbatim,
-                                            Context& ctx, const QStringList& vocabulary, const QString& model)
+QString defaultTranscribeModel()
 {
-    if (!QFileInfo::exists(file)) return std::nullopt;
+    const QString whisper = Extensions::whisperModelPath();
+    if (!whisper.isEmpty() || Extensions::parakeetProgram().isEmpty()) return whisper;
+    return Extensions::parakeetModel(); // what `transcribe` takes without a whisper model
+}
+
+AnalysisCache::Key streamTranscriptKey(const QString& file, int stream, const QString& language, bool verbatim,
+                                       const QStringList& vocabulary, const QString& model, qint64 fromMs, qint64 toMs)
+{
     QJsonObject keyOptions{{"language", language}, {"stream", stream}};
-    keyOptions["verbatim"] = verbatim; // (the key of the verbatim ones as before)
-    // Another word list is another transcript (no list: the key as before)
+    keyOptions["verbatim"] = verbatim;
+    // Another word list is another transcript (no list: no entry)
     if (const QString id = Vocabulary::cacheId(Vocabulary::combine(Vocabulary::stored(), vocabulary)); !id.isEmpty())
         keyOptions["vocabulary"] = id;
-    if (!model.isEmpty()) keyOptions["model"] = QFileInfo(model).fileName(); // (the default model: the key as before)
-    const AnalysisCache::Key key = AnalysisCache::key("speech-words", file, keyOptions, 1);
+    // The model that will hear it, also when none is chosen: a better one installed later is another transcript
+    // (the one of the model before stayed "the" transcript, and the check compared a model with itself)
+    keyOptions["model"] = QFileInfo(model.isEmpty() ? defaultTranscribeModel() : model).fileName();
+    if (fromMs > 0 || toMs >= 0) keyOptions["range_ms"] = QJsonArray{fromMs, toMs};
+    return AnalysisCache::key("speech-words", file, keyOptions, 1);
+}
+
+std::optional<QJsonObject> streamTranscript(const QString& file, int stream, const QString& language, bool verbatim,
+                                            Context& ctx, const QStringList& vocabulary, const QString& model,
+                                            qint64 fromMs, qint64 toMs)
+{
+    if (!QFileInfo::exists(file)) return std::nullopt;
+    const AnalysisCache::Key key = streamTranscriptKey(file, stream, language, verbatim, vocabulary, model, fromMs, toMs);
     if (const auto hit = AnalysisCache::get(key)) return *hit;
     QJsonObject t{{"source", file}, {"words", true}, {"audio_stream", QString::number(stream)}};
     if (!vocabulary.isEmpty()) t["vocabulary"] = QJsonArray::fromStringList(vocabulary);
     if (!model.isEmpty()) t["model"] = model;
     if (verbatim) t["verbatim"] = true;
     if (!language.isEmpty()) t["language"] = language;
+    if (fromMs > 0) t["from"] = QString("%1s").arg(fromMs / 1000.0, 0, 'f', 3);
+    if (toMs >= 0) t["to"] = QString("%1s").arg(toMs / 1000.0, 0, 'f', 3);
     QJsonObject r;
     try {
         r = runSub("transcribe", t, ctx);
@@ -137,7 +156,9 @@ std::optional<QJsonObject> streamTranscript(const QString& file, int stream, con
     for (const QJsonValue& w : r["words"].toArray())
         words << QJsonArray{std::round(w["from"].toDouble() / fps * 1000), std::round(w["to"].toDouble() / fps * 1000),
                             w["text"].toString()};
-    const QJsonObject one{{"stream", stream}, {"language", r["language"].toString()}, {"words", words}};
+    QJsonObject one{{"stream", stream}, {"language", r["language"].toString()}, {"words", words}};
+    // Which model heard it (Parakeet may hand a language it does not know to whisper): the check takes another one
+    one["model"] = r["model"].toString(QFileInfo(model.isEmpty() ? defaultTranscribeModel() : model).fileName());
     AnalysisCache::put(key, one);
     return one;
 }

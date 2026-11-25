@@ -490,6 +490,16 @@ QJsonObject cmdTranscribe(const QJsonObject& a, Context& ctx)
             }
         }
         length = m.info.length;
+        // A part of the file: its words count from its start, the answer in the file's own time
+        if (a.contains("from") || a.contains("to")) {
+            const int from = a.contains("from") ? std::max(0, parseTime(a["from"], f, "from")) : 0;
+            const int to = a.contains("to") ? std::min(length, parseTime(a["to"], f, "to")) : length;
+            if (to <= from) fail("BAD_ARGUMENT", "'to' must be after 'from' (and 'from' inside the file)");
+            req.mediaFromMs = qint64(std::llround(from * 1000.0 / f.rate.fps()));
+            req.mediaToMs = to < length ? qint64(std::llround(to * 1000.0 / f.rate.fps())) : -1;
+            offset = from;
+            length = to - from;
+        }
     }
 
     // Cue length: chosen, else max_chars keeps the size it gives (normal), else auto (short cues for a vertical picture)

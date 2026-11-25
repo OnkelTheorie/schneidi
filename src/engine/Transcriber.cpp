@@ -317,7 +317,12 @@ bool Transcriber::start(const TranscribeRequest& request, QString* error)
     const QString wav = m_tmp->filePath("audio.wav");
     if (!request.media.isEmpty()) {
         // 16 kHz mono like whisper wants it; only the chosen audio stream(s), several mixed at their own level
-        QStringList args{"-hide_banner", "-nostdin", "-loglevel", "error", "-i", request.media};
+        QStringList args{"-hide_banner", "-nostdin", "-loglevel", "error"};
+        // Only a part: seeked in the input (ffmpeg decodes from the keyframe before and drops up to the exact time)
+        if (request.mediaFromMs > 0) args << "-ss" << QString::number(request.mediaFromMs / 1000.0, 'f', 3);
+        if (request.mediaToMs > request.mediaFromMs)
+            args << "-t" << QString::number((request.mediaToMs - request.mediaFromMs) / 1000.0, 'f', 3);
+        args << "-i" << request.media;
         const QVector<int> streams = request.audioStreams.isEmpty() ? QVector<int>{request.audioStream} : request.audioStreams;
         if (streams.size() == 1) {
             args << "-map" << QString("0:a:%1").arg(streams.first());
