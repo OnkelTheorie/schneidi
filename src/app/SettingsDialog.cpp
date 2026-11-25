@@ -287,6 +287,13 @@ QWidget* SettingsDialog::buildGeneral()
                               "Begriffe werden richtiger geschrieben, andere Wörter können aber in ihre Richtung "
                               "kippen."));
     trform->addRow(m_gameTerms);
+    m_captionsCheck = new QCheckBox(T("Automatische Untertitel mit einem zweiten Modell gegenprüfen"));
+    m_captionsCheck->setObjectName("transcribe_captions_check");
+    m_captionsCheck->setChecked(Vocabulary::captionsCheckOn());
+    m_captionsCheck->setToolTip(T("Für Shorts: eine Zeile kommt nur in die Untertitel, wenn Whisper large und turbo "
+                                  "dasselbe hören (beide müssen installiert sein). Lieber keine Zeile als eine falsche. "
+                                  "Ohne Grafikkarte nur bei kurzem Ton."));
+    trform->addRow(m_captionsCheck);
     lay->addWidget(transcription);
 
     // Projects: "Save as" next to the footage (default) or in a folder of their own, only if the user wants that
@@ -572,6 +579,7 @@ bool SettingsDialog::magneticMain() const { return m_magneticMain->isChecked(); 
 QString SettingsDialog::clipDrag() const { return m_clipDrag->currentData().toString(); }
 QStringList SettingsDialog::vocabulary() const { return Vocabulary::parse(m_vocabulary->toPlainText()); }
 bool SettingsDialog::gameTerms() const { return m_gameTerms->isChecked(); }
+bool SettingsDialog::captionsCheck() const { return m_captionsCheck->isChecked(); }
 
 QString SettingsDialog::timelineMomentum() const { return m_momentum->currentData().toString(); }
 

@@ -225,6 +225,47 @@ void testSnapToSound()
     CHECK(joined[0].spokenTo <= joined[1].from);
 }
 
+// ---- Two speech models must agree (25.11.: "Warzone." where nothing like it was said, "scheu?" a wrong word - whisper's
+// own word probabilities did not tell them from right lines; large-v3 and turbo heard both differently) ----
+void testAgreement()
+{
+    std::printf("two models agree\n");
+    CHECK(Captions::sameWords("Heilige Scheiße.", "heilige scheiße"));
+    CHECK(Captions::sameWords("Ja, und?", "Ja und?"));
+    CHECK(!Captions::sameWords("Warzone.", "Wowzone."));                      // two letters in a single word
+    CHECK(Captions::sameWords("Headshot", "Headshots"));                       // one letter in a long word
+    CHECK(Captions::sameWords("Heilige Scheiße.", "Heilige Scheisse."));       // ß and ss
+    CHECK(!Captions::sameWords("Ja.", "Nein."));
+    CHECK(!Captions::sameWords("Ja, war ich nicht scheu?", "Ja. War nicht toll?"));
+    CHECK(Captions::sameWords("Digga, leck meine fetten Eier!", "Digga, leck mal 'ne fette Eier!"));
+    CHECK(Captions::sameWords("Der ist um 9 Uhr.", "Der ist um neun Uhr."));   // numbers written differently
+    CHECK(Captions::sameWords("Wollen wir noch 'ne Granate", "Wollen wir noch eine Granate"));
+    CHECK(!Captions::sameWords("Crazy.", ""));
+    CHECK(Captions::sameWords("", ""));
+    // Phrases: kept where the check hears the same, left out as a whole where not, with both readings
+    const auto w = [](qint64 from, qint64 to, const char* text) { return TranscriptWord{from, to, QString::fromUtf8(text)}; };
+    const QVector<TranscriptWord> heard{w(3870, 4100, "Heilige"), w(4100, 4380, "Scheiße."), w(5920, 6270, "Warzone."),
+                                        w(8280, 8400, "Auch"), w(8400, 8520, "da?"), w(12000, 12300, "Crazy.")};
+    const QVector<TranscriptWord> check{w(3880, 4090, "Heilige"), w(4110, 4400, "Scheiße."), w(5900, 6300, "Wowzone."),
+                                        w(8300, 8520, "Auch da?")};
+    QVector<Captions::Disagreement> left;
+    const QVector<TranscriptWord> kept = Captions::keepAgreed(heard, check, 700, &left);
+    QStringList got;
+    for (const TranscriptWord& x : kept) got << x.text;
+    CHECK_EQ(got.join(' '), QString("Heilige Scheiße. Auch da?"));
+    if (CHECK_EQ(left.size(), 2)) {
+        CHECK_EQ(left[0].heard, QString("Warzone."));
+        CHECK_EQ(left[0].other, QString("Wowzone."));
+        CHECK_EQ(left[0].from, 5920);
+        CHECK_EQ(left[1].heard, QString("Crazy.")); // the check heard nothing there
+        CHECK(left[1].other.isEmpty());
+    }
+    // Everything the same: nothing left out
+    left.clear();
+    CHECK_EQ(Captions::keepAgreed(heard, heard, 700, &left).size(), heard.size());
+    CHECK(left.isEmpty());
+}
+
 // A cue the moment's end cuts to almost nothing (25.11.: "nee," shown 0.03 s): a word heard joins the cue before it,
 // one cut off before it is heard goes
 void testCueAtCut()
@@ -1158,6 +1199,7 @@ int main(int argc, char** argv)
     testMergeSpeakers();
     testSnapToSound();
     testCueAtCut();
+    testAgreement();
     testStackLanes();
     testEdits();
     testSpeed();

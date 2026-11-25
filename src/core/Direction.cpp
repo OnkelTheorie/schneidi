@@ -127,6 +127,18 @@ const Text kNotes[] = {
      nullptr, N_("Keine Untertitel: Whisper ist nicht installiert (unter Hilfe › Erweiterungen nachladen)."), nullptr},
     {"no_captions_speech", "no captions: no speech in the short", nullptr,
      N_("Keine Untertitel: Im Short ist keine Sprache zu hören."), nullptr},
+    {"captions_left_out",
+     "captions: lines left out that two speech models heard differently (captions_left_out lists them with both "
+     "readings; op captions or subtitle puts one back)",
+     nullptr, N_("Untertitel: Zeilen weggelassen, die zwei Spracherkennungen verschieden gehört haben."), nullptr},
+    {"captions_check_no_model",
+     "captions not checked by a second speech model: only one whisper model is installed (with large and turbo both "
+     "installed, lines the two hear differently are left out)",
+     nullptr, N_("Untertitel nicht gegengeprüft: nur ein Whisper-Modell ist installiert."), nullptr},
+    {"captions_check_slow",
+     "captions not checked by a second speech model: whisper runs on the processor here and the sound is long "
+     "(captions_check:'on' checks anyway, it takes about as long again as the captions)",
+     nullptr, N_("Untertitel nicht gegengeprüft: ohne Grafikkarte dauert die zweite Erkennung zu lange."), nullptr},
 };
 
 QString number(const QJsonValue& v, Lang lang)

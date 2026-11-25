@@ -23,7 +23,9 @@
 #include "engine/Extensions.h"
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFileInfo>
+#include <QHash>
 #include <QJsonArray>
 #include <QSize>
 
@@ -73,8 +75,32 @@ std::optional<double> soundPeakDb(const QString& project, const QString& timelin
 }
 } // namespace
 
+QString checkModelFor(const QString& mainModel)
+{
+    const QString name = QFileInfo(mainModel).fileName();
+    const QString large = Extensions::whisperModelPath(Extensions::qualityModel("accurate"));
+    const QString turbo = Extensions::whisperModelPath(Extensions::qualityModel("fast"));
+    const auto other = [&](const QString& path) { return !path.isEmpty() && QFileInfo(path).fileName() != name; };
+    if (name.contains(QLatin1String("turbo"))) return other(large) ? large : QString();
+    if (other(turbo)) return turbo;
+    if (other(large)) return large;
+    for (const QString& id : Extensions::installedWhisperModels())
+        if (const QString path = Extensions::whisperModelPath(id); other(path)) return path;
+    return {};
+}
+
 QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, const QString& language, Context& ctx,
                              QStringList* voices, const QString& game)
+{
+    VoiceCaptions v;
+    v.language = language;
+    v.game = game;
+    const QJsonArray out = voiceCaptionWords(project, timeline, ctx, &v);
+    *voices = v.voices;
+    return out;
+}
+
+QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, Context& ctx, VoiceCaptions* v)
 {
     Session view(project);
     if (!timeline.isEmpty() && timeline != QLatin1String("@current")) view.selectTimeline(timeline);
@@ -100,11 +126,12 @@ QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, co
         if (all) tracks << i;
     }
     if (tracks.isEmpty()) return {};
+    const QStringList terms = Vocabulary::gameTerms(v->game);
     // Each (file, stream) transcribed alone, through the cache; a transcript the project has is kept
     for (const int i : tracks)
         for (const auto& [file, stream] : TranscriptCut::missingTranscripts(tl, media, i)) {
             failIfCanceled();
-            const std::optional<QJsonObject> one = streamTranscript(file, stream, language, false, ctx, Vocabulary::gameTerms(game));
+            const std::optional<QJsonObject> one = streamTranscript(file, stream, v->language, false, ctx, terms);
             MediaInfo* m = info(file);
             if (!one || !m) continue;
             MediaTranscript t;
@@ -114,6 +141,47 @@ QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, co
                 t.words << TranscriptWord{qint64(w[0].toDouble()), qint64(w[1].toDouble()), w[2].toString()};
             m->transcripts << t;
         }
+    // The check: the same streams heard by the other whisper model; a phrase stays only when both hear the same
+    // words (automatic captions nobody proofreads: rather no line than a wrong one)
+    QVector<QPair<QString, int>> streams; // (file, stream) of the voice tracks
+    for (const int i : tracks)
+        for (const Clip& c : tl.audio[i].clips)
+            if (!streams.contains(qMakePair(c.mediaPath, c.audioStream))) streams << qMakePair(c.mediaPath, c.audioStream);
+    QHash<QString, QVector<Captions::Disagreement>> disagreements; // "file\nstream"
+    if (v->check != QLatin1String("off")) {
+        const QString checkModel = !v->checkModel.isEmpty() ? v->checkModel : checkModelFor(Extensions::whisperModelPath());
+        double seconds = 0; // the sound to check
+        for (const auto& [file, stream] : std::as_const(streams))
+            if (const MediaInfo* m = info(file)) seconds += m->length / std::max(1.0, view.project.frameRate());
+        const bool cheap = !Extensions::whisperGpuBackend().isEmpty() || seconds < 60;
+        if (checkModel.isEmpty()) {
+            v->skipped = "no_model";
+        } else if (v->check == QLatin1String("auto") && !cheap && v->checkModel.isEmpty()) {
+            v->skipped = "slow";
+        } else {
+            v->checkedWith = QFileInfo(checkModel).fileName();
+            QElapsedTimer clock;
+            clock.start();
+            for (const auto& [file, stream] : std::as_const(streams)) {
+                failIfCanceled();
+                MediaInfo* m = info(file);
+                MediaTranscript* t = nullptr;
+                if (m)
+                    for (MediaTranscript& x : m->transcripts)
+                        if (x.audioStream == stream) t = &x;
+                if (!t || t->words.isEmpty()) continue;
+                const std::optional<QJsonObject> two = streamTranscript(file, stream, t->language, false, ctx, terms, checkModel);
+                if (!two) continue; // the check could not run: the words stay as heard
+                QVector<TranscriptWord> other;
+                for (const QJsonValue& w : (*two)["words"].toArray())
+                    other << TranscriptWord{qint64(w[0].toDouble()), qint64(w[1].toDouble()), w[2].toString()};
+                QVector<Captions::Disagreement> left;
+                t->words = Captions::keepAgreed(t->words, other, 700, &left);
+                disagreements[file + '\n' + QString::number(stream)] = left;
+            }
+            v->checkSeconds = clock.elapsed() / 1000.0;
+        }
+    }
     // Per track on the timeline (trims and speed followed), each phrase moved onto its stream's sound (whisper's
     // times are loose; a voice stream is quiet between words), then one list in time order
     const double fps = view.project.frameRate();
@@ -130,7 +198,27 @@ QJsonArray voiceCaptionWords(const QString& project, const QString& timeline, co
         if (name.isEmpty())
             for (const Clip& c : tl.audio[i].clips)
                 if (const MediaInfo* m = info(c.mediaPath)) name = m->audioStreamName(c.audioStream);
-        *voices << (name.isEmpty() ? QString("A%1").arg(i + 1) : name);
+        v->voices << (name.isEmpty() ? QString("A%1").arg(i + 1) : name);
+    }
+    // The lines left out that lie in the timeline: each phrase as one "word" through the same mapping
+    if (!disagreements.isEmpty()) {
+        QVector<MediaInfo> marks = media;
+        QVector<Captions::Disagreement> all;
+        for (MediaInfo& m : marks)
+            for (MediaTranscript& t : m.transcripts) {
+                t.words.clear();
+                for (const Captions::Disagreement& d : disagreements.value(m.path + '\n' + QString::number(t.audioStream))) {
+                    t.words << TranscriptWord{d.from, d.to, QString("#%1").arg(all.size())};
+                    all << d;
+                }
+            }
+        for (int k = 0; k < tracks.size(); ++k)
+            for (const TranscriptCut::Word& w : TranscriptCut::timelineWords(tl, marks, fps, tracks[k], true)) {
+                const Captions::Disagreement& d = all[w.text.mid(1).toInt()];
+                v->leftOut << QJsonObject{{"from_s", std::round(w.from / fps * 100) / 100},
+                                          {"to_s", std::round(w.to / fps * 100) / 100},
+                                          {"speaker", v->voices.value(k)}, {"heard", d.heard}, {"other", d.other}};
+            }
     }
     QJsonArray out;
     for (const TranscriptCut::Word& w : Captions::mergeSpeakers(perTrack))
@@ -159,9 +247,26 @@ QJsonArray shortFinishOps(const QString& project, const QString& timeline, const
         } else {
             // Each voice track transcribed on its own (a quiet voice chat partner is lost in a mix with the
             // microphone), else the timeline's sound as `transcribe` hears it
-            QStringList voices;
             const QString termsOf = captionTermsGame(f);
-            QJsonArray words = voiceCaptionWords(project, timeline, f.language, ctx, &voices, termsOf);
+            VoiceCaptions vc;
+            vc.language = f.language;
+            vc.game = termsOf;
+            vc.check = f.captionsCheck;
+            QJsonArray words = voiceCaptionWords(project, timeline, ctx, &vc);
+            const QStringList voices = vc.voices;
+            if (!vc.checkedWith.isEmpty()) {
+                *done << QString("captions checked with a second model (%1, %2 s): %3 line(s) left out, the two models "
+                                 "heard them differently")
+                             .arg(vc.checkedWith)
+                             .arg(std::round(vc.checkSeconds * 10) / 10)
+                             .arg(vc.leftOut.size());
+                if (!vc.leftOut.isEmpty()) note("captions_left_out");
+                if (f.leftOut) *f.leftOut = vc.leftOut;
+            } else if (vc.skipped == QLatin1String("no_model")) {
+                note("captions_check_no_model");
+            } else if (vc.skipped == QLatin1String("slow")) {
+                note("captions_check_slow");
+            }
             int segments = 0;
             if (voices.isEmpty()) {
                 QJsonObject t{{"source", project}, {"timeline", timeline}, {"words", true}};
@@ -503,7 +608,9 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
 
     // 6. Word captions (whisper) and effect sounds (sfx:'mild'), one edit
     ShortFinish finish{captions, sfx, game ? game->id : QString(), a["language"].toString(),
-                       Vocabulary::useGameTerms(a["game_terms"])};
+                       Vocabulary::useGameTerms(a["game_terms"]), Vocabulary::captionsCheck(a["captions_check"])};
+    QJsonArray leftOut;
+    finish.leftOut = &leftOut;
     Context finishCtx = step(0.4, 0.6);
     const bool burn = shortFinish(project, shortTimeline, finish, finishCtx, &done, &notes);
 
@@ -570,6 +677,7 @@ QJsonObject cmdShort(const QJsonObject& a, Context& ctx)
                   {"render_s", rendered["render_s"]}};
     if (!moments.isEmpty()) o["moments"] = moments;
     if (!unused.isEmpty()) o["unused"] = unused;
+    if (!leftOut.isEmpty()) o["captions_left_out"] = leftOut; // lines two speech models heard differently
     if (rendered.contains("encoder")) o["encoder"] = rendered["encoder"];
     for (const char* k : {"threads", "threads_reason"}) // how many render threads, fewer when little RAM was free
         if (rendered.contains(k)) o[k] = rendered[k];

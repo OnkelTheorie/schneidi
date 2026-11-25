@@ -56,6 +56,7 @@ public:
     int backgroundThreads() const; // Background::chosenThreads (0 = automatic)
     QStringList vocabulary() const; // the word list for speech recognition (Vocabulary::stored), one entry per line
     bool gameTerms() const;         // a known game's terms for short/direct captions (Vocabulary::gameTermsOn)
+    bool captionsCheck() const;     // automatic captions checked by a second model (Vocabulary::captionsCheckOn)
     // Where "Save as" suggests a new project: off = next to its first clip; on = this folder (the user's choice)
     bool autoLinkNodes() const; // Compositing: new nodes linked at once (CompUi::autoLink)
     ZoomAnchor::Mode zoomAnchor() const; // Timeline tab: where wheel zoom stays put (ZoomAnchor::mode)
@@ -124,6 +125,7 @@ private:
     QComboBox* m_threads = nullptr;
     QPlainTextEdit* m_vocabulary = nullptr;
     QCheckBox* m_gameTerms = nullptr;
+    QCheckBox* m_captionsCheck = nullptr;
     QCheckBox* m_ownFolder = nullptr;
     QComboBox* m_autosave = nullptr;
     QCheckBox* m_autoLink = nullptr;

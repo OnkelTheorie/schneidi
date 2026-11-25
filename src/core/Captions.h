@@ -119,6 +119,25 @@ struct SnapOptions {
 int snapToSound(QVector<TranscriptCut::Word>& words, const std::vector<float>& framePeaks, double fps, int pauseFrames,
                 const SnapOptions& options = {});
 
+// ---- Two speech models must agree (automatic captions nobody proofreads: rather no line than a wrong one) ----
+
+// The same words, as two speech models write them: compared without case and punctuation, numbers 0-12 as words
+// (de/en), "'ne"/"ne" = "eine". A phrase of one or two words: each word equal, a word of 5+ letters may differ by one
+// letter ("Wowzone" for "Warzone" is two: not the same). Three words or more: the letters (spaces counted) may differ
+// by at most a fifth of the longer text ("leck meine fetten" ~ "leck mal 'ne fette"; "war ich nicht scheu" !~ "war
+// nicht toll"). Two empty texts are the same, one empty one is not.
+bool sameWords(const QString& a, const QString& b);
+// A phrase of `heard` (ms of the source) the check did not confirm, with what the check model heard there
+struct Disagreement {
+    qint64 from = 0, to = 0;
+    QString heard, other;
+};
+// The words of `heard` whose phrase (a sentence end or a pause over pauseMs closes one) the `check` transcript of the
+// same sound confirms (sameWords with the check's words around it: those starting within 0.4 s of the phrase, each
+// given to the nearest phrase); the other phrases are left out as a whole (*left: each with both readings)
+QVector<TranscriptWord> keepAgreed(const QVector<TranscriptWord>& heard, const QVector<TranscriptWord>& check,
+                                   qint64 pauseMs, QVector<Disagreement>* left = nullptr);
+
 // Colour of speaker `k` (0 = the first; it keeps `first`, the others a small palette of clearly different bright
 // colours, cycling): their highlighted word, in the word and lines modes their text
 QColor speakerColor(int k, const QColor& first);

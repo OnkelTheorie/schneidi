@@ -109,7 +109,7 @@ QJsonObject verbatimTranscripts(const QString& project, int timeline, const QStr
 } // namespace
 
 std::optional<QJsonObject> streamTranscript(const QString& file, int stream, const QString& language, bool verbatim,
-                                            Context& ctx, const QStringList& vocabulary)
+                                            Context& ctx, const QStringList& vocabulary, const QString& model)
 {
     if (!QFileInfo::exists(file)) return std::nullopt;
     QJsonObject keyOptions{{"language", language}, {"stream", stream}};
@@ -117,10 +117,12 @@ std::optional<QJsonObject> streamTranscript(const QString& file, int stream, con
     // Another word list is another transcript (no list: the key as before)
     if (const QString id = Vocabulary::cacheId(Vocabulary::combine(Vocabulary::stored(), vocabulary)); !id.isEmpty())
         keyOptions["vocabulary"] = id;
+    if (!model.isEmpty()) keyOptions["model"] = QFileInfo(model).fileName(); // (the default model: the key as before)
     const AnalysisCache::Key key = AnalysisCache::key("speech-words", file, keyOptions, 1);
     if (const auto hit = AnalysisCache::get(key)) return *hit;
     QJsonObject t{{"source", file}, {"words", true}, {"audio_stream", QString::number(stream)}};
     if (!vocabulary.isEmpty()) t["vocabulary"] = QJsonArray::fromStringList(vocabulary);
+    if (!model.isEmpty()) t["model"] = model;
     if (verbatim) t["verbatim"] = true;
     if (!language.isEmpty()) t["language"] = language;
     QJsonObject r;
