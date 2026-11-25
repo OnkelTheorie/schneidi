@@ -38,6 +38,7 @@ extern "C" {
 #include <libavutil/frame.h>
 #include <libavutil/mem.h>
 #include <libavutil/opt.h>
+#include <libavutil/parseutils.h>
 }
 #endif
 
@@ -225,6 +226,33 @@ QString checkFrameCount(const QString& name, const AVDictionaryEntry* e)
     return QStringLiteral("filter '%1': option '%2' uses the frame number %3 (frames render out of order: preview and "
                           "export would differ; use t, the time in seconds)")
         .arg(name, key, m.captured(1));
+}
+
+// fade's frame form (FFmpeg's default: fade=in:0:30, start_frame/s, nb_frames/n, or no duration) counts the frames
+// the thread's cached graph has worked on, not the clip's: preview (out of order, parallel workers) and export would
+// differ. Only the time form is taken: d (duration) > 0, st where it starts. Not translated into it: the chain runs on
+// pictures with a time only, the rate a frame number would mean is not known here
+QString checkFade(const QString& name, const AVDictionary* opts)
+{
+    if (name != QLatin1String("fade")) return {};
+    bool frames = false, timed = false;
+    const AVDictionaryEntry* e = nullptr;
+    while ((e = av_dict_iterate(opts, e))) {
+        const QByteArray key(e->key);
+        if (key == "start_frame" || key == "s") {
+            bool ok = false;
+            if (QString::fromUtf8(e->value).trimmed().toDouble(&ok) != 0.0 || !ok) frames = true;
+        } else if (key == "nb_frames" || key == "n") {
+            frames = true;
+        } else if (key == "duration" || key == "d") {
+            int64_t us = 0;
+            if (av_parse_time(&us, e->value, 1) >= 0 && us > 0) timed = true;
+        }
+    }
+    if (!frames && timed) return {};
+    return QStringLiteral("filter 'fade' counts frames (start_frame/s, nb_frames/n, or no duration): frames render "
+                          "out of order, preview and export would differ; use st and d, the start and length in "
+                          "seconds (fade=t=in:st=0:d=1)");
 }
 
 // noise's temporal flags (t, a) keep a random state from frame to frame: each render thread and cached graph has its
@@ -544,6 +572,7 @@ QString checkSegment(const AVFilterGraphSegment* seg)
             if (const QString why = checkNoise(name, e); !why.isEmpty()) return why;
             if (const QString why = checkFrameCount(name, e); !why.isEmpty()) return why;
         }
+        if (const QString why = checkFade(name, p->opts); !why.isEmpty()) return why;
     }
     return {};
 }
