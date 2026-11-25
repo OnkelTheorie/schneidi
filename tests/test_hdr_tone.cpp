@@ -263,6 +263,10 @@ void testEditorUndo()
     CHECK_EQ(p.undoStack()->index(), before + 1);
     p.undoStack()->undo();
     CHECK(p.timeline().video[0].clips[0].hdrToSdr);
+    // Never on a locked track (the CLI passes every clip of the timeline)
+    p.edit("lock", [](Timeline& tl) { tl.video[0].locked = true; });
+    CHECK_EQ(ed.setHdrToSdr({1}, false), 0);
+    CHECK(p.timeline().video[0].clips[0].hdrToSdr);
 }
 
 // The picture engine (CPU) with a clip's HDR -> SDR on and off: on = the mapped grey, off = the signal as it is

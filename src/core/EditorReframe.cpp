@@ -245,7 +245,7 @@ int Editor::setPictureAspect(const QVector<int>& ids, double aspect, std::option
 int Editor::setHdrToSdr(const QVector<int>& ids, bool on)
 {
     QVector<int> changed;
-    for (int id : ids) {
+    for (int id : editable(ids)) { // (never clips on locked tracks)
         TrackRef where;
         if (const Clip* c = TimelineOps::findClip(m_project->timeline(), id, &where);
             c && c->kind == ClipKind::Media && c->hdrToSdr != on && where.kind == TrackKind::Video)
