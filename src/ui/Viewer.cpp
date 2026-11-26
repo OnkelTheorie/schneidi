@@ -576,13 +576,6 @@ void Viewer::updateBalance()
         }
         // (From the widgets, not the layouts' cached hints: those lag behind a button just hidden or retitled)
         const auto wide = [](QWidget* w) { return std::max(w->sizeHint().width(), w->minimumWidth()); };
-        // Back and forward equally wide, or play sits off the middle by half their difference: ◀ and ▶ can come from
-        // different fallback fonts (CI 26.11.: 6 px off at 360 px in touch mode)
-        if (auto *back = findChild<QToolButton*>("viewer_back"), *fwd = findChild<QToolButton*>("viewer_fwd"); back && fwd) {
-            const int w = std::max(wide(back), wide(fwd));
-            back->setMinimumWidth(w);
-            fwd->setMinimumWidth(w);
-        }
         int right = 0;
         for (int i = 0; i < m_barRight->count(); ++i)
             if (QWidget* w = m_barRight->itemAt(i)->widget(); w && !w->isHidden()) right += wide(w);
@@ -614,12 +607,38 @@ void Viewer::setShortZoomText(bool on)
     if (m_compact) updateBalance();
 }
 
+namespace {
+// Two triangles pointing back or forward (the seek buttons' sign without a font)
+QIcon seekIcon(bool forward)
+{
+    constexpr int kScale = 3; // drawn large, the icon scales it down sharply at any device pixel ratio
+    QPixmap pm(18 * kScale, 14 * kScale);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.scale(kScale, kScale);
+    if (!forward) p.setTransform(QTransform(-kScale, 0, 0, kScale, 18 * kScale, 0)); // mirrored
+    p.setPen(Qt::NoPen);
+    p.setBrush(Theme::text);
+    for (const qreal x : {1.0, 9.0}) p.drawPolygon(QPolygonF{{x, 2.0}, {x + 8.0, 7.0}, {x, 12.0}});
+    p.end();
+    return QIcon(pm);
+}
+} // namespace
+
 void Viewer::setCompact(bool on)
 {
     m_compact = on;
     // "To the start" and Before/After stay in the Playback and Color menus
     for (const char* id : {"viewer_start", "viewer_bypass"})
         if (auto* b = findChild<QToolButton*>(id)) b->setVisible(!on);
+    // Back and forward drawn, not set in a font: "◀◀" took 53 px here and 65 px with the CI's Noto fallback, so the
+    // row no longer fit 360 px and play sat off the middle (CI 26.11.). Drawn they are as wide as play everywhere
+    for (const auto& [id, forward] : {std::pair{"viewer_back", false}, std::pair{"viewer_fwd", true}})
+        if (auto* b = findChild<QToolButton*>(id)) {
+            b->setIcon(on ? seekIcon(forward) : QIcon());
+            b->setIconSize(QSize(18, 14));
+        }
     // The picture's pages (trim view, the "program elsewhere" page with its text and buttons) never set the height:
     // the picture alone does (a phone in landscape has ~380 px for the bars, the picture and the timeline)
     m_stack->setSizePolicy(on ? QSizePolicy::Ignored : QSizePolicy::Preferred, on ? QSizePolicy::Ignored : QSizePolicy::Preferred);

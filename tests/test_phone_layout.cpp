@@ -234,6 +234,12 @@ void testWindow(Engine& engine, const QSize& size)
                           QString("centre %1 of %2%3, back %4, forward %5").arg(mid).arg(w.width())
                               .arg(Touch::modeActive() ? ", touch" : "").arg(back ? back->width() : -1).arg(fwd ? fwd->width() : -1));
             if (CHECK(back && fwd)) CHECK_EQ(back->width(), fwd->width());
+            if (std::abs(mid - w.width() / 2) > 3) // the whole row, to see what pushes play aside (fonts differ in CI)
+                for (QWidget* c : play->parentWidget()->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly))
+                    if (c->isVisible() && std::abs(c->geometry().center().y() - play->geometry().center().y()) < play->height() / 2)
+                        std::printf("  row: %s %s x %d w %d hint %d min %d\n", c->metaObject()->className(),
+                                    qPrintable(c->objectName()), c->x(), c->width(), c->sizeHint().width(),
+                                    c->minimumSizeHint().width());
         }
     if (shell->landscape()) { // item 10: a picture worth the name, the rail's tools with their names
         if (auto* screen = w.findChild<QWidget*>("viewer_screen"); CHECK(screen))
