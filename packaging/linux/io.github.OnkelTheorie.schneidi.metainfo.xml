@@ -110,6 +110,13 @@
   </requires>
 
   <releases>
+    <release version="0.26.1" date="2026-11-26">
+      <description>
+        <p>The hardware encoder check at start no longer keeps a processor core busy on computers without an Intel
+        graphics chip; the play button stays in the middle of the phone layout with every font.</p>
+      </description>
+      <url type="details">https://github.com/OnkelTheorie/schneidi/releases/tag/v0.26.1</url>
+    </release>
     <release version="0.26.0" date="2026-11-26">
       <description>
         <p>Touch Update: finger input on touch screens and tablets (pinch to zoom the timeline, long press for the
