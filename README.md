@@ -106,7 +106,7 @@ The short version, one line per item. **Every detail is in [FEATURES.md](FEATURE
 - Speed ramps and smooth slow motion with own optical flow
 - An overview strip of the whole timeline above the detail view (optional)
 - Sound while scrubbing; an optional magnetic main track; a Timeline settings tab with wheel, zoom and scrolling presets for people coming from other editors
-- Touch input on touch screens and tablets; phone and tablet layouts (an Android app as a prototype, built from source)
+- Touch input on touch screens and tablets; phone and tablet layouts (an Android app as a prototype, no download yet)
 - Timeline exchange with Premiere Pro, DaVinci Resolve and others (FCP7 XML, OpenTimelineIO, EDL)
 
 **Direct page and shorts, templates, brand**
