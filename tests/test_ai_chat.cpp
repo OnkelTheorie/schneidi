@@ -900,7 +900,12 @@ void test(const QString& dir)
         panel->sendText("Und noch einer");
         CHECK(waitFor([&] { return !chat->busy(); }));
         w.liveProject()->load(w.liveProject()->data());
-        settle(50);
+        // (the card hears of the new project through the event loop: under load that takes longer than a fixed pause)
+        waitFor([&] {
+            const QList<QWidget*> cards = panel->findChildren<QWidget*>("ai_plan");
+            const auto* state = cards.isEmpty() ? nullptr : cards.last()->findChild<QLabel*>("ai_plan_state");
+            return cards.size() == 4 && state && !state->text().isEmpty();
+        }, 10000);
         const QList<QWidget*> four = panel->findChildren<QWidget*>("ai_plan");
         if (CHECK_EQ(four.size(), 4)) {
             if (auto* run = four.last()->findChild<QPushButton*>("ai_plan_run"); CHECK(run)) CHECK(!run->isEnabled() || !run->isVisible());
