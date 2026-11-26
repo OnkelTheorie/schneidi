@@ -227,8 +227,13 @@ void testWindow(Engine& engine, const QSize& size)
     if (!shell->landscape()) // the A51 finding: the play button in the window's middle (also in touch mode)
         if (auto* play = w.findChild<QToolButton*>("viewer_play"); CHECK(play)) {
             const int mid = play->mapTo(&w, play->rect().center()).x();
+            // (the neighbours' widths in the message: a CI-only miss was back/forward of different widths)
+            const auto* back = w.findChild<QToolButton*>("viewer_back");
+            const auto* fwd = w.findChild<QToolButton*>("viewer_fwd");
             Check::report(std::abs(mid - w.width() / 2) <= 3, "play button in the middle (portrait)", __FILE__, __LINE__,
-                          QString("centre %1 of %2%3").arg(mid).arg(w.width()).arg(Touch::modeActive() ? ", touch" : ""));
+                          QString("centre %1 of %2%3, back %4, forward %5").arg(mid).arg(w.width())
+                              .arg(Touch::modeActive() ? ", touch" : "").arg(back ? back->width() : -1).arg(fwd ? fwd->width() : -1));
+            if (CHECK(back && fwd)) CHECK_EQ(back->width(), fwd->width());
         }
     if (shell->landscape()) { // item 10: a picture worth the name, the rail's tools with their names
         if (auto* screen = w.findChild<QWidget*>("viewer_screen"); CHECK(screen))

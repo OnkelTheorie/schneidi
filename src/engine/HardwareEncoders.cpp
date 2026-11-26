@@ -7,7 +7,9 @@
 #include "engine/Extensions.h"
 
 #include <QDateTime>
+#include <QDeadlineTimer>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QHash>
 #include <QProcess>
@@ -83,6 +85,22 @@ QStringList vaapiDevices()
 #endif
 }
 
+// False only where we know there is no Intel GPU (Linux: no DRM device of vendor 0x8086); elsewhere we cannot tell
+bool mayHaveIntelGpu()
+{
+#ifdef Q_OS_LINUX
+    const QDir drm("/sys/class/drm");
+    if (!drm.exists()) return true;
+    for (const QString& name : drm.entryList({"card*", "renderD*"}, QDir::Dirs | QDir::System | QDir::NoDotAndDotDot)) {
+        QFile vendor(drm.filePath(name + "/device/vendor"));
+        if (vendor.open(QIODevice::ReadOnly) && vendor.readAll().trimmed() == "0x8086") return true;
+    }
+    return false;
+#else
+    return true;
+#endif
+}
+
 QStringList argumentsFor(const QString& codec, QSize size, int crf, const QString& device, bool tenBit = false)
 {
     QStringList args{"-hide_banner", "-nostdin", "-nostats", "-loglevel", "error"};
@@ -100,19 +118,33 @@ QStringList argumentsFor(const QString& codec, QSize size, int crf, const QStrin
 }
 
 // Runs test encodes in parallel (blocking), returns which worked; outputs: FFmpeg's output of each test
+// An empty argument list is a test not run (counts as failed).
 QVector<bool> runTests(const QVector<QStringList>& argLists, QStringList* outputs = nullptr)
 {
     const QString ffmpeg = Bundle::tool("ffmpeg");
     std::vector<std::unique_ptr<QProcess>> procs;
     for (const QStringList& args : argLists) {
+        if (args.isEmpty()) {
+            procs.push_back(nullptr);
+            continue;
+        }
         auto p = std::make_unique<QProcess>();
         p->setProcessChannelMode(QProcess::MergedChannels);
         p->start(ffmpeg, args);
         procs.push_back(std::move(p));
     }
+    // One deadline for the whole batch: waiting kTestTimeoutMs for each test in turn let hanging tests run for
+    // minutes (a Quick Sync test without an Intel GPU spun at full CPU, release click test 0.26.0)
+    const QDeadlineTimer deadline(kTestTimeoutMs);
     QVector<bool> ok;
     for (auto& p : procs) {
-        bool works = p->waitForStarted(kTestTimeoutMs) && p->waitForFinished(kTestTimeoutMs)
+        if (!p) {
+            if (outputs) *outputs << QString();
+            ok << false;
+            continue;
+        }
+        const auto left = [&deadline] { return int(std::max<qint64>(0, deadline.remainingTime())); };
+        bool works = p->waitForStarted(left()) && p->waitForFinished(left())
                      && p->exitStatus() == QProcess::NormalExit && p->exitCode() == 0;
         if (p->state() != QProcess::NotRunning) {
             p->kill(); // only our own test process
@@ -138,10 +170,15 @@ void runProbe()
     for (VideoEncoder e : {VideoEncoder::Nvenc, VideoEncoder::Qsv})
         for (const char* format : {"h264", "h265"}) codecs << codecName(e, format);
     QVector<QStringList> args;
-    for (const QString& c : codecs) args << argumentsFor(c, kProbeSize, 22, {});
+    // Quick Sync only where an Intel GPU can be there (its test spins at full CPU until the timeout without one)
+    const bool qsv = mayHaveIntelGpu();
+    const auto test = [qsv](const QString& c, bool tenBit) {
+        return !qsv && c.endsWith("_qsv") ? QStringList{} : argumentsFor(c, kProbeSize, 22, {}, tenBit);
+    };
+    for (const QString& c : codecs) args << test(c, false);
     // H.265 10 bit (Main10) separately: older cards encode 8-bit H.265 but not 10 bit
     const QVector<QString> tenBit{codecName(VideoEncoder::Nvenc, "h265-10"), codecName(VideoEncoder::Qsv, "h265-10")};
-    for (const QString& c : tenBit) args << argumentsFor(c, kProbeSize, 22, {}, true);
+    for (const QString& c : tenBit) args << test(c, true);
     QStringList outputs;
     const QVector<bool> ok = runTests(args, &outputs);
     QHash<QString, int> results;

@@ -351,9 +351,11 @@ Viewer::Viewer(Engine* engine, QWidget* parent) : QWidget(parent), m_engine(engi
     auto* startBtn = makeBtn("⏮", T("Zum Anfang (Home)"));
     startBtn->setObjectName("viewer_start");
     auto* backBtn = makeBtn("◀◀", T("Rückwärts (J)"));
+    backBtn->setObjectName("viewer_back");
     m_playBtn = makeBtn("▶", T("Play/Pause (Leertaste)"));
     m_playBtn->setObjectName("viewer_play");
     auto* fwdBtn = makeBtn("▶▶", T("Vorwärts (L)"));
+    fwdBtn->setObjectName("viewer_fwd");
 
     connect(startBtn, &QToolButton::clicked, this,
             [this] { PlayheadMove::jump(m_engine, PlayheadMove::Source::Key, [this] { m_engine->seek(0); }); });
@@ -574,6 +576,13 @@ void Viewer::updateBalance()
         }
         // (From the widgets, not the layouts' cached hints: those lag behind a button just hidden or retitled)
         const auto wide = [](QWidget* w) { return std::max(w->sizeHint().width(), w->minimumWidth()); };
+        // Back and forward equally wide, or play sits off the middle by half their difference: ◀ and ▶ can come from
+        // different fallback fonts (CI 26.11.: 6 px off at 360 px in touch mode)
+        if (auto *back = findChild<QToolButton*>("viewer_back"), *fwd = findChild<QToolButton*>("viewer_fwd"); back && fwd) {
+            const int w = std::max(wide(back), wide(fwd));
+            back->setMinimumWidth(w);
+            fwd->setMinimumWidth(w);
+        }
         int right = 0;
         for (int i = 0; i < m_barRight->count(); ++i)
             if (QWidget* w = m_barRight->itemAt(i)->widget(); w && !w->isHidden()) right += wide(w);
