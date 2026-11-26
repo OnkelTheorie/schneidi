@@ -12,3 +12,5 @@ videoeditor-anforderungen.md
 CLAUDE.md
 # RNNoise model tarball (downloaded by cmake/RNNoise.cmake)
 third_party/rnnoise/rnnoise_data-*.tar.gz
+# Android build scripts and app shell: a private checkout linked in here (like docs/), not part of this repository
+packaging/android
